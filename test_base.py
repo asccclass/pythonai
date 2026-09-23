@@ -1,7 +1,8 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
+import os
+from unittest.mock import patch
 
 from base import list_files, load_dotenv, read_file, run_command, write_file
 
@@ -33,7 +34,8 @@ class BaseTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "hello")
 
     def test_run_command_returns_completed_process(self):
-        result = run_command(["python", "-c", "print('hello')"])
+        with patch("builtins.input", return_value="y"):
+            result = run_command(["python", "-c", "print('hello')"])
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "hello")

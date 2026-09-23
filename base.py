@@ -4,7 +4,14 @@ from pathlib import Path
 
 
 def read_file(path: str | Path) -> str:
-    return Path(path).read_text(encoding="utf-8")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        print(f"File not found: {path}")
+    except Exception as e:
+        print(f"Error reading file: {e}")
+    return ""
 
 
 def list_files(path: str | Path = ".") -> list[str]:
@@ -16,6 +23,14 @@ def write_file(path: str | Path, content: str) -> None:
 
 
 def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+    answer = input(f" Run '{command}'? [y/N]: ")
+    if answer.lower() != "y":
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout="",
+            stderr="User cancelled",
+        )
     return subprocess.run(
         command,
         cwd=cwd,
