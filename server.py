@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from openai import AuthenticationError
 from openai import OpenAI
 
 from base import list_files, load_dotenv, read_file, run_command, write_file
@@ -19,14 +20,31 @@ SERVER_HOST = os.getenv("SERVER_HOST", "127.0.0.1")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 
 
+def validate_ollama_api_key(api_key: str) -> None:
+    if not api_key.startswith("sk-"):
+        raise ValueError("OLLAMA_API_KEY must be a LiteLLM virtual key that starts with 'sk-'.")
+
+
 def create_ollama_client() -> OpenAI:
+    validate_ollama_api_key(OLLAMA_API_KEY)
     return OpenAI(
         base_url=OLLAMA_BASE_URL,
         api_key=OLLAMA_API_KEY,
     )
 
 
-client = create_ollama_client()
+client: OpenAI | None = None
+
+
+def get_client() -> OpenAI:
+    global client
+    if client is None:
+        client = create_ollama_client()
+    return client
+
+
+def format_authentication_error(error: AuthenticationError) -> str:
+    return f"Authentication failed for {OLLAMA_BASE_URL}. Check OLLAMA_API_KEY in .env. {error}"
 
 TOOLS = {
     "read_file": read_file,
@@ -134,18 +152,21 @@ def run_tool(tool_call):
 
 def run_agent(messages):
     while True:
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model = OLLAMA_MODEL,
             messages = messages,
             tools = TOOLS_SCHEMAS
         )
-        message = response.choices[0].message
-        message.append(message)
+        assistant_message = response.choices[0].message
+        messages.append(assistant_message)
 
-        while message.tool_calls:
-            for tool_call in message.tool_calls:
+        if assistant_message.tool_calls:
+            for tool_call in assistant_message.tool_calls:
                 result = run_tool(tool_call)
-                message.append({"role": "tool", "tool_call_id": tool_call.id, "content": result})
+                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
+            continue
+
+        return assistant_message.content or ""
 
 def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -157,7 +178,14 @@ def main():
             break
 
         messages.append({"role": "user", "content": user_input})
-        reply = run_agent(messages)
+        try:
+            reply = run_agent(messages)
+        except ValueError as e:
+            print(f"\nConfiguration error: {e}")
+            break
+        except AuthenticationError as e:
+            print(f"\n{format_authentication_error(e)}")
+            break
         print(f"\nMiniAgent: {reply}")
 
 if __name__ == "__main__":
