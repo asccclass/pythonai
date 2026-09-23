@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +19,19 @@ class FakeResponse:
 
 
 class ServerTests(unittest.TestCase):
+    def test_load_dotenv_sets_missing_values(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as env_file:
+            env_file.write("TEST_DOTENV_VALUE=from-file\n")
+            env_path = env_file.name
+
+        try:
+            os.environ.pop("TEST_DOTENV_VALUE", None)
+            server.load_dotenv(env_path)
+            self.assertEqual(os.environ["TEST_DOTENV_VALUE"], "from-file")
+        finally:
+            os.environ.pop("TEST_DOTENV_VALUE", None)
+            os.remove(env_path)
+
     def test_chat_with_ollama_posts_expected_payload_and_headers(self):
         messages = [{"role": "user", "content": "hello"}]
 
