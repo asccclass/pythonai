@@ -7,6 +7,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urljoin
@@ -108,11 +109,42 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def main() -> None:
+def run_http_server() -> None:
     server = ThreadingHTTPServer((SERVER_HOST, SERVER_PORT), ChatHandler)
     print(f"Serving on http://{SERVER_HOST}:{SERVER_PORT}")
     print(f"Forwarding chat requests to {OLLAMA_BASE_URL} with model {OLLAMA_MODEL}")
     server.serve_forever()
+
+
+def run_cli(prompt: str) -> str:
+    result = chat_with_ollama([{"role": "user", "content": prompt}])
+    message = result.get("message", {})
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    return json.dumps(result, ensure_ascii=False)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Chat with the configured Ollama model.")
+    parser.add_argument(
+        "prompt",
+        nargs="*",
+        help='Prompt text, or use "serve" to start the HTTP server.',
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    if args.prompt and args.prompt[0] == "serve":
+        run_http_server()
+        return
+    if not args.prompt:
+        print('Usage: python server.py "your prompt"')
+        print("       python server.py serve")
+        return
+    print(run_cli(" ".join(args.prompt)))
 
 
 if __name__ == "__main__":

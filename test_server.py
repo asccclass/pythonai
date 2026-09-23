@@ -39,6 +39,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(request.headers["Authorization"], "Bearer test-key")
         self.assertEqual(request.headers["X-api-key"], "test-key")
 
+    def test_run_cli_returns_assistant_content(self):
+        with patch(
+            "server.chat_with_ollama",
+            return_value={"message": {"role": "assistant", "content": "hello back"}},
+        ) as chat:
+            result = server.run_cli("hello")
+
+        self.assertEqual(result, "hello back")
+        self.assertEqual(chat.call_args.args[0], [{"role": "user", "content": "hello"}])
+
+    def test_main_without_prompt_prints_usage(self):
+        with patch("builtins.print") as print_:
+            server.main([])
+
+        printed = [call.args[0] for call in print_.call_args_list]
+        self.assertIn('Usage: python server.py "your prompt"', printed)
+
 
 if __name__ == "__main__":
     unittest.main()
