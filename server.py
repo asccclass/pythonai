@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+from base import read_file
+
 
 def load_dotenv(path: str | Path = ".env") -> None:
     """Load simple KEY=value pairs into the process environment."""
@@ -20,7 +22,7 @@ def load_dotenv(path: str | Path = ".env") -> None:
     if not env_path.exists():
         return
 
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+    for raw_line in read_file(env_path).splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
