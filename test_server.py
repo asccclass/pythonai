@@ -23,6 +23,18 @@ class ServerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "starts with 'sk-'"):
                 server.create_ollama_client()
 
+    def test_format_api_status_error_explains_forbidden_response(self):
+        class Error(Exception):
+            status_code = 403
+
+        with patch("server.OLLAMA_MODEL", "test-model"):
+            message = server.format_api_status_error(Error("nginx forbidden"))
+
+        self.assertIn("HTTP 403", message)
+        self.assertIn("OLLAMA_BASE_URL", message)
+        self.assertIn("OLLAMA_API_KEY", message)
+        self.assertIn("test-model", message)
+
     def test_get_client_initializes_client_once(self):
         server.client = None
         try:

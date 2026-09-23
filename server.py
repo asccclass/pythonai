@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 
-from openai import AuthenticationError
+from openai import APIStatusError, AuthenticationError
 from openai import OpenAI
 
 from base import list_files, load_dotenv, read_file, run_command, write_file
@@ -45,6 +45,17 @@ def get_client() -> OpenAI:
 
 def format_authentication_error(error: AuthenticationError) -> str:
     return f"Authentication failed for {OLLAMA_BASE_URL}. Check OLLAMA_API_KEY in .env. {error}"
+
+
+def format_api_status_error(error: APIStatusError) -> str:
+    if error.status_code in (401, 403):
+        return (
+            f"Request was rejected by {OLLAMA_BASE_URL} with HTTP {error.status_code}. "
+            "Check OLLAMA_BASE_URL, OLLAMA_API_KEY, and whether the key can access "
+            f"OLLAMA_MODEL={OLLAMA_MODEL!r}. {error}"
+        )
+    return f"Request to {OLLAMA_BASE_URL} failed with HTTP {error.status_code}. {error}"
+
 
 TOOLS = {
     "read_file": read_file,
@@ -185,6 +196,9 @@ def main():
             break
         except AuthenticationError as e:
             print(f"\n{format_authentication_error(e)}")
+            break
+        except APIStatusError as e:
+            print(f"\n{format_api_status_error(e)}")
             break
         print(f"\nMiniAgent: {reply}")
 
