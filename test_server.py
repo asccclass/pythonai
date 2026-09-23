@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+import base
 import server
 
 
@@ -54,8 +55,8 @@ class ServerTests(unittest.TestCase):
         class ToolCall:
             function = Function()
 
-        with patch.dict(server.TOOLS, {"list_files": lambda path: [path]}):
-            result = server.run_tool(ToolCall())
+        with patch.dict(base.TOOLS, {"list_files": lambda path: [path]}):
+            result = base.run_tool(ToolCall())
 
         self.assertEqual(result, ["."])
 

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 
 from openai import APIStatusError, AuthenticationError
 from openai import OpenAI
 
-from base import TOOLS, TOOLS_SCHEMAS, load_dotenv
+from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 
 
 load_dotenv()
@@ -62,17 +61,6 @@ SYSTEM_PROMPT = ""
 message = [
     {"role": "user", "content": "You are a helpful assistant."}
 ]
-
-def run_tool(tool_call):
-    name = tool_call.function.name
-    args = json.loads(tool_call.function.arguments)
-    if name not in TOOLS:
-        return f"Error: Tool '{name}' not found"
-    try:
-        result = TOOLS[name](**args)
-        return result
-    except Exception as e:
-        return f"Error: {e}"
 
 def run_agent(messages):
     while True:

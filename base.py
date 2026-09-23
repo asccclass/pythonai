@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 from pathlib import Path
 
@@ -64,6 +65,18 @@ TOOLS = {
     "write_file": write_file,
     "run_command": run_command,
 }
+
+
+def run_tool(tool_call):
+    name = tool_call.function.name
+    args = json.loads(tool_call.function.arguments)
+    if name not in TOOLS:
+        return f"Error: Tool '{name}' not found"
+    try:
+        result = TOOLS[name](**args)
+        return result
+    except Exception as e:
+        return f"Error: {e}"
 
 TOOLS_SCHEMAS = [
     {
