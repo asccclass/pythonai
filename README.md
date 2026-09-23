@@ -11,6 +11,7 @@ Install dependencies:
 
 ```powershell
 python -m pip install openai
+python download_model.py  // 只需要執行一次
 ```
 
 ## Configuration

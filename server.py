@@ -15,9 +15,6 @@ load_dotenv()
 OLLAMA_BASE_URL = os.environ["OLLAMA_BASE_URL"]
 OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
 OLLAMA_API_KEY = os.environ["OLLAMA_API_KEY"]
-SERVER_HOST = os.getenv("SERVER_HOST", "127.0.0.1")
-SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
-
 
 def validate_ollama_api_key(api_key: str) -> None:
     if not api_key.startswith("sk-"):
