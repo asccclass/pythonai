@@ -4,13 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import urllib.error
-import urllib.request
-import argparse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
-from urllib.parse import urljoin
 
 from base import list_files, load_dotenv, read_file, run_command, write_file
 
