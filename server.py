@@ -148,7 +148,7 @@ def run_agent(messages):
                 message.append({"role": "tool", "tool_call_id": tool_call.id, "content": result})
 
 def main():
-    message = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     print("Mini agent ready. Type 'exit' to quit.")
 
     while True:
@@ -156,8 +156,8 @@ def main():
         if user_input.lower() in ("exit", "quit"):
             break
 
-        message.append({"role": "user", "content": user_input})
-        reply = run_agen(messages)
+        messages.append({"role": "user", "content": user_input})
+        reply = run_agent(messages)
         print(f"\nMiniAgent: {reply}")
 
 if __name__ == "__main__":
