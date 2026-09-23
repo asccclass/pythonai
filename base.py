@@ -56,3 +56,91 @@ def load_dotenv(path: str | Path = ".env") -> None:
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = value
+
+
+TOOLS = {
+    "read_file": read_file,
+    "list_files": list_files,
+    "write_file": write_file,
+    "run_command": run_command,
+}
+
+TOOLS_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+                "name": "read_file",
+                "description": "Read a text file and return its contents.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The path to the file to read"
+                        }
+                    },
+                    "required": ["path"]
+                }
+        }
+    }
+    ,
+    {
+        "type": "function",
+        "function": {
+                "name": "list_files",
+                "description": "List files and directories inside a path.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The directory path to list"
+                        }
+                    }
+                }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+                "name": "write_file",
+                "description": "Write text content to a file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The path to the file to write"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The text content to write"
+                        }
+                    },
+                    "required": ["path", "content"]
+                }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+                "name": "run_command",
+                "description": "Run a command and return its completed process result.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "The command and arguments to run"
+                        },
+                        "cwd": {
+                            "type": "string",
+                            "description": "Optional working directory"
+                        }
+                    },
+                    "required": ["command"]
+                }
+        }
+    }
+]
