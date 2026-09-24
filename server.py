@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable
 
-from openai import APIStatusError, AuthenticationError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
 from openai import OpenAI
 
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
@@ -63,6 +63,14 @@ def format_api_status_error(error: APIStatusError) -> str:
             f"OLLAMA_MODEL={OLLAMA_MODEL!r}. {error}"
         )
     return f"Request to {OLLAMA_BASE_URL} failed with HTTP {error.status_code}. {error}"
+
+
+def format_api_connection_error(error: APIConnectionError) -> str:
+    return (
+        f"Could not reach {OLLAMA_BASE_URL}. "
+        "Check your network connection, OLLAMA_BASE_URL, and whether the remote service is available. "
+        f"{error}"
+    )
 
 
 SYSTEM_PROMPT = ""    
@@ -266,6 +274,16 @@ def main():
             log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIStatusError"})
             finish_episode_safely(memory, episode_id, status="failed")
             print(f"\n{format_api_status_error(e)}")
+            break
+        except APITimeoutError as e:
+            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APITimeoutError"})
+            finish_episode_safely(memory, episode_id, status="failed")
+            print(f"\n{format_api_connection_error(e)}")
+            break
+        except APIConnectionError as e:
+            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIConnectionError"})
+            finish_episode_safely(memory, episode_id, status="failed")
+            print(f"\n{format_api_connection_error(e)}")
             break
         messages.append({"role": "assistant", "content": reply})
         log_episode_event(memory, episode_id, "message", role="assistant", content=reply)

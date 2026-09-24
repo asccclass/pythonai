@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import base
+from openai import APITimeoutError
 from memory import MemoryStore
 import server
 
@@ -38,6 +39,13 @@ class ServerTests(unittest.TestCase):
         self.assertIn("OLLAMA_BASE_URL", message)
         self.assertIn("OLLAMA_API_KEY", message)
         self.assertIn("test-model", message)
+
+    def test_format_api_connection_error_explains_timeout(self):
+        message = server.format_api_connection_error(Exception("Request timed out."))
+
+        self.assertIn("Could not reach", message)
+        self.assertIn("OLLAMA_BASE_URL", message)
+        self.assertIn("remote service", message)
 
     def test_get_client_initializes_client_once(self):
         server.client = None
@@ -289,6 +297,29 @@ class ServerTests(unittest.TestCase):
             server.main()
 
         run_agent.assert_called_once()
+
+    def test_main_handles_api_timeout_without_traceback(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["hello"]),
+                patch("server.run_agent", side_effect=APITimeoutError(request=None)),
+                patch("builtins.print") as print_mock,
+            ):
+                server.main()
+
+            events = store.recent_events(limit=10)
+
+        self.assertEqual(events[0]["event_type"], "error")
+        self.assertEqual(events[0]["metadata"]["error_type"], "APITimeoutError")
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Could not reach", printed)
 
     def test_main_continues_when_memory_write_fails(self):
         class Guard:
