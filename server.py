@@ -14,6 +14,7 @@ from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from memory_review import process_memory_review_candidates
 from procedure_similarity import LLMProcedureSimilarityMatcher
+from request_budget import background_memory_budget, foreground_memory_budget
 from semantic_extractor import LLMSemanticExtractor
 from forgetting import run_forgetting_policy
 from memory import MemoryStore
@@ -204,7 +205,7 @@ class MemoryReviewWorker:
         semantic_extractor: Any,
         procedure_matcher: Any,
     ) -> None:
-        if memory is None or episode_id is None:
+        if memory is None or episode_id is None or not hasattr(memory, "episode_events"):
             return
         item = (memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
         if self.async_mode:
@@ -225,6 +226,13 @@ class MemoryReviewWorker:
 
     def _process_item(self, item: tuple[Any, ...]) -> None:
         memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
+        if callable(memory_classifier):
+            memory_classifier = memory_classifier()
+        review_budget = background_memory_budget()
+        if hasattr(semantic_extractor, "allow_remote"):
+            semantic_extractor.allow_remote = review_budget.try_acquire
+        if hasattr(procedure_matcher, "allow_remote"):
+            procedure_matcher.allow_remote = review_budget.try_acquire
         episode_events = episode_events_safely(memory, episode_id)
         memory_candidate = classify_memory_safely(memory_classifier, episode_events or [])
         log_episode_event(
@@ -317,10 +325,10 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
         return "exit"
 
 
-def main(async_memory_review: bool = False):
+def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
-    memory_classifier = LayaMemoryClassifier()
+    memory_classifier_factory = LayaMemoryClassifier
     memory = safe_memory_call(MemoryStore)
     memory_searcher = VectorMemorySearcher(OpenAICompatibleEmbeddingProvider(get_client, OLLAMA_EMBEDDING_MODEL), store=memory)
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
@@ -328,76 +336,94 @@ def main(async_memory_review: bool = False):
     worker = MemoryReviewWorker(async_mode=async_memory_review)
     print("Mini agent ready. Type 'exit' to quit.")
 
-    while True:
-        user_input = read_user_input()
-        if user_input.lower() in ("exit", "quit"):
-            break
+    try:
+        while True:
+            user_input = read_user_input()
+            if user_input.lower() in ("exit", "quit"):
+                break
 
-        episode_id = safe_memory_call(memory.start_episode) if memory is not None else None
-        log_episode_event(memory, episode_id, "message", role="user", content=user_input)
+            turn_budget = foreground_memory_budget()
+            episode_id = safe_memory_call(memory.start_episode) if memory is not None else None
+            log_episode_event(memory, episode_id, "message", role="user", content=user_input)
 
-        guard_decision = guard.assess(user_input)
-        guard_notice = format_guard_notice(guard_decision)
-        log_episode_event(
-            memory,
-            episode_id,
-            "guard_decision",
-            metadata={"guard": guard_decision},
-        )
-        if guard_notice:
-            print(f"\n{guard_notice}")
+            guard_decision = guard.assess(user_input)
+            guard_notice = format_guard_notice(guard_decision)
+            log_episode_event(
+                memory,
+                episode_id,
+                "guard_decision",
+                metadata={"guard": guard_decision},
+            )
+            if guard_notice:
+                print(f"\n{guard_notice}")
 
-        messages.append({"role": "user", "content": user_input})
-        memory_context = safe_memory_call(build_memory_context, memory, query=user_input, vector_searcher=memory_searcher) if memory is not None else ""
-        if memory_context:
-            log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
-        agent_messages = inject_memory_context(messages, memory_context)
-        compacted_messages, working_summary, preservation_decision = compact_messages(
-            agent_messages,
-            preservation_classifier=getattr(guard, "_agent", None),
-        )
-        if working_summary is not None:
-            agent_messages = compacted_messages
-            log_episode_event(memory, episode_id, "working_memory_summary", content=working_summary)
-            if preservation_decision is not None and preservation_decision.should_preserve:
-                log_episode_event(
+            messages.append({"role": "user", "content": user_input})
+            memory_context = (
+                safe_memory_call(
+                    build_memory_context,
                     memory,
-                    episode_id,
-                    "working_memory_preservation_candidate",
-                    metadata={"preservation": preservation_decision},
+                    query=user_input,
+                    vector_searcher=memory_searcher,
+                    allow_query_embedding=turn_budget.try_acquire("memory_query_embedding"),
+                    max_missing_embeddings=turn_budget.remaining("memory_embedding_backfill") or 0,
                 )
-        try:
-            reply = run_agent(agent_messages, memory=memory, episode_id=episode_id)
-        except ValueError as e:
-            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "ValueError"})
-            finish_episode_safely(memory, episode_id, status="failed")
-            print(f"\nConfiguration error: {e}")
-            break
-        except AuthenticationError as e:
-            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "AuthenticationError"})
-            finish_episode_safely(memory, episode_id, status="failed")
-            print(f"\n{format_authentication_error(e)}")
-            break
-        except APIStatusError as e:
-            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIStatusError"})
-            finish_episode_safely(memory, episode_id, status="failed")
-            print(f"\n{format_api_status_error(e)}")
-            break
-        except APITimeoutError as e:
-            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APITimeoutError"})
-            finish_episode_safely(memory, episode_id, status="failed")
-            print(f"\n{format_api_connection_error(e)}")
-            break
-        except APIConnectionError as e:
-            log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIConnectionError"})
-            finish_episode_safely(memory, episode_id, status="failed")
-            print(f"\n{format_api_connection_error(e)}")
-            break
-        messages.append({"role": "assistant", "content": reply})
-        log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
-        print(f"\nMiniAgent: {reply}")
-        worker.enqueue(memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
-        worker.join()
+                if memory is not None
+                else ""
+            )
+            if memory_context:
+                log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
+            agent_messages = inject_memory_context(messages, memory_context)
+            compacted_messages, working_summary, preservation_decision = compact_messages(
+                agent_messages,
+                preservation_classifier=getattr(guard, "_agent", None),
+            )
+            if working_summary is not None:
+                agent_messages = compacted_messages
+                log_episode_event(memory, episode_id, "working_memory_summary", content=working_summary)
+                if preservation_decision is not None and preservation_decision.should_preserve:
+                    log_episode_event(
+                        memory,
+                        episode_id,
+                        "working_memory_preservation_candidate",
+                        metadata={"preservation": preservation_decision},
+                    )
+            try:
+                reply = run_agent(agent_messages, memory=memory, episode_id=episode_id)
+            except ValueError as e:
+                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "ValueError"})
+                finish_episode_safely(memory, episode_id, status="failed")
+                print(f"\nConfiguration error: {e}")
+                break
+            except AuthenticationError as e:
+                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "AuthenticationError"})
+                finish_episode_safely(memory, episode_id, status="failed")
+                print(f"\n{format_authentication_error(e)}")
+                break
+            except APIStatusError as e:
+                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIStatusError"})
+                finish_episode_safely(memory, episode_id, status="failed")
+                print(f"\n{format_api_status_error(e)}")
+                break
+            except APITimeoutError as e:
+                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APITimeoutError"})
+                finish_episode_safely(memory, episode_id, status="failed")
+                print(f"\n{format_api_connection_error(e)}")
+                break
+            except APIConnectionError as e:
+                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIConnectionError"})
+                finish_episode_safely(memory, episode_id, status="failed")
+                print(f"\n{format_api_connection_error(e)}")
+                break
+            messages.append({"role": "assistant", "content": reply})
+            log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
+            print(f"\nMiniAgent: {reply}")
+            worker.enqueue(memory, episode_id, memory_classifier_factory, semantic_extractor, procedure_matcher)
+            if not async_memory_review:
+                worker.join()
+    finally:
+        if drain_memory_on_exit:
+            worker.join()
+        worker.stop()
 
 if __name__ == "__main__":
     main()

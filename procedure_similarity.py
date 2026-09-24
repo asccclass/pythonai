@@ -36,10 +36,12 @@ class LLMProcedureSimilarityMatcher:
         client_factory: Callable[[], Any],
         model: str,
         fallback_matcher: ProcedureSimilarityMatcher | None = None,
+        allow_remote: Callable[[str], bool] | None = None,
     ) -> None:
         self.client_factory = client_factory
         self.model = model
         self.fallback_matcher = fallback_matcher or LexicalProcedureSimilarityMatcher()
+        self.allow_remote = allow_remote
 
     def find_match(
         self,
@@ -48,6 +50,11 @@ class LLMProcedureSimilarityMatcher:
         threshold: float = 0.72,
     ) -> ProcedureMatch | None:
         if not procedures:
+            return None
+        fallback_match = self.fallback_matcher.find_match(candidate, procedures, threshold=threshold)
+        if fallback_match is not None:
+            return fallback_match
+        if self.allow_remote is not None and not self.allow_remote("procedure_similarity"):
             return None
         try:
             response = self.client_factory().chat.completions.create(

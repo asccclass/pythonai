@@ -44,12 +44,17 @@ class OpenAICompatibleEmbeddingProvider:
         self.model = model
         self.fallback_provider = fallback_provider or HashingEmbeddingProvider()
 
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text: str, allow_remote: bool = True) -> list[float]:
+        if not allow_remote:
+            return self.fallback_provider.embed(text)
         try:
             response = self.client_factory().embeddings.create(model=self.model, input=text)
             return normalize([float(value) for value in response.data[0].embedding])
         except Exception:
             return self.fallback_provider.embed(text)
+
+    def fallback_embed(self, text: str) -> list[float]:
+        return self.fallback_provider.embed(text)
 
 
 class VectorMemorySearcher:
@@ -64,11 +69,23 @@ class VectorMemorySearcher:
         self.store = store
 
     def search(self, query: str, memories: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+        return self.search_with_budget(query, memories, limit)
+
+    def search_with_budget(
+        self,
+        query: str,
+        memories: list[dict[str, Any]],
+        limit: int,
+        *,
+        allow_query_embedding: bool = True,
+        max_missing_embeddings: int | None = None,
+    ) -> list[dict[str, Any]]:
         if not query:
             return sorted(memories, key=lambda memory: (memory["confidence"], memory["updated_at"], memory["id"]), reverse=True)[:limit]
 
-        query_vector = self.embedding_provider.embed(query)
+        query_vector = _embed(self.embedding_provider, query, allow_remote=allow_query_embedding)
         scored = []
+        missing_embeddings_used = 0
         for memory in memories:
             memory_vector = None
             raw_embedding = memory.get("embedding")
@@ -84,9 +101,12 @@ class VectorMemorySearcher:
                         memory_vector = None
 
             if memory_vector is None:
-                memory_vector = self.embedding_provider.embed(format_memory_for_embedding(memory))
+                allow_remote = max_missing_embeddings is None or missing_embeddings_used < max_missing_embeddings
+                memory_vector = _embed(self.embedding_provider, format_memory_for_embedding(memory), allow_remote=allow_remote)
+                if allow_remote:
+                    missing_embeddings_used += 1
                 memory["embedding"] = memory_vector
-                if self.store is not None and "id" in memory and memory["id"]:
+                if allow_remote and self.store is not None and "id" in memory and memory["id"]:
                     try:
                         self.store.update_semantic_embedding(int(memory["id"]), memory_vector)
                     except Exception:
@@ -102,6 +122,18 @@ class VectorMemorySearcher:
 
 def format_memory_for_embedding(memory: dict[str, Any]) -> str:
     return f"{memory['subject']} {memory['predicate']} {memory['object']}"
+
+
+def _embed(provider: EmbeddingProvider, text: str, allow_remote: bool = True) -> list[float]:
+    try:
+        return provider.embed(text, allow_remote=allow_remote)  # type: ignore[call-arg]
+    except TypeError:
+        if allow_remote:
+            return provider.embed(text)
+        fallback = getattr(provider, "fallback_embed", None)
+        if callable(fallback):
+            return fallback(text)
+        return HashingEmbeddingProvider().embed(text)
 
 
 def cosine_similarity(first: list[float], second: list[float]) -> float:

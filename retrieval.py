@@ -6,15 +6,30 @@ from typing import Any
 from memory import MemoryStore
 from vector_search import VectorMemorySearcher
 
+DEFAULT_VECTOR_CANDIDATE_LIMIT = 24
+
 
 def build_memory_context(
     store: MemoryStore,
     query: str = "",
     limit: int = 12,
     vector_searcher: VectorMemorySearcher | None = None,
+    allow_query_embedding: bool = True,
+    max_missing_embeddings: int = 0,
+    vector_candidate_limit: int = DEFAULT_VECTOR_CANDIDATE_LIMIT,
 ) -> str:
     searcher = vector_searcher or VectorMemorySearcher()
-    memories = searcher.search(query, store.active_semantic_memories(), limit)
+    candidates = candidate_memories(store.active_semantic_memories(), query, vector_candidate_limit)
+    if hasattr(searcher, "search_with_budget"):
+        memories = searcher.search_with_budget(
+            query,
+            candidates,
+            limit,
+            allow_query_embedding=allow_query_embedding,
+            max_missing_embeddings=max_missing_embeddings,
+        )
+    else:
+        memories = searcher.search(query, candidates, limit)
     if not memories:
         return ""
 
@@ -26,6 +41,20 @@ def build_memory_context(
             f"(confidence={memory['confidence']:.2f}, source_event_id={memory['source_event_id']})"
         )
     return "\n".join(lines)
+
+
+def candidate_memories(memories: list[dict[str, Any]], query: str = "", limit: int = DEFAULT_VECTOR_CANDIDATE_LIMIT) -> list[dict[str, Any]]:
+    if not query:
+        return rank_memories(memories)[:limit]
+
+    lexical = rank_memories(memories, query)
+    selected: dict[int, dict[str, Any]] = {int(memory["id"]): memory for memory in lexical[:limit]}
+
+    for memory in rank_memories(memories):
+        if len(selected) >= limit:
+            break
+        selected.setdefault(int(memory["id"]), memory)
+    return list(selected.values())
 
 
 def rank_memories(memories: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:

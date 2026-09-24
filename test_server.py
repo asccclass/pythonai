@@ -234,7 +234,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.run_agent", return_value="hi"),
                 patch("builtins.print"),
             ):
-                server.main()
+                server.main(async_memory_review=False)
 
             events = store.recent_events(limit=10)
 
@@ -271,7 +271,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.run_agent", return_value="hi") as run_agent,
                 patch("builtins.print"),
             ):
-                server.main()
+                server.main(async_memory_review=False)
 
             events = store.recent_events(limit=10)
 

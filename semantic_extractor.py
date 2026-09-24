@@ -25,15 +25,19 @@ class LLMSemanticExtractor:
         client_factory: Callable[[], Any],
         model: str,
         fallback_extractor: Callable[[str], list[SemanticTriple]] | None = None,
+        allow_remote: Callable[[str], bool] | None = None,
     ) -> None:
         self.client_factory = client_factory
         self.model = model
         self.fallback_extractor = fallback_extractor or fallback_semantic_triples
+        self.allow_remote = allow_remote
 
     def extract(self, text: str) -> list[SemanticTriple]:
         normalized = text.strip()
         if not normalized:
             return []
+        if self.allow_remote is not None and not self.allow_remote("semantic_extraction"):
+            return self.fallback_extractor(normalized)
         try:
             response = self.client_factory().chat.completions.create(
                 model=self.model,

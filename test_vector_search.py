@@ -68,6 +68,13 @@ class VectorSearchTests(unittest.TestCase):
 
         self.assertEqual(provider.embed("hello"), [1.0, 0.0])
 
+    def test_openai_compatible_embedding_provider_can_skip_remote(self):
+        fallback = StaticEmbeddingProvider({"hello": [1.0, 0.0]})
+        client = _Client([0.0, 1.0])
+        provider = OpenAICompatibleEmbeddingProvider(lambda: client, "embed-model", fallback)
+
+        self.assertEqual(provider.embed("hello", allow_remote=False), [1.0, 0.0])
+
     def test_vector_memory_searcher_orders_by_similarity(self):
         memories = [
             {
@@ -123,6 +130,31 @@ class VectorSearchTests(unittest.TestCase):
         ranked = searcher.search("query", memories, limit=1)
         self.assertEqual(len(ranked), 1)
         self.assertEqual(ranked[0]["id"], 1)
+
+    def test_vector_memory_searcher_can_disable_missing_embedding_backfill(self):
+        memories = [
+            {
+                "id": 1,
+                "subject": "user",
+                "predicate": "likes",
+                "object": "Python",
+                "confidence": 1.0,
+                "updated_at": "2026-01-01",
+            }
+        ]
+        fallback = StaticEmbeddingProvider(
+            {
+                "query": [1.0, 0.0],
+                "user likes Python": [1.0, 0.0],
+            }
+        )
+        provider = OpenAICompatibleEmbeddingProvider(lambda: _Client([0.0, 1.0]), "embed-model", fallback)
+        searcher = VectorMemorySearcher(provider, min_score=0.0)
+
+        ranked = searcher.search_with_budget("query", memories, limit=1, max_missing_embeddings=0)
+
+        self.assertEqual(ranked[0]["id"], 1)
+        self.assertEqual(memories[0]["embedding"], [1.0, 0.0])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,23 @@ class FakeVectorSearcher:
         return [memory for memory in memories if memory["id"] in selected][:limit]
 
 
+class FakeBudgetVectorSearcher:
+    def __init__(self):
+        self.calls = []
+
+    def search_with_budget(self, query, memories, limit, *, allow_query_embedding=True, max_missing_embeddings=None):
+        self.calls.append(
+            {
+                "query": query,
+                "memories": memories,
+                "limit": limit,
+                "allow_query_embedding": allow_query_embedding,
+                "max_missing_embeddings": max_missing_embeddings,
+            }
+        )
+        return memories[:limit]
+
+
 class RetrievalTests(unittest.TestCase):
     def test_build_memory_context_formats_active_semantic_memories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -77,6 +94,26 @@ class RetrievalTests(unittest.TestCase):
             context = build_memory_context(store)
 
         self.assertEqual(context, "")
+
+    def test_build_memory_context_passes_embedding_budget_to_vector_search(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            store.add_semantic_memory("user", "prefers_language", "Python", event_id, confidence=0.9)
+            searcher = FakeBudgetVectorSearcher()
+
+            context = build_memory_context(
+                store,
+                query="Python",
+                vector_searcher=searcher,
+                allow_query_embedding=False,
+                max_missing_embeddings=0,
+            )
+
+        self.assertIn("Python", context)
+        self.assertFalse(searcher.calls[0]["allow_query_embedding"])
+        self.assertEqual(searcher.calls[0]["max_missing_embeddings"], 0)
 
     def test_inject_memory_context_appends_system_message(self):
         messages = [{"role": "user", "content": "hello"}]
