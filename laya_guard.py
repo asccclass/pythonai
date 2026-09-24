@@ -28,7 +28,7 @@ GUARD_QUESTIONS = {
     },
 }
 
-DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "laya-english"
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "laya-multilingual"
 
 
 @dataclass(frozen=True)
