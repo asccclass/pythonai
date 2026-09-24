@@ -4,6 +4,7 @@ from pathlib import Path
 
 from memory import MemoryStore
 from memory_review import extract_semantic_triple, process_memory_review_candidates
+from procedure_similarity import ProcedureMatch
 from semantic_extractor import SemanticTriple
 
 
@@ -13,6 +14,16 @@ class FakeSemanticExtractor:
             SemanticTriple("user", "prefers", "TypeScript", 0.9),
             SemanticTriple("project", "uses", "SQLite", 0.7),
         ]
+
+
+class FakeProcedureMatcher:
+    def __init__(self, procedure_id: int):
+        self.procedure_id = procedure_id
+        self.seen_candidates = []
+
+    def find_match(self, candidate, procedures, threshold=0.72):
+        self.seen_candidates.append((candidate, procedures, threshold))
+        return ProcedureMatch(self.procedure_id, 0.88, "semantic_test_match")
 
 
 class MemoryReviewTests(unittest.TestCase):
@@ -84,16 +95,19 @@ class MemoryReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
             first_episode = store.start_episode()
-            store.add_procedure("run_command", "run_command", ["run_command {}"], first_episode, success_count=1)
+            procedure_id = store.add_procedure("run_command", "old context", ["run_command old args"], first_episode, success_count=1)
             second_episode = store.start_episode()
-            store.add_event(second_episode, "tool_call", metadata={"name": "run_command", "arguments": "{}"})
+            matcher = FakeProcedureMatcher(procedure_id)
+            store.add_event(second_episode, "tool_call", metadata={"name": "run_command", "arguments": '{"command": ["pytest"]}'})
             store.add_event(second_episode, "memory_review_candidate", metadata={"memory_kind": "procedure", "confidence": 0.7})
 
-            process_memory_review_candidates(store, second_episode)
+            result = process_memory_review_candidates(store, second_episode, procedure_matcher=matcher)
             procedures = store.active_procedures("run_command")
 
         self.assertEqual(len(procedures), 1)
         self.assertEqual(procedures[0]["success_count"], 2)
+        self.assertEqual(result[0]["action"], "merged")
+        self.assertEqual(matcher.seen_candidates[0][0].task_type, "run_command")
 
     def test_process_forgetting_review_candidate_records_policy_queue_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from memory import MemoryStore
+from procedure_similarity import ProcedureCandidate, ProcedureSimilarityMatcher
 from semantic_extractor import SemanticExtractor, extract_semantic_triple, fallback_semantic_triples
 
 
@@ -11,6 +12,7 @@ def process_memory_review_candidates(
     store: MemoryStore,
     episode_id: int,
     semantic_extractor: SemanticExtractor | None = None,
+    procedure_matcher: ProcedureSimilarityMatcher | None = None,
 ) -> list[dict[str, Any]]:
     events = store.episode_events(episode_id)
     candidates = [event for event in events if event["event_type"] == "memory_review_candidate"]
@@ -20,7 +22,7 @@ def process_memory_review_candidates(
         if kind == "semantic":
             processed.append(process_semantic_candidate(store, episode_id, events, candidate, semantic_extractor))
         elif kind == "procedure":
-            processed.append(process_procedure_candidate(store, episode_id, events, candidate))
+            processed.append(process_procedure_candidate(store, episode_id, events, candidate, procedure_matcher))
         elif kind == "forgetting":
             processed.append(process_forgetting_candidate(store, episode_id, candidate))
     return [item for item in processed if item]
@@ -68,6 +70,7 @@ def process_procedure_candidate(
     episode_id: int,
     events: list[dict[str, Any]],
     candidate: dict[str, Any],
+    procedure_matcher: ProcedureSimilarityMatcher | None = None,
 ) -> dict[str, Any] | None:
     tool_calls = [event for event in events if event["event_type"] == "tool_call"]
     if not tool_calls:
@@ -80,10 +83,13 @@ def process_procedure_candidate(
         steps.append(f"{name} {arguments}")
     task_type = tool_calls[0]["metadata"].get("name", "tool_workflow")
     context_pattern = "; ".join(step.split(" ", 1)[0] for step in steps)
-    existing = store.find_procedure(task_type, context_pattern)
-    if existing:
-        store.record_procedure_result(existing["id"], succeeded=True)
-        procedure_id = existing["id"]
+    procedure_candidate = ProcedureCandidate(task_type, context_pattern, steps)
+    existing_procedures = store.active_procedures(task_type)
+    match = (procedure_matcher or _FallbackProcedureMatcher()).find_match(procedure_candidate, existing_procedures)
+    if match:
+        store.record_procedure_result(match.procedure_id, succeeded=True)
+        procedure_id = match.procedure_id
+        action = "merged"
     else:
         procedure_id = store.add_procedure(
             task_type=task_type,
@@ -92,12 +98,13 @@ def process_procedure_candidate(
             source_episode_id=episode_id,
             confidence=float(candidate["metadata"].get("confidence", 0.5)),
         )
+        action = "created"
     store.add_event(
         episode_id,
         "memory_review_result",
-        metadata={"memory_kind": "procedure", "procedure_id": procedure_id},
+        metadata={"memory_kind": "procedure", "procedure_id": procedure_id, "action": action},
     )
-    return {"memory_kind": "procedure", "procedure_id": procedure_id}
+    return {"memory_kind": "procedure", "procedure_id": procedure_id, "action": action}
 
 
 def process_forgetting_candidate(store: MemoryStore, episode_id: int, candidate: dict[str, Any]) -> dict[str, Any]:
@@ -123,3 +130,13 @@ def tool_arguments(arguments: str) -> dict[str, Any]:
 class _FallbackSemanticExtractor:
     def extract(self, text: str):
         return fallback_semantic_triples(text)
+
+
+class _FallbackProcedureMatcher:
+    def find_match(self, candidate: ProcedureCandidate, procedures: list[dict[str, Any]], threshold: float = 0.72):
+        for procedure in procedures:
+            if procedure["context_pattern"] == candidate.context_pattern:
+                from procedure_similarity import ProcedureMatch
+
+                return ProcedureMatch(procedure["id"], 1.0, "exact_context_pattern")
+        return None
