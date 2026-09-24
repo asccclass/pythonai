@@ -32,6 +32,59 @@ class ForgettingTests(unittest.TestCase):
             self.assertEqual(result["decayed_semantic_memories"], 1)
             self.assertAlmostEqual(store.active_semantic_memories()[0]["confidence"], 0.7)
 
+    def test_policy_reinforces_referenced_semantic_memory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            memory_id = store.add_semantic_memory("user", "prefers", "Python", event_id, confidence=0.5)
+            store.add_event(
+                episode_id,
+                "retrieval_context",
+                metadata={"semantic_memory_ids": [memory_id]},
+            )
+
+            result = run_forgetting_policy(store, confidence_decay=0.1)
+
+            self.assertEqual(result["reinforced_semantic_memories"], 1)
+            self.assertAlmostEqual(store.active_semantic_memories()[0]["confidence"], 0.53)
+
+    def test_policy_archives_expired_semantic_memory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="old")
+            store.add_semantic_memory(
+                "project",
+                "temporary_fact",
+                "old value",
+                event_id,
+                confidence=0.9,
+                expires_at="2000-01-01 00:00:00",
+            )
+
+            result = run_forgetting_policy(store, confidence_decay=0.0)
+
+            self.assertEqual(result["archived_expired_semantic_memories"], 1)
+            self.assertEqual(store.archived_semantic_memories()[0]["archive_reason"], "expired")
+
+    def test_policy_archives_contradicted_semantic_memory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I live in Taipei")
+            memory_id = store.add_semantic_memory("user", "lives_in", "Taipei", event_id, confidence=0.9)
+            store.add_event(
+                episode_id,
+                "semantic_memory_contradiction",
+                metadata={"semantic_memory_id": memory_id},
+            )
+
+            result = run_forgetting_policy(store, confidence_decay=0.0)
+
+            self.assertEqual(result["archived_contradicted_semantic_memories"], 1)
+            self.assertEqual(store.archived_semantic_memories()[0]["archive_reason"], "contradicted")
+
     def test_policy_archives_conflicting_lower_confidence_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
@@ -67,6 +120,25 @@ class ForgettingTests(unittest.TestCase):
             self.assertEqual(result["archived_procedures"], 1)
             self.assertEqual(store.active_procedures(), [])
             self.assertEqual(store.archived_procedures()[0]["id"], procedure_id)
+
+    def test_policy_archives_procedure_with_high_failure_ratio(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            procedure_id = store.add_procedure(
+                "deploy",
+                "deploy",
+                ["deploy"],
+                source_episode_id=episode_id,
+                success_count=1,
+                failure_count=4,
+            )
+
+            result = run_forgetting_policy(store, max_procedure_failures=10)
+
+            self.assertEqual(result["archived_procedures"], 1)
+            self.assertEqual(store.archived_procedures()[0]["id"], procedure_id)
+            self.assertIn("high_failure_ratio", store.archived_procedures()[0]["archive_reason"])
 
 
 if __name__ == "__main__":

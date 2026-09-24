@@ -234,6 +234,22 @@ class MemoryStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def expired_semantic_memories(self) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, subject, predicate, object, confidence, source_event_id,
+                       created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
+                FROM semantic_memories
+                WHERE superseded_by IS NULL
+                  AND archived_at IS NULL
+                  AND expires_at IS NOT NULL
+                  AND expires_at <= CURRENT_TIMESTAMP
+                ORDER BY expires_at ASC, id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def archive_semantic_memory(self, memory_id: int, reason: str = "archived") -> None:
         with closing(self.connect()) as connection:
             connection.execute(

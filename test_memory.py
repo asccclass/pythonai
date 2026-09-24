@@ -107,6 +107,24 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertEqual(memories, [])
 
+    def test_store_returns_expired_semantic_memories_for_lifecycle_policy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="temporary")
+
+            store.add_semantic_memory(
+                "user",
+                "temporary_location",
+                "Taipei",
+                source_event_id=event_id,
+                expires_at="2000-01-01 00:00:00",
+            )
+            memories = store.expired_semantic_memories()
+
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["predicate"], "temporary_location")
+
     def test_store_adds_and_queries_active_procedure(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
