@@ -147,6 +147,37 @@ class ServerTests(unittest.TestCase):
         summary_events = [event for event in events if event["event_type"] == "working_memory_summary"]
         self.assertEqual(summary_events[0]["content"], "old context")
 
+    def test_main_injects_retrieved_memory_context_into_agent_messages(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        captured_messages = []
+
+        def run_agent(messages):
+            captured_messages.extend(messages)
+            return "hi"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["hello", "exit"]),
+                patch("server.build_memory_context", return_value="Relevant long-term memory:\n- user prefers Python"),
+                patch("server.run_agent", side_effect=run_agent),
+                patch("builtins.print"),
+            ):
+                server.main()
+
+            events = store.recent_events(limit=10)
+
+        self.assertIn(
+            {"role": "system", "content": "Relevant long-term memory:\n- user prefers Python"},
+            captured_messages,
+        )
+        self.assertIn("retrieval_context", [event["event_type"] for event in events])
+
     def test_format_guard_notice_warns_when_laya_unavailable(self):
         decision = server.GuardDecision(available=False, reason="missing package")
 

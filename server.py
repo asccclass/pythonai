@@ -10,6 +10,7 @@ from openai import OpenAI
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
 from memory import MemoryStore
+from retrieval import build_memory_context, inject_memory_context
 from working_memory import compact_messages
 
 
@@ -127,12 +128,16 @@ def main():
             print(f"\n{guard_notice}")
 
         messages.append({"role": "user", "content": user_input})
-        compacted_messages, working_summary = compact_messages(messages)
+        memory_context = build_memory_context(memory)
+        if memory_context:
+            memory.add_event(episode_id, "retrieval_context", content=memory_context)
+        agent_messages = inject_memory_context(messages, memory_context)
+        compacted_messages, working_summary = compact_messages(agent_messages)
         if working_summary is not None:
-            messages[:] = compacted_messages
+            agent_messages = compacted_messages
             memory.add_event(episode_id, "working_memory_summary", content=working_summary)
         try:
-            reply = run_agent(messages)
+            reply = run_agent(agent_messages)
         except ValueError as e:
             memory.add_event(episode_id, "error", content=str(e), metadata={"error_type": "ValueError"})
             memory.finish_episode(episode_id, status="failed")
@@ -148,6 +153,7 @@ def main():
             memory.finish_episode(episode_id, status="failed")
             print(f"\n{format_api_status_error(e)}")
             break
+        messages.append({"role": "assistant", "content": reply})
         memory.add_event(episode_id, "message", role="assistant", content=reply)
         memory.finish_episode(episode_id)
         print(f"\nMiniAgent: {reply}")

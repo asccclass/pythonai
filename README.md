@@ -72,5 +72,5 @@ python -m unittest
 Run syntax checks:
 
 ```powershell
-python -m py_compile base.py server.py laya_guard.py memory.py working_memory.py test_base.py test_server.py test_laya_guard.py test_memory.py test_working_memory.py
+python -m py_compile base.py server.py laya_guard.py memory.py retrieval.py working_memory.py test_base.py test_server.py test_laya_guard.py test_memory.py test_retrieval.py test_working_memory.py
 ```

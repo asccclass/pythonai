@@ -22,7 +22,7 @@ def compact_messages(
     summary = summarize_messages(older_messages)
 
     compacted = [
-        *system_messages[:1],
+        *system_messages,
         {"role": "system", "content": f"Earlier conversation summary:\n{summary}"},
         *recent_messages,
     ]
