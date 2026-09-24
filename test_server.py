@@ -92,6 +92,63 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(result, "hello")
         self.assertIs(messages[-1], Choice.message)
 
+    def test_run_agent_logs_tool_call_and_result(self):
+        class Function:
+            name = "list_files"
+            arguments = '{"path": "."}'
+
+        class ToolCall:
+            id = "tool-1"
+            function = Function()
+
+        class ToolMessage:
+            tool_calls = [ToolCall()]
+            content = None
+
+        class FinalMessage:
+            tool_calls = None
+            content = "done"
+
+        class Choice:
+            def __init__(self, message):
+                self.message = message
+
+        class Response:
+            def __init__(self, message):
+                self.choices = [Choice(message)]
+
+        class Completions:
+            def __init__(self):
+                self.responses = [Response(ToolMessage()), Response(FinalMessage())]
+
+            def create(self, **kwargs):
+                return self.responses.pop(0)
+
+        class Chat:
+            def __init__(self):
+                self.completions = Completions()
+
+        class Client:
+            def __init__(self):
+                self.chat = Chat()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            with (
+                patch("server.get_client", return_value=Client()),
+                patch("server.run_tool", return_value=["sample.txt"]),
+            ):
+                result = server.run_agent([{"role": "user", "content": "list"}], memory=store, episode_id=episode_id)
+
+            events = store.recent_events(limit=10)
+
+        self.assertEqual(result, "done")
+        self.assertEqual([event["event_type"] for event in events], ["tool_result", "tool_call"])
+        self.assertEqual(events[1]["metadata"]["name"], "list_files")
+        self.assertEqual(events[0]["metadata"]["tool_call_id"], "tool-1")
+        self.assertEqual(events[0]["content"], "['sample.txt']")
+
     def test_read_user_input_treats_ctrl_c_as_exit(self):
         with patch("builtins.input", side_effect=KeyboardInterrupt):
             self.assertEqual(server.read_user_input(), "exit")
@@ -154,7 +211,7 @@ class ServerTests(unittest.TestCase):
 
         captured_messages = []
 
-        def run_agent(messages):
+        def run_agent(messages, memory=None, episode_id=None):
             captured_messages.extend(messages)
             return "hi"
 
@@ -177,6 +234,51 @@ class ServerTests(unittest.TestCase):
             captured_messages,
         )
         self.assertIn("retrieval_context", [event["event_type"] for event in events])
+
+    def test_main_continues_when_memory_store_cannot_initialize(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        with (
+            patch("server.LayaGuard", return_value=Guard()),
+            patch("server.MemoryStore", side_effect=RuntimeError("database unavailable")),
+            patch("server.read_user_input", side_effect=["hello", "exit"]),
+            patch("server.run_agent", return_value="hi") as run_agent,
+            patch("builtins.print"),
+        ):
+            server.main()
+
+        run_agent.assert_called_once()
+
+    def test_main_continues_when_memory_write_fails(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        class BrokenMemory:
+            def start_episode(self):
+                return 1
+
+            def add_event(self, *args, **kwargs):
+                raise RuntimeError("write failed")
+
+            def finish_episode(self, *args, **kwargs):
+                raise RuntimeError("finish failed")
+
+            def active_semantic_memories(self):
+                return []
+
+        with (
+            patch("server.LayaGuard", return_value=Guard()),
+            patch("server.MemoryStore", return_value=BrokenMemory()),
+            patch("server.read_user_input", side_effect=["hello", "exit"]),
+            patch("server.run_agent", return_value="hi") as run_agent,
+            patch("builtins.print"),
+        ):
+            server.main()
+
+        run_agent.assert_called_once()
 
     def test_format_guard_notice_warns_when_laya_unavailable(self):
         decision = server.GuardDecision(available=False, reason="missing package")
