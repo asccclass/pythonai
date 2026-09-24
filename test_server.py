@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 
 import base
+import httpx
+from openai import APIStatusError
 from openai import APITimeoutError
 from memory import MemoryStore
 import server
@@ -46,6 +48,13 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Could not reach", message)
         self.assertIn("OLLAMA_BASE_URL", message)
         self.assertIn("remote service", message)
+
+    def test_retry_delay_seconds_reads_retry_after_header(self):
+        request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+        response = httpx.Response(429, headers={"Retry-After": "2.5"}, request=request)
+        error = APIStatusError("rate limited", response=response, body={})
+
+        self.assertEqual(server.retry_delay_seconds(error), 2.5)
 
     def test_get_client_initializes_client_once(self):
         server.client = None
@@ -99,6 +108,51 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(result, "hello")
         self.assertIs(messages[-1], Choice.message)
+
+    def test_run_agent_retries_transient_status_error(self):
+        class Message:
+            tool_calls = None
+            content = "hello after retry"
+
+        class Choice:
+            message = Message()
+
+        class Response:
+            choices = [Choice()]
+
+        class Completions:
+            def __init__(self):
+                self.calls = 0
+
+            def create(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+                    response = httpx.Response(429, headers={"Retry-After": "0"}, request=request)
+                    raise APIStatusError("rate limited", response=response, body={})
+                return Response()
+
+        class Chat:
+            def __init__(self):
+                self.completions = Completions()
+
+        class Client:
+            def __init__(self):
+                self.chat = Chat()
+
+        sleeps = []
+        client = Client()
+        messages = [{"role": "user", "content": "hi"}]
+
+        with (
+            patch("server.get_client", return_value=client),
+            patch("builtins.print"),
+        ):
+            result = server.run_agent(messages, sleep=sleeps.append)
+
+        self.assertEqual(result, "hello after retry")
+        self.assertEqual(client.chat.completions.calls, 2)
+        self.assertEqual(sleeps, [0.0])
 
     def test_run_agent_logs_tool_call_and_result(self):
         class Function:

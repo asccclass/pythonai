@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
@@ -27,6 +28,7 @@ OLLAMA_BASE_URL = os.environ["OLLAMA_BASE_URL"]
 OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
 OLLAMA_API_KEY = os.environ["OLLAMA_API_KEY"]
+TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 def validate_ollama_api_key(api_key: str) -> None:
     if not api_key.startswith("sk-"):
@@ -71,6 +73,19 @@ def format_api_connection_error(error: APIConnectionError) -> str:
         "Check your network connection, OLLAMA_BASE_URL, and whether the remote service is available. "
         f"{error}"
     )
+
+
+def retry_delay_seconds(error: APIStatusError, default: float = 5.0) -> float:
+    response = getattr(error, "response", None)
+    if response is None:
+        return default
+    retry_after = response.headers.get("retry-after")
+    if retry_after is None:
+        return default
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        return default
 
 
 SYSTEM_PROMPT = ""    
@@ -166,13 +181,30 @@ def queue_memory_review_candidate(
     )
 
 
-def run_agent(messages, memory: MemoryStore | None = None, episode_id: int | None = None):
+def run_agent(
+    messages,
+    memory: MemoryStore | None = None,
+    episode_id: int | None = None,
+    max_retries: int = 1,
+    sleep: Callable[[float], None] = time.sleep,
+):
     while True:
-        response = get_client().chat.completions.create(
-            model = OLLAMA_MODEL,
-            messages = messages,
-            tools = TOOLS_SCHEMAS
-        )
+        attempts = 0
+        while True:
+            try:
+                response = get_client().chat.completions.create(
+                    model = OLLAMA_MODEL,
+                    messages = messages,
+                    tools = TOOLS_SCHEMAS
+                )
+                break
+            except APIStatusError as error:
+                if error.status_code not in TRANSIENT_STATUS_CODES or attempts >= max_retries:
+                    raise
+                attempts += 1
+                delay = retry_delay_seconds(error)
+                print(f"\nRemote service returned HTTP {error.status_code}; retrying in {delay:g} seconds.")
+                sleep(delay)
         assistant_message = response.choices[0].message
         messages.append(assistant_message)
 
