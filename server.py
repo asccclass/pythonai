@@ -223,7 +223,7 @@ def main():
             print(f"\n{guard_notice}")
 
         messages.append({"role": "user", "content": user_input})
-        memory_context = safe_memory_call(build_memory_context, memory) if memory is not None else ""
+        memory_context = safe_memory_call(build_memory_context, memory, query=user_input) if memory is not None else ""
         if memory_context:
             log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
         agent_messages = inject_memory_context(messages, memory_context)
