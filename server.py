@@ -91,13 +91,22 @@ def run_agent(messages):
 
         return assistant_message.content or ""
 
+
+def read_user_input(prompt: str = "\nYou: ") -> str:
+    try:
+        return input(prompt)
+    except KeyboardInterrupt:
+        print()
+        return "exit"
+
+
 def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
     print("Mini agent ready. Type 'exit' to quit.")
 
     while True:
-        user_input = input("\nYou: ")
+        user_input = read_user_input()
         if user_input.lower() in ("exit", "quit"):
             break
 

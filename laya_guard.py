@@ -13,9 +13,10 @@ GUARD_QUESTIONS = {
         "instructions": "What does the user want the local assistant to do?",
         "criteria": {
             "chat": "general conversation or question answering",
-            "read_file": "read, inspect, summarize, or search local files",
+            "read_file": "read local files",
             "write_file": "create, edit, overwrite local files",
             "delete_file": "delete local files",
+            "list_files": "list files in a directory",
             "run_command": "run terminal, shell, package manager, or system commands",
         },
     },

@@ -89,6 +89,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(result, "hello")
         self.assertIs(messages[-1], Choice.message)
 
+    def test_read_user_input_treats_ctrl_c_as_exit(self):
+        with patch("builtins.input", side_effect=KeyboardInterrupt):
+            self.assertEqual(server.read_user_input(), "exit")
+
     def test_format_guard_notice_warns_when_laya_unavailable(self):
         decision = server.GuardDecision(available=False, reason="missing package")
 
