@@ -20,7 +20,7 @@ Optional Laya guard layer:
 python -m pip install laya
 ```
 
-When installed, Laya classifies each user request before it is sent to the agent and prints a warning for risky or confirmation-worthy requests. If Laya is not installed or cannot load, the agent continues without the guard.
+When installed, Laya classifies each user request before it is sent to the agent and prints a warning for risky or confirmation-worthy requests. By default, the guard loads the local checkpoint from `models/laya-english`. Set `LAYA_MODEL_DIR` to use a different local model path. If Laya is not installed or cannot load, the agent continues without the guard.
 
 ## Configuration
 

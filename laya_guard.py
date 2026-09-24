@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 from typing import Any
 
 
@@ -26,6 +28,8 @@ GUARD_QUESTIONS = {
     },
 }
 
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "laya-english"
+
 
 @dataclass(frozen=True)
 class GuardDecision:
@@ -37,29 +41,32 @@ class GuardDecision:
 
 
 class LayaGuard:
-    def __init__(self, preload: bool = False) -> None:
-        self._router: Any | None = None
+    def __init__(self, model_dir: str | Path | None = None) -> None:
+        self._agent: Any | None = None
         self._load_error: str = ""
+        self.model_dir = Path(model_dir or os.environ.get("LAYA_MODEL_DIR", DEFAULT_MODEL_DIR))
         try:
-            from laya import Router
+            import laya
 
-            self._router = Router(preload=preload)
+            if not self.model_dir.exists():
+                raise FileNotFoundError(f"Laya model directory not found: {self.model_dir}")
+            self._agent = laya.load(str(self.model_dir))
         except Exception as error:
             self._load_error = str(error)
 
     @property
     def available(self) -> bool:
-        return self._router is not None
+        return self._agent is not None
 
     def assess(self, user_input: str) -> GuardDecision:
-        if self._router is None:
+        if self._agent is None:
             return GuardDecision(
                 available=False,
                 reason=f"Laya unavailable: {self._load_error}" if self._load_error else "Laya unavailable",
             )
 
         try:
-            result = self._router.predict({"message": user_input}, GUARD_QUESTIONS)
+            result = self._agent.predict({"message": user_input}, GUARD_QUESTIONS)
         except Exception as error:
             return GuardDecision(available=False, reason=f"Laya prediction failed: {error}")
 
