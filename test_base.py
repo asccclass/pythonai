@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 from unittest.mock import patch
 
-from base import list_files, load_dotenv, read_file, run_command, write_file
+from base import delete_file, list_files, load_dotenv, read_file, run_command, write_file
 
 
 class BaseTests(unittest.TestCase):
@@ -32,6 +32,47 @@ class BaseTests(unittest.TestCase):
             write_file(path, "hello")
 
             self.assertEqual(path.read_text(encoding="utf-8"), "hello")
+
+    def test_delete_file_uses_windows_command_on_windows(self):
+        completed = object()
+
+        with (
+            patch("base.platform.system", return_value="Windows"),
+            patch("base.subprocess.run", return_value=completed) as run,
+        ):
+            result = delete_file("sample.txt")
+
+        self.assertIs(result, completed)
+        run.assert_called_once_with(
+            ["cmd", "/c", "del", "/f", "/q", "sample.txt"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+    def test_delete_file_uses_rm_command_on_non_windows(self):
+        completed = object()
+
+        with (
+            patch("base.platform.system", return_value="Linux"),
+            patch("base.subprocess.run", return_value=completed) as run,
+        ):
+            result = delete_file("sample.txt")
+
+        self.assertIs(result, completed)
+        run.assert_called_once_with(
+            ["rm", "-f", "sample.txt"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+    def test_delete_file_refuses_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = delete_file(temp_dir)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to delete directory", result.stderr)
 
     def test_run_command_returns_completed_process(self):
         with patch("builtins.input", return_value="y"):

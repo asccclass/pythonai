@@ -1,5 +1,6 @@
 import os
 import json
+import platform
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,25 @@ def list_files(path: str | Path = ".") -> list[str]:
 
 def write_file(path: str | Path, content: str) -> None:
     Path(path).write_text(content, encoding="utf-8")
+
+
+def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
+    target = Path(path)
+    if target.is_dir():
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr=f"Refusing to delete directory: {target}",
+        )
+
+    command = ["cmd", "/c", "del", "/f", "/q", str(target)] if platform.system() == "Windows" else ["rm", "-f", str(target)]
+    return subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
 
 
 def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -63,6 +83,7 @@ TOOLS = {
     "read_file": read_file,
     "list_files": list_files,
     "write_file": write_file,
+    "delete_file": delete_file,
     "run_command": run_command,
 }
 
@@ -131,6 +152,23 @@ TOOLS_SCHEMAS = [
                         }
                     },
                     "required": ["path", "content"]
+                }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+                "name": "delete_file",
+                "description": "Delete a single file using the appropriate operating system command.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The path to the file to delete"
+                        }
+                    },
+                    "required": ["path"]
                 }
         }
     },
