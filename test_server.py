@@ -91,6 +91,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(result, "hello")
         self.assertIs(messages[-1], Choice.message)
 
+    def test_root_endpoint_lists_available_routes(self):
+        response = TestClient(server.app).get("/")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertIn("/v1/models", data["endpoints"])
+        self.assertIn("/v1/chat/completions", data["endpoints"])
+
+    def test_health_endpoint_returns_ok(self):
+        response = TestClient(server.app).get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
     def test_models_endpoint_returns_openai_compatible_model_list(self):
         with patch("server.OLLAMA_MODEL", "test-model"):
             response = TestClient(server.app).get("/v1/models")
