@@ -231,7 +231,10 @@ def main():
         if memory_context:
             log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
         agent_messages = inject_memory_context(messages, memory_context)
-        compacted_messages, working_summary, preservation_decision = compact_messages(agent_messages)
+        compacted_messages, working_summary, preservation_decision = compact_messages(
+            agent_messages,
+            preservation_classifier=getattr(guard, "_agent", None),
+        )
         if working_summary is not None:
             agent_messages = compacted_messages
             log_episode_event(memory, episode_id, "working_memory_summary", content=working_summary)

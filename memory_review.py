@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from memory import MemoryStore
@@ -30,10 +31,11 @@ def process_semantic_candidate(
     source = next((event for event in events if event["event_type"] == "message" and event["role"] == "user"), None)
     if source is None:
         return None
+    subject, predicate, object_value = extract_semantic_triple(source["content"] or "")
     memory_id = store.add_semantic_memory(
-        subject="episode",
-        predicate="user_statement",
-        object_value=source["content"] or "",
+        subject=subject,
+        predicate=predicate,
+        object_value=object_value,
         source_event_id=source["id"],
         confidence=float(candidate["metadata"].get("confidence", 0.5)),
     )
@@ -60,13 +62,20 @@ def process_procedure_candidate(
         name = metadata.get("name", "tool")
         arguments = metadata.get("arguments", "{}")
         steps.append(f"{name} {arguments}")
-    procedure_id = store.add_procedure(
-        task_type=tool_calls[0]["metadata"].get("name", "tool_workflow"),
-        context_pattern="; ".join(step.split(" ", 1)[0] for step in steps),
-        steps=steps,
-        source_episode_id=episode_id,
-        confidence=float(candidate["metadata"].get("confidence", 0.5)),
-    )
+    task_type = tool_calls[0]["metadata"].get("name", "tool_workflow")
+    context_pattern = "; ".join(step.split(" ", 1)[0] for step in steps)
+    existing = store.find_procedure(task_type, context_pattern)
+    if existing:
+        store.record_procedure_result(existing["id"], succeeded=True)
+        procedure_id = existing["id"]
+    else:
+        procedure_id = store.add_procedure(
+            task_type=task_type,
+            context_pattern=context_pattern,
+            steps=steps,
+            source_episode_id=episode_id,
+            confidence=float(candidate["metadata"].get("confidence", 0.5)),
+        )
     store.add_event(
         episode_id,
         "memory_review_result",
@@ -93,3 +102,21 @@ def tool_arguments(arguments: str) -> dict[str, Any]:
         return json.loads(arguments)
     except json.JSONDecodeError:
         return {}
+
+
+def extract_semantic_triple(text: str) -> tuple[str, str, str]:
+    normalized = text.strip()
+    patterns = [
+        (r"(?i)\bI prefer ([\w .+-]+)", "user", "prefers", 1),
+        (r"(?i)\bI like ([\w .+-]+)", "user", "likes", 1),
+        (r"(?i)\bI live in ([\w .+-]+)", "user", "lives_in", 1),
+        (r"(?i)\bmy preferred ([\w_ -]+) is ([\w .+-]+)", "user", "preferred_{0}", 2),
+    ]
+    for pattern, subject, predicate, group in patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        if "{0}" in predicate:
+            return subject, predicate.format(match.group(1).strip().lower().replace(" ", "_")), match.group(group).strip()
+        return subject, predicate, match.group(group).strip()
+    return "episode", "user_statement", normalized

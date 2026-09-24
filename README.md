@@ -54,6 +54,13 @@ The memory store also supports semantic memories as auditable subject-predicate-
 
 Procedural memories store reusable workflows with success and failure counts linked back to source episodes.
 
+Inspect memory from the command line:
+
+```powershell
+python .\observability.py overview
+python .\observability.py episode --episode-id 1
+```
+
 ## Tools
 
 The agent exposes these local tools to the model:

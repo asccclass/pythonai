@@ -182,6 +182,19 @@ class MemoryStore:
             connection.commit()
             return int(cursor.lastrowid)
 
+    def update_semantic_confidence(self, memory_id: int, confidence: float) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE semantic_memories
+                SET confidence = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (confidence, memory_id),
+            )
+            connection.commit()
+
     def active_semantic_memories(
         self,
         subject: str | None = None,
@@ -301,6 +314,22 @@ class MemoryStore:
             )
             connection.commit()
             return int(cursor.lastrowid)
+
+    def find_procedure(self, task_type: str, context_pattern: str) -> dict[str, Any] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT id, task_type, context_pattern, steps, confidence, success_count,
+                       failure_count, source_episode_id, created_at, updated_at,
+                       last_success_at, archived_at, archive_reason
+                FROM procedures
+                WHERE task_type = ? AND context_pattern = ? AND archived_at IS NULL
+                ORDER BY confidence DESC, success_count DESC, id DESC
+                LIMIT 1
+                """,
+                (task_type, context_pattern),
+            ).fetchone()
+        return _procedure_from_row(row) if row is not None else None
 
     def active_procedures(self, task_type: str | None = None) -> list[dict[str, Any]]:
         query = """

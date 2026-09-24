@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from memory import MemoryStore
-from observability import inspect_episode, memory_overview
+from observability import inspect_episode, main, memory_overview
 
 
 class ObservabilityTests(unittest.TestCase):
@@ -32,6 +33,19 @@ class ObservabilityTests(unittest.TestCase):
 
         self.assertEqual(result["episode_id"], episode_id)
         self.assertEqual(result["events"][0]["content"], "hello")
+
+    def test_cli_overview_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "memory.db"
+            MemoryStore(db_path)
+            with (
+                patch("observability.MemoryStore", return_value=MemoryStore(db_path)),
+                patch("sys.argv", ["observability.py", "overview"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("recent_events", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":
