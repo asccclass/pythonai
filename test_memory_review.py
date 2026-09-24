@@ -4,6 +4,15 @@ from pathlib import Path
 
 from memory import MemoryStore
 from memory_review import extract_semantic_triple, process_memory_review_candidates
+from semantic_extractor import SemanticTriple
+
+
+class FakeSemanticExtractor:
+    def extract(self, text: str) -> list[SemanticTriple]:
+        return [
+            SemanticTriple("user", "prefers", "TypeScript", 0.9),
+            SemanticTriple("project", "uses", "SQLite", 0.7),
+        ]
 
 
 class MemoryReviewTests(unittest.TestCase):
@@ -25,6 +34,29 @@ class MemoryReviewTests(unittest.TestCase):
         self.assertEqual(memories[0]["subject"], "user")
         self.assertEqual(memories[0]["predicate"], "prefers")
         self.assertEqual(memories[0]["object"], "Python")
+
+    def test_process_semantic_review_candidate_uses_injected_extractor(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="Remember multiple facts.")
+            store.add_event(
+                episode_id,
+                "memory_review_candidate",
+                metadata={"memory_kind": "semantic", "confidence": 0.8},
+            )
+
+            results = process_memory_review_candidates(store, episode_id, semantic_extractor=FakeSemanticExtractor())
+            memories = store.active_semantic_memories()
+            review_results = [
+                event for event in store.episode_events(episode_id) if event["event_type"] == "memory_review_result"
+            ]
+
+        self.assertEqual(results[0]["memory_kind"], "semantic")
+        self.assertEqual(len(results[0]["semantic_memory_ids"]), 2)
+        self.assertEqual(len(memories), 2)
+        self.assertEqual({memory["predicate"] for memory in memories}, {"prefers", "uses"})
+        self.assertEqual(review_results[0]["metadata"]["semantic_memory_ids"], results[0]["semantic_memory_ids"])
 
     def test_process_procedure_review_candidate_creates_procedure_from_tool_calls(self):
         with tempfile.TemporaryDirectory() as temp_dir:

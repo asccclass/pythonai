@@ -12,6 +12,7 @@ from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from memory_review import process_memory_review_candidates
+from semantic_extractor import LLMSemanticExtractor
 from forgetting import run_forgetting_policy
 from retrieval_ranker import LayaMemoryRanker
 from memory import MemoryStore
@@ -204,6 +205,7 @@ def main():
     guard = LayaGuard()
     memory_classifier = LayaMemoryClassifier()
     memory_ranker = LayaMemoryRanker()
+    semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     memory = safe_memory_call(MemoryStore)
     print("Mini agent ready. Type 'exit' to quit.")
 
@@ -273,7 +275,7 @@ def main():
             metadata={"candidate": memory_candidate},
         )
         queue_memory_review_candidate(memory, episode_id, memory_candidate)
-        safe_memory_call(process_memory_review_candidates, memory, episode_id) if memory is not None and episode_id is not None else None
+        safe_memory_call(process_memory_review_candidates, memory, episode_id, semantic_extractor=semantic_extractor) if memory is not None and episode_id is not None else None
         safe_memory_call(run_forgetting_policy, memory) if memory is not None else None
         finish_episode_safely(memory, episode_id)
         print(f"\nMiniAgent: {reply}")
