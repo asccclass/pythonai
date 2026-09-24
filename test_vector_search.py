@@ -105,6 +105,25 @@ class VectorSearchTests(unittest.TestCase):
 
         self.assertEqual(text, "user likes Python")
 
+    def test_vector_memory_searcher_uses_cached_embedding(self):
+        memories = [
+            {
+                "id": 1,
+                "subject": "user",
+                "predicate": "likes",
+                "object": "Python",
+                "confidence": 1.0,
+                "updated_at": "2026-01-01",
+                "embedding": "[0.9, 0.1]",
+            }
+        ]
+        provider = StaticEmbeddingProvider({"query": [1.0, 0.0]})
+        searcher = VectorMemorySearcher(provider, min_score=0.0)
+
+        ranked = searcher.search("query", memories, limit=1)
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["id"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

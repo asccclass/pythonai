@@ -181,11 +181,84 @@ def queue_memory_review_candidate(
     )
 
 
+import queue
+import random
+import threading
+
+
+class MemoryReviewWorker:
+    def __init__(self, async_mode: bool = True) -> None:
+        self.queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
+        self.async_mode = async_mode
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        if self.async_mode:
+            self._thread = threading.Thread(target=self._worker_loop, daemon=True)
+            self._thread.start()
+
+    def enqueue(
+        self,
+        memory: MemoryStore | None,
+        episode_id: int | None,
+        memory_classifier: Any,
+        semantic_extractor: Any,
+        procedure_matcher: Any,
+    ) -> None:
+        if memory is None or episode_id is None:
+            return
+        item = (memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
+        if self.async_mode:
+            self.queue.put(item)
+        else:
+            self._process_item(item)
+
+    def _worker_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                item = self.queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._process_item(item)
+            finally:
+                self.queue.task_done()
+
+    def _process_item(self, item: tuple[Any, ...]) -> None:
+        memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
+        episode_events = episode_events_safely(memory, episode_id)
+        memory_candidate = classify_memory_safely(memory_classifier, episode_events or [])
+        log_episode_event(
+            memory,
+            episode_id,
+            "memory_candidate_decision",
+            metadata={"candidate": memory_candidate},
+        )
+        queue_memory_review_candidate(memory, episode_id, memory_candidate)
+        safe_memory_call(
+            process_memory_review_candidates,
+            memory,
+            episode_id,
+            semantic_extractor=semantic_extractor,
+            procedure_matcher=procedure_matcher,
+        ) if memory is not None and episode_id is not None else None
+        safe_memory_call(run_forgetting_policy, memory) if memory is not None else None
+        finish_episode_safely(memory, episode_id)
+
+    def join(self) -> None:
+        if self.async_mode and self._thread is not None and self._thread.is_alive():
+            self.queue.join()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self.async_mode and self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+
+
 def run_agent(
     messages,
     memory: MemoryStore | None = None,
     episode_id: int | None = None,
-    max_retries: int = 1,
+    max_retries: int = 3,
     sleep: Callable[[float], None] = time.sleep,
 ):
     while True:
@@ -202,7 +275,9 @@ def run_agent(
                 if error.status_code not in TRANSIENT_STATUS_CODES or attempts >= max_retries:
                     raise
                 attempts += 1
-                delay = retry_delay_seconds(error)
+                base_delay = retry_delay_seconds(error)
+                jitter = random.uniform(0.1, 1.0) if base_delay > 0 else 0.0
+                delay = base_delay * (2 ** (attempts - 1)) + jitter
                 print(f"\nRemote service returned HTTP {error.status_code}; retrying in {delay:g} seconds.")
                 sleep(delay)
         assistant_message = response.choices[0].message
@@ -242,14 +317,15 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
         return "exit"
 
 
-def main():
+def main(async_memory_review: bool = False):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
     memory_classifier = LayaMemoryClassifier()
-    memory_searcher = VectorMemorySearcher(OpenAICompatibleEmbeddingProvider(get_client, OLLAMA_EMBEDDING_MODEL))
+    memory = safe_memory_call(MemoryStore)
+    memory_searcher = VectorMemorySearcher(OpenAICompatibleEmbeddingProvider(get_client, OLLAMA_EMBEDDING_MODEL), store=memory)
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     procedure_matcher = LLMProcedureSimilarityMatcher(get_client, OLLAMA_MODEL)
-    memory = safe_memory_call(MemoryStore)
+    worker = MemoryReviewWorker(async_mode=async_memory_review)
     print("Mini agent ready. Type 'exit' to quit.")
 
     while True:
@@ -319,25 +395,9 @@ def main():
             break
         messages.append({"role": "assistant", "content": reply})
         log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
-        episode_events = episode_events_safely(memory, episode_id)
-        memory_candidate = classify_memory_safely(memory_classifier, episode_events or [])
-        log_episode_event(
-            memory,
-            episode_id,
-            "memory_candidate_decision",
-            metadata={"candidate": memory_candidate},
-        )
-        queue_memory_review_candidate(memory, episode_id, memory_candidate)
-        safe_memory_call(
-            process_memory_review_candidates,
-            memory,
-            episode_id,
-            semantic_extractor=semantic_extractor,
-            procedure_matcher=procedure_matcher,
-        ) if memory is not None and episode_id is not None else None
-        safe_memory_call(run_forgetting_policy, memory) if memory is not None else None
-        finish_episode_safely(memory, episode_id)
         print(f"\nMiniAgent: {reply}")
+        worker.enqueue(memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
+        worker.join()
 
 if __name__ == "__main__":
     main()

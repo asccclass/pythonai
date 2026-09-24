@@ -179,6 +179,23 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertEqual(procedures, [])
 
+    def test_store_saves_and_updates_semantic_embedding(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory(
+                "user", "prefers", "Python", source_event_id=event_id, embedding=[0.1, 0.2]
+            )
+
+            memories = store.active_semantic_memories()
+            self.assertEqual(memories[0]["id"], memory_id)
+            self.assertIn("0.1", memories[0]["embedding"])
+
+            store.update_semantic_embedding(memory_id, [0.3, 0.4])
+            updated_memories = store.active_semantic_memories()
+            self.assertIn("0.3", updated_memories[0]["embedding"])
+
 
 if __name__ == "__main__":
     unittest.main()

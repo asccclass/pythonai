@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import math
 import re
 from typing import Any, Protocol
@@ -56,9 +57,11 @@ class VectorMemorySearcher:
         self,
         embedding_provider: EmbeddingProvider | None = None,
         min_score: float = 0.12,
+        store: Any | None = None,
     ) -> None:
         self.embedding_provider = embedding_provider or HashingEmbeddingProvider()
         self.min_score = min_score
+        self.store = store
 
     def search(self, query: str, memories: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
         if not query:
@@ -67,7 +70,28 @@ class VectorMemorySearcher:
         query_vector = self.embedding_provider.embed(query)
         scored = []
         for memory in memories:
-            memory_vector = self.embedding_provider.embed(format_memory_for_embedding(memory))
+            memory_vector = None
+            raw_embedding = memory.get("embedding")
+            if raw_embedding:
+                if isinstance(raw_embedding, list):
+                    memory_vector = raw_embedding
+                elif isinstance(raw_embedding, str):
+                    try:
+                        parsed = json.loads(raw_embedding)
+                        if isinstance(parsed, list):
+                            memory_vector = [float(v) for v in parsed]
+                    except Exception:
+                        memory_vector = None
+
+            if memory_vector is None:
+                memory_vector = self.embedding_provider.embed(format_memory_for_embedding(memory))
+                memory["embedding"] = memory_vector
+                if self.store is not None and "id" in memory and memory["id"]:
+                    try:
+                        self.store.update_semantic_embedding(int(memory["id"]), memory_vector)
+                    except Exception:
+                        pass
+
             score = cosine_similarity(query_vector, memory_vector)
             if score < self.min_score:
                 continue

@@ -63,6 +63,7 @@ class MemoryStore:
                     object TEXT NOT NULL,
                     confidence REAL NOT NULL DEFAULT 0.5,
                     source_event_id INTEGER NOT NULL,
+                    embedding TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     expires_at TEXT,
@@ -74,6 +75,10 @@ class MemoryStore:
                 )
                 """
             )
+            try:
+                connection.execute("ALTER TABLE semantic_memories ADD COLUMN embedding TEXT")
+            except sqlite3.OperationalError:
+                pass
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS procedures (
@@ -168,16 +173,18 @@ class MemoryStore:
         source_event_id: int,
         confidence: float = 0.5,
         expires_at: str | None = None,
+        embedding: list[float] | str | None = None,
     ) -> int:
+        embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO semantic_memories (
-                    subject, predicate, object, confidence, source_event_id, expires_at
+                    subject, predicate, object, confidence, source_event_id, expires_at, embedding
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject, predicate, object_value, confidence, source_event_id, expires_at),
+                (subject, predicate, object_value, confidence, source_event_id, expires_at, embedding_json),
             )
             connection.commit()
             return int(cursor.lastrowid)
@@ -195,13 +202,27 @@ class MemoryStore:
             )
             connection.commit()
 
+    def update_semantic_embedding(self, memory_id: int, embedding: list[float] | str) -> None:
+        embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE semantic_memories
+                SET embedding = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (embedding_json, memory_id),
+            )
+            connection.commit()
+
     def active_semantic_memories(
         self,
         subject: str | None = None,
         predicate: str | None = None,
     ) -> list[dict[str, Any]]:
         query = """
-            SELECT id, subject, predicate, object, confidence, source_event_id,
+            SELECT id, subject, predicate, object, confidence, source_event_id, embedding,
                    created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
             FROM semantic_memories
             WHERE superseded_by IS NULL
@@ -225,7 +246,7 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, subject, predicate, object, confidence, source_event_id,
+                SELECT id, subject, predicate, object, confidence, source_event_id, embedding,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE archived_at IS NOT NULL
@@ -238,7 +259,7 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, subject, predicate, object, confidence, source_event_id,
+                SELECT id, subject, predicate, object, confidence, source_event_id, embedding,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE superseded_by IS NULL
@@ -273,14 +294,16 @@ class MemoryStore:
         source_event_id: int,
         confidence: float = 0.5,
         reason: str = "superseded",
+        embedding: list[float] | str | None = None,
     ) -> int:
+        embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO semantic_memories (subject, predicate, object, confidence, source_event_id)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO semantic_memories (subject, predicate, object, confidence, source_event_id, embedding)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (subject, predicate, object_value, confidence, source_event_id),
+                (subject, predicate, object_value, confidence, source_event_id, embedding_json),
             )
             new_memory_id = int(cursor.lastrowid)
             connection.execute(
