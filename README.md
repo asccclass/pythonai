@@ -5,12 +5,12 @@ A small command-line agent that connects to a remote Ollama-compatible LiteLLM e
 ## Requirements
 
 - Python 3.11 or newer
-- `openai` Python package
+- `fastapi`, `openai`, and `uvicorn` Python packages
 
 Install dependencies:
 
 ```powershell
-python -m pip install openai
+python -m pip install -r requirements.txt
 python download_model.py  // 只需要執行一次
 ```
 
@@ -30,13 +30,33 @@ SERVER_PORT=8000
 
 ## Usage
 
-Run the mini agent:
+Run the OpenAI-compatible HTTP bridge:
 
 ```powershell
 python .\server.py
 ```
 
-Type a message at the `You:` prompt. Type `exit` or `quit` to stop.
+By default it listens on `http://127.0.0.1:8000`.
+
+Laya custom provider settings:
+
+```json
+{
+  "id": "pythonai-agent",
+  "provider_type": "openai_compatible",
+  "base_url": "http://127.0.0.1:8000",
+  "capabilities_override": {
+    "supports_tool_calling": false,
+    "supports_structured_output": false
+  }
+}
+```
+
+If you want the original terminal chat loop from Python, run:
+
+```powershell
+python -c "import server; server.run_cli()"
+```
 
 ## Tools
 
