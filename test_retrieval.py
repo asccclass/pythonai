@@ -6,6 +6,17 @@ from memory import MemoryStore
 from retrieval import build_memory_context, inject_memory_context, rank_memories, tokenize
 
 
+class FakeVectorSearcher:
+    def __init__(self, selected_ids):
+        self.selected_ids = selected_ids
+        self.calls = []
+
+    def search(self, query, memories, limit):
+        self.calls.append((query, memories, limit))
+        selected = set(self.selected_ids)
+        return [memory for memory in memories if memory["id"] in selected][:limit]
+
+
 class RetrievalTests(unittest.TestCase):
     def test_build_memory_context_formats_active_semantic_memories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -20,36 +31,33 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("user prefers_language Python", context)
         self.assertIn("confidence=0.90", context)
 
-    def test_build_memory_context_filters_by_query_relevance(self):
+    def test_build_memory_context_uses_vector_search(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
             episode_id = store.start_episode()
             python_event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
             location_event_id = store.add_event(episode_id, "message", role="user", content="I live in Taipei")
-            store.add_semantic_memory("user", "prefers_language", "Python", python_event_id, confidence=0.7)
+            python_id = store.add_semantic_memory("user", "prefers_language", "Python", python_event_id, confidence=0.7)
             store.add_semantic_memory("user", "lives_in", "Taipei", location_event_id, confidence=1.0)
+            searcher = FakeVectorSearcher([python_id])
 
-            context = build_memory_context(store, query="Please help with Python tests")
+            context = build_memory_context(store, query="Please help with Python tests", vector_searcher=searcher)
 
         self.assertIn("user prefers_language Python", context)
         self.assertNotIn("Taipei", context)
+        self.assertEqual(searcher.calls[0][0], "Please help with Python tests")
 
-    def test_build_memory_context_uses_ranker_after_lexical_filter(self):
-        class Ranker:
-            def rank(self, query, memories):
-                return list(reversed(memories))
-
+    def test_build_memory_context_does_not_require_lexical_overlap_before_vector_search(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
             episode_id = store.start_episode()
-            first_event_id = store.add_event(episode_id, "message", role="user", content="Python one")
-            second_event_id = store.add_event(episode_id, "message", role="user", content="Python two")
-            store.add_semantic_memory("user", "note", "Python first", first_event_id, confidence=0.9)
-            store.add_semantic_memory("user", "note", "Python second", second_event_id, confidence=0.8)
+            event_id = store.add_event(episode_id, "message", role="user", content="I like TypeScript")
+            memory_id = store.add_semantic_memory("user", "prefers_language", "TypeScript", event_id, confidence=0.9)
+            searcher = FakeVectorSearcher([memory_id])
 
-            context = build_memory_context(store, query="Python", ranker=Ranker())
+            context = build_memory_context(store, query="frontend coding", vector_searcher=searcher)
 
-        self.assertLess(context.index("second"), context.index("first"))
+        self.assertIn("TypeScript", context)
 
     def test_build_memory_context_returns_empty_when_query_has_no_relevant_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

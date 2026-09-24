@@ -29,12 +29,13 @@ Create a local `.env` file in the project root:
 ```env
 OLLAMA_BASE_URL=https://api.example.com/
 OLLAMA_MODEL=your-model-name
+OLLAMA_EMBEDDING_MODEL=your-embedding-model-name
 OLLAMA_API_KEY=sk-your-litellm-virtual-key
 SERVER_HOST=127.0.0.1
 SERVER_PORT=8000
 ```
 
-`OLLAMA_API_KEY` must be a LiteLLM virtual key that starts with `sk-`. The `.env` file is ignored by Git and should not be committed.
+`OLLAMA_API_KEY` must be a LiteLLM virtual key that starts with `sk-`. `OLLAMA_EMBEDDING_MODEL` is optional and defaults to `OLLAMA_MODEL`. The `.env` file is ignored by Git and should not be committed.
 
 ## Usage
 
@@ -81,5 +82,5 @@ python -m unittest
 Run syntax checks:
 
 ```powershell
-python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py retrieval.py retrieval_ranker.py semantic_extractor.py working_memory.py test_base.py test_forgetting.py test_laya_guard.py test_memory.py test_memory_classifier.py test_memory_review.py test_observability.py test_procedure_similarity.py test_retrieval.py test_retrieval_ranker.py test_semantic_extractor.py test_server.py test_working_memory.py
+python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py retrieval.py retrieval_ranker.py semantic_extractor.py vector_search.py working_memory.py test_base.py test_forgetting.py test_laya_guard.py test_memory.py test_memory_classifier.py test_memory_review.py test_observability.py test_procedure_similarity.py test_retrieval.py test_retrieval_ranker.py test_semantic_extractor.py test_vector_search.py test_server.py test_working_memory.py
 ```

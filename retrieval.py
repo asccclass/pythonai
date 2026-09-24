@@ -4,13 +4,17 @@ import re
 from typing import Any
 
 from memory import MemoryStore
+from vector_search import VectorMemorySearcher
 
 
-def build_memory_context(store: MemoryStore, query: str = "", limit: int = 12, ranker: Any | None = None) -> str:
-    memories = rank_memories(store.active_semantic_memories(), query)
-    if ranker is not None:
-        memories = ranker.rank(query, memories)
-    memories = memories[:limit]
+def build_memory_context(
+    store: MemoryStore,
+    query: str = "",
+    limit: int = 12,
+    vector_searcher: VectorMemorySearcher | None = None,
+) -> str:
+    searcher = vector_searcher or VectorMemorySearcher()
+    memories = searcher.search(query, store.active_semantic_memories(), limit)
     if not memories:
         return ""
 

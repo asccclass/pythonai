@@ -15,9 +15,9 @@ from memory_review import process_memory_review_candidates
 from procedure_similarity import LLMProcedureSimilarityMatcher
 from semantic_extractor import LLMSemanticExtractor
 from forgetting import run_forgetting_policy
-from retrieval_ranker import LayaMemoryRanker
 from memory import MemoryStore
 from retrieval import build_memory_context, inject_memory_context
+from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
 from working_memory import compact_messages
 
 
@@ -25,6 +25,7 @@ load_dotenv()
 
 OLLAMA_BASE_URL = os.environ["OLLAMA_BASE_URL"]
 OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
+OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
 OLLAMA_API_KEY = os.environ["OLLAMA_API_KEY"]
 
 def validate_ollama_api_key(api_key: str) -> None:
@@ -205,7 +206,7 @@ def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
     memory_classifier = LayaMemoryClassifier()
-    memory_ranker = LayaMemoryRanker()
+    memory_searcher = VectorMemorySearcher(OpenAICompatibleEmbeddingProvider(get_client, OLLAMA_EMBEDDING_MODEL))
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     procedure_matcher = LLMProcedureSimilarityMatcher(get_client, OLLAMA_MODEL)
     memory = safe_memory_call(MemoryStore)
@@ -231,7 +232,7 @@ def main():
             print(f"\n{guard_notice}")
 
         messages.append({"role": "user", "content": user_input})
-        memory_context = safe_memory_call(build_memory_context, memory, query=user_input, ranker=memory_ranker) if memory is not None else ""
+        memory_context = safe_memory_call(build_memory_context, memory, query=user_input, vector_searcher=memory_searcher) if memory is not None else ""
         if memory_context:
             log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
         agent_messages = inject_memory_context(messages, memory_context)
