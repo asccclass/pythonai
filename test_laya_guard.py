@@ -42,6 +42,29 @@ class LayaGuardTests(unittest.TestCase):
         self.assertEqual(decision.risk, 1.8)
         self.assertTrue(decision.needs_confirmation)
 
+    def test_guard_maps_delete_file_intent(self):
+        class Agent:
+            def predict(self, state, questions):
+                return {
+                    "answers": {
+                        "intent": {"choice": "delete_file"},
+                        "risk": {"score": 1.7},
+                        "needs_confirmation": {"noul": True},
+                    }
+                }
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            fake_laya = types.SimpleNamespace(load=lambda path: Agent())
+
+            with patch.dict(sys.modules, {"laya": fake_laya}):
+                guard = LayaGuard(model_dir=model_dir)
+
+        decision = guard.assess("delete hello.txt")
+
+        self.assertEqual(decision.intent, "delete_file")
+        self.assertEqual(decision.risk, 1.7)
+        self.assertTrue(decision.needs_confirmation)
+
     def test_guard_falls_back_when_prediction_fails(self):
         class Agent:
             def predict(self, state, questions):

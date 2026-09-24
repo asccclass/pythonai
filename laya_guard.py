@@ -13,7 +13,8 @@ GUARD_QUESTIONS = {
         "criteria": {
             "chat": "general conversation or question answering",
             "read_file": "read, inspect, summarize, or search local files",
-            "write_file": "create, edit, overwrite, or delete local files",
+            "write_file": "create, edit, overwrite local files",
+            "delete_file": "delete local files",
             "run_command": "run terminal, shell, package manager, or system commands",
         },
     },
