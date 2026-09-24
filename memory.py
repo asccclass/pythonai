@@ -54,6 +54,26 @@ class MemoryStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS semantic_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    source_event_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT,
+                    superseded_by INTEGER,
+                    archived_at TEXT,
+                    archive_reason TEXT,
+                    FOREIGN KEY (source_event_id) REFERENCES episode_events(id),
+                    FOREIGN KEY (superseded_by) REFERENCES semantic_memories(id)
+                )
+                """
+            )
             connection.commit()
 
     def start_episode(self) -> int:
@@ -106,6 +126,87 @@ class MemoryStore:
                 (limit,),
             ).fetchall()
         return [_event_from_row(row) for row in rows]
+
+    def add_semantic_memory(
+        self,
+        subject: str,
+        predicate: str,
+        object_value: str,
+        source_event_id: int,
+        confidence: float = 0.5,
+        expires_at: str | None = None,
+    ) -> int:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO semantic_memories (
+                    subject, predicate, object, confidence, source_event_id, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (subject, predicate, object_value, confidence, source_event_id, expires_at),
+            )
+            connection.commit()
+            return int(cursor.lastrowid)
+
+    def active_semantic_memories(
+        self,
+        subject: str | None = None,
+        predicate: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT id, subject, predicate, object, confidence, source_event_id,
+                   created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
+            FROM semantic_memories
+            WHERE superseded_by IS NULL
+              AND archived_at IS NULL
+              AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        """
+        params: list[Any] = []
+        if subject is not None:
+            query += " AND subject = ?"
+            params.append(subject)
+        if predicate is not None:
+            query += " AND predicate = ?"
+            params.append(predicate)
+        query += " ORDER BY updated_at DESC, id DESC"
+
+        with closing(self.connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def supersede_semantic_memory(
+        self,
+        old_memory_id: int,
+        subject: str,
+        predicate: str,
+        object_value: str,
+        source_event_id: int,
+        confidence: float = 0.5,
+        reason: str = "superseded",
+    ) -> int:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO semantic_memories (subject, predicate, object, confidence, source_event_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (subject, predicate, object_value, confidence, source_event_id),
+            )
+            new_memory_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                UPDATE semantic_memories
+                SET superseded_by = ?,
+                    archived_at = CURRENT_TIMESTAMP,
+                    archive_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_memory_id, reason, old_memory_id),
+            )
+            connection.commit()
+            return new_memory_id
 
 
 def _event_from_row(row: sqlite3.Row) -> dict[str, Any]:
