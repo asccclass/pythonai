@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import os
-import time
-from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
 from openai import APIStatusError, AuthenticationError
 from openai import OpenAI
-import uvicorn
 
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 
@@ -20,18 +15,6 @@ load_dotenv()
 OLLAMA_BASE_URL = os.environ["OLLAMA_BASE_URL"]
 OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
 OLLAMA_API_KEY = os.environ["OLLAMA_API_KEY"]
-SERVER_HOST = os.environ.get("SERVER_HOST", "127.0.0.1")
-SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
-
-app = FastAPI(title="Python AI Mini Agent OpenAI Bridge")
-
-
-class ChatCompletionRequest(BaseModel):
-    model: str | None = None
-    messages: list[dict[str, Any]] = Field(default_factory=list)
-    stream: bool = False
-    max_tokens: int | None = None
-    temperature: float | None = None
 
 def validate_ollama_api_key(api_key: str) -> None:
     if not api_key.startswith("sk-"):
@@ -94,55 +77,7 @@ def run_agent(messages):
 
         return assistant_message.content or ""
 
-
-@app.get("/v1/models")
-def list_models() -> dict[str, Any]:
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": OLLAMA_MODEL,
-                "object": "model",
-                "created": 0,
-                "owned_by": "pythonai",
-            }
-        ],
-    }
-
-
-@app.post("/v1/chat/completions")
-def create_chat_completion(request: ChatCompletionRequest) -> dict[str, Any]:
-    if request.stream:
-        raise HTTPException(status_code=400, detail="Streaming chat completions are not supported yet.")
-
-    messages = [dict(message) for message in request.messages]
-    content = run_agent(messages)
-    created = int(time.time())
-    model = request.model or OLLAMA_MODEL
-    return {
-        "id": f"chatcmpl-pythonai-{created}",
-        "object": "chat.completion",
-        "created": created,
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": content,
-                },
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
-    }
-
-
-def run_cli():
+def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     print("Mini agent ready. Type 'exit' to quit.")
 
@@ -164,10 +99,6 @@ def run_cli():
             print(f"\n{format_api_status_error(e)}")
             break
         print(f"\nMiniAgent: {reply}")
-
-
-def main():
-    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
 import base
 import server
 
@@ -90,45 +88,6 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(result, "hello")
         self.assertIs(messages[-1], Choice.message)
-
-    def test_models_endpoint_returns_openai_compatible_model_list(self):
-        with patch("server.OLLAMA_MODEL", "test-model"):
-            response = TestClient(server.app).get("/v1/models")
-
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["object"], "list")
-        self.assertEqual(data["data"][0]["id"], "test-model")
-        self.assertEqual(data["data"][0]["object"], "model")
-
-    def test_chat_completions_endpoint_returns_openai_compatible_response(self):
-        payload = {
-            "model": "test-model",
-            "messages": [{"role": "user", "content": "hi"}],
-        }
-
-        with patch("server.run_agent", return_value="hello") as run_agent:
-            response = TestClient(server.app).post("/v1/chat/completions", json=payload)
-
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["object"], "chat.completion")
-        self.assertEqual(data["model"], "test-model")
-        self.assertEqual(data["choices"][0]["message"]["role"], "assistant")
-        self.assertEqual(data["choices"][0]["message"]["content"], "hello")
-        self.assertEqual(data["choices"][0]["finish_reason"], "stop")
-        run_agent.assert_called_once_with([{"role": "user", "content": "hi"}])
-
-    def test_chat_completions_endpoint_rejects_streaming(self):
-        payload = {
-            "model": "test-model",
-            "stream": True,
-            "messages": [{"role": "user", "content": "hi"}],
-        }
-
-        response = TestClient(server.app).post("/v1/chat/completions", json=payload)
-
-        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == "__main__":
