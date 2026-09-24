@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
+from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from memory import MemoryStore
 from retrieval import build_memory_context, inject_memory_context
 from working_memory import compact_messages
@@ -116,6 +117,12 @@ def finish_episode_safely(
     safe_memory_call(memory.finish_episode, episode_id, status=status, summary=summary)
 
 
+def episode_events_safely(memory: MemoryStore | None, episode_id: int | None) -> list[dict[str, Any]]:
+    if memory is None or episode_id is None or not hasattr(memory, "episode_events"):
+        return []
+    return safe_memory_call(memory.episode_events, episode_id) or []
+
+
 def run_agent(messages, memory: MemoryStore | None = None, episode_id: int | None = None):
     while True:
         response = get_client().chat.completions.create(
@@ -163,6 +170,7 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
 def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
+    memory_classifier = LayaMemoryClassifier()
     memory = safe_memory_call(MemoryStore)
     print("Mini agent ready. Type 'exit' to quit.")
 
@@ -213,6 +221,14 @@ def main():
             break
         messages.append({"role": "assistant", "content": reply})
         log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
+        episode_events = episode_events_safely(memory, episode_id)
+        memory_candidate = memory_classifier.assess_episode(episode_events or [])
+        log_episode_event(
+            memory,
+            episode_id,
+            "memory_candidate_decision",
+            metadata={"candidate": memory_candidate},
+        )
         finish_episode_safely(memory, episode_id)
         print(f"\nMiniAgent: {reply}")
 

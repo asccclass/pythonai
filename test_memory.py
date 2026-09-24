@@ -29,6 +29,17 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(events[1]["role"], "user")
         self.assertEqual(events[1]["content"], "hello")
 
+    def test_store_returns_events_for_episode_in_insert_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="one")
+            store.add_event(episode_id, "message", role="assistant", content="two")
+
+            events = store.episode_events(episode_id)
+
+        self.assertEqual([event["content"] for event in events], ["one", "two"])
+
     def test_store_adds_and_queries_active_semantic_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

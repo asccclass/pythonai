@@ -147,6 +147,19 @@ class MemoryStore:
             ).fetchall()
         return [_event_from_row(row) for row in rows]
 
+    def episode_events(self, episode_id: int) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, episode_id, event_type, role, content, metadata, created_at
+                FROM episode_events
+                WHERE episode_id = ?
+                ORDER BY id ASC
+                """,
+                (episode_id,),
+            ).fetchall()
+        return [_event_from_row(row) for row in rows]
+
     def add_semantic_memory(
         self,
         subject: str,
