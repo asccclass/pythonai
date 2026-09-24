@@ -289,7 +289,7 @@ def run_agent(
                 print(f"\nRemote service returned HTTP {error.status_code}; retrying in {delay:g} seconds.")
                 sleep(delay)
         assistant_message = response.choices[0].message
-        messages.append(assistant_message)
+        messages.append(assistant_message_to_dict(assistant_message))
 
         if assistant_message.tool_calls:
             for tool_call in assistant_message.tool_calls:
@@ -315,6 +315,17 @@ def run_agent(
             continue
 
         return assistant_message.content or ""
+
+
+def assistant_message_to_dict(assistant_message: Any) -> dict[str, Any]:
+    if hasattr(assistant_message, "model_dump"):
+        return assistant_message.model_dump(exclude_none=True)
+
+    message = {"role": "assistant", "content": getattr(assistant_message, "content", None)}
+    tool_calls = getattr(assistant_message, "tool_calls", None)
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return message
 
 
 def read_user_input(prompt: str = "\nYou: ") -> str:

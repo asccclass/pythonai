@@ -107,7 +107,41 @@ class ServerTests(unittest.TestCase):
             result = server.run_agent(messages)
 
         self.assertEqual(result, "hello")
-        self.assertIs(messages[-1], Choice.message)
+        self.assertEqual(messages[-1], {"role": "assistant", "content": "hello"})
+
+    def test_run_agent_appends_dict_instead_of_sdk_message_object(self):
+        class Message:
+            tool_calls = None
+            content = "hello"
+
+            def model_dump(self, exclude_none=False):
+                self.exclude_none = exclude_none
+                return {"role": "assistant", "content": self.content}
+
+        class Choice:
+            message = Message()
+
+        class Response:
+            choices = [Choice()]
+
+        class Completions:
+            def create(self, **kwargs):
+                return Response()
+
+        class Chat:
+            completions = Completions()
+
+        class Client:
+            chat = Chat()
+
+        messages = [{"role": "user", "content": "hi"}]
+
+        with patch("server.get_client", return_value=Client()):
+            server.run_agent(messages)
+
+        self.assertIsInstance(messages[-1], dict)
+        self.assertEqual(messages[-1]["role"], "assistant")
+        self.assertTrue(Choice.message.exclude_none)
 
     def test_run_agent_retries_transient_status_error(self):
         class Message:
