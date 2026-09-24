@@ -95,20 +95,6 @@ def run_agent(messages):
         return assistant_message.content or ""
 
 
-@app.get("/")
-def root() -> dict[str, Any]:
-    return {
-        "name": "Python AI Mini Agent OpenAI Bridge",
-        "status": "ok",
-        "endpoints": ["/v1/models", "/v1/chat/completions", "/health"],
-    }
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
 @app.get("/v1/models")
 def list_models() -> dict[str, Any]:
     return {
