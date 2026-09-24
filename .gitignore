@@ -8,3 +8,5 @@ models/
 models
 memory.db
 memory.db-*
+memory/*.db
+memory/*.db-*
