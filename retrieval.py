@@ -6,8 +6,11 @@ from typing import Any
 from memory import MemoryStore
 
 
-def build_memory_context(store: MemoryStore, query: str = "", limit: int = 12) -> str:
-    memories = rank_memories(store.active_semantic_memories(), query)[:limit]
+def build_memory_context(store: MemoryStore, query: str = "", limit: int = 12, ranker: Any | None = None) -> str:
+    memories = rank_memories(store.active_semantic_memories(), query)
+    if ranker is not None:
+        memories = ranker.rank(query, memories)
+    memories = memories[:limit]
     if not memories:
         return ""
 

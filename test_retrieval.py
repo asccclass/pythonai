@@ -34,6 +34,23 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("user prefers_language Python", context)
         self.assertNotIn("Taipei", context)
 
+    def test_build_memory_context_uses_ranker_after_lexical_filter(self):
+        class Ranker:
+            def rank(self, query, memories):
+                return list(reversed(memories))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            first_event_id = store.add_event(episode_id, "message", role="user", content="Python one")
+            second_event_id = store.add_event(episode_id, "message", role="user", content="Python two")
+            store.add_semantic_memory("user", "note", "Python first", first_event_id, confidence=0.9)
+            store.add_semantic_memory("user", "note", "Python second", second_event_id, confidence=0.8)
+
+            context = build_memory_context(store, query="Python", ranker=Ranker())
+
+        self.assertLess(context.index("second"), context.index("first"))
+
     def test_build_memory_context_returns_empty_when_query_has_no_relevant_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

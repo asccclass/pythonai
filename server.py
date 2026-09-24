@@ -11,6 +11,7 @@ from openai import OpenAI
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
+from retrieval_ranker import LayaMemoryRanker
 from memory import MemoryStore
 from retrieval import build_memory_context, inject_memory_context
 from working_memory import compact_messages
@@ -200,6 +201,7 @@ def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
     memory_classifier = LayaMemoryClassifier()
+    memory_ranker = LayaMemoryRanker()
     memory = safe_memory_call(MemoryStore)
     print("Mini agent ready. Type 'exit' to quit.")
 
@@ -223,7 +225,7 @@ def main():
             print(f"\n{guard_notice}")
 
         messages.append({"role": "user", "content": user_input})
-        memory_context = safe_memory_call(build_memory_context, memory, query=user_input) if memory is not None else ""
+        memory_context = safe_memory_call(build_memory_context, memory, query=user_input, ranker=memory_ranker) if memory is not None else ""
         if memory_context:
             log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
         agent_messages = inject_memory_context(messages, memory_context)
