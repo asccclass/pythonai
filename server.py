@@ -123,6 +123,35 @@ def episode_events_safely(memory: MemoryStore | None, episode_id: int | None) ->
     return safe_memory_call(memory.episode_events, episode_id) or []
 
 
+def classify_memory_safely(
+    memory_classifier: LayaMemoryClassifier,
+    events: list[dict[str, Any]],
+) -> MemoryCandidateDecision:
+    result = safe_memory_call(memory_classifier.assess_episode, events)
+    if isinstance(result, MemoryCandidateDecision):
+        return result
+    return MemoryCandidateDecision(available=False, reason="Memory classifier failed")
+
+
+def queue_memory_review_candidate(
+    memory: MemoryStore | None,
+    episode_id: int | None,
+    candidate: MemoryCandidateDecision,
+) -> None:
+    if not candidate.should_extract:
+        return
+    log_episode_event(
+        memory,
+        episode_id,
+        "memory_review_candidate",
+        metadata={
+            "memory_kind": candidate.memory_kind,
+            "confidence": candidate.confidence,
+            "reason": candidate.reason,
+        },
+    )
+
+
 def run_agent(messages, memory: MemoryStore | None = None, episode_id: int | None = None):
     while True:
         response = get_client().chat.completions.create(
@@ -222,13 +251,14 @@ def main():
         messages.append({"role": "assistant", "content": reply})
         log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
         episode_events = episode_events_safely(memory, episode_id)
-        memory_candidate = memory_classifier.assess_episode(episode_events or [])
+        memory_candidate = classify_memory_safely(memory_classifier, episode_events or [])
         log_episode_event(
             memory,
             episode_id,
             "memory_candidate_decision",
             metadata={"candidate": memory_candidate},
         )
+        queue_memory_review_candidate(memory, episode_id, memory_candidate)
         finish_episode_safely(memory, episode_id)
         print(f"\nMiniAgent: {reply}")
 

@@ -177,13 +177,42 @@ class ServerTests(unittest.TestCase):
             events = store.recent_events(limit=10)
 
         event_types = [event["event_type"] for event in events]
-        self.assertEqual(event_types, ["memory_candidate_decision", "message", "guard_decision", "message"])
-        self.assertEqual(events[0]["metadata"]["candidate"]["memory_kind"], "semantic")
-        self.assertEqual(events[1]["role"], "assistant")
-        self.assertEqual(events[1]["content"], "hi")
-        self.assertEqual(events[2]["metadata"]["guard"]["intent"], "chat")
-        self.assertEqual(events[3]["role"], "user")
-        self.assertEqual(events[3]["content"], "hello")
+        self.assertEqual(event_types, ["memory_review_candidate", "memory_candidate_decision", "message", "guard_decision", "message"])
+        self.assertEqual(events[0]["metadata"]["memory_kind"], "semantic")
+        self.assertEqual(events[1]["metadata"]["candidate"]["memory_kind"], "semantic")
+        self.assertEqual(events[2]["role"], "assistant")
+        self.assertEqual(events[2]["content"], "hi")
+        self.assertEqual(events[3]["metadata"]["guard"]["intent"], "chat")
+        self.assertEqual(events[4]["role"], "user")
+        self.assertEqual(events[4]["content"], "hello")
+
+    def test_main_continues_when_memory_classifier_fails(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        class Classifier:
+            def assess_episode(self, events):
+                raise RuntimeError("classifier failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.LayaMemoryClassifier", return_value=Classifier()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["hello", "exit"]),
+                patch("server.run_agent", return_value="hi") as run_agent,
+                patch("builtins.print"),
+            ):
+                server.main()
+
+            events = store.recent_events(limit=10)
+
+        run_agent.assert_called_once()
+        self.assertEqual(events[0]["event_type"], "memory_candidate_decision")
+        self.assertFalse(events[0]["metadata"]["candidate"]["available"])
+        self.assertEqual(events[0]["metadata"]["candidate"]["reason"], "Memory classifier failed")
 
     def test_main_logs_working_memory_summary_when_context_is_compacted(self):
         class Guard:
