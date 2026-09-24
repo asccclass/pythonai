@@ -1,6 +1,6 @@
 {
   "repo": "convaiinnovations/laya-multilingual",
-  "model_dir": "D:\\myprograms\\pythonai\\models\\laya-multilingual",
+  "model_dir": "C:\\Users\\andyl\\Go\\pythonai\\models\\laya-multilingual",
   "files": [
     {
       "path": "encoder\\config.json",
