@@ -42,6 +42,29 @@ class LayaGuardTests(unittest.TestCase):
         self.assertEqual(decision.risk, 1.8)
         self.assertTrue(decision.needs_confirmation)
 
+    def test_guard_overrides_clear_write_file_request(self):
+        class Agent:
+            def predict(self, state, questions):
+                return {
+                    "answers": {
+                        "intent": {"choice": "read_file"},
+                        "risk": {"score": 1.24},
+                        "needs_confirmation": {"noul": False},
+                    }
+                }
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            fake_laya = types.SimpleNamespace(load=lambda path: Agent())
+
+            with patch.dict(sys.modules, {"laya": fake_laya}):
+                guard = LayaGuard(model_dir=model_dir)
+
+        decision = guard.assess('幫我把 "This is a test" 寫入 hello.txt')
+
+        self.assertEqual(decision.intent, "write_file")
+        self.assertGreaterEqual(decision.risk, 1.5)
+        self.assertTrue(decision.needs_confirmation)
+
     def test_guard_falls_back_when_prediction_fails(self):
         class Agent:
             def predict(self, state, questions):
