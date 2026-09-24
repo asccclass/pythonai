@@ -122,6 +122,31 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(events[2]["role"], "user")
         self.assertEqual(events[2]["content"], "hello")
 
+    def test_main_logs_working_memory_summary_when_context_is_compacted(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        compacted = [{"role": "system", "content": "summary"}, {"role": "user", "content": "hello"}]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["hello", "exit"]),
+                patch("server.compact_messages", return_value=(compacted, "old context")),
+                patch("server.run_agent", return_value="hi"),
+                patch("builtins.print"),
+            ):
+                server.main()
+
+            events = store.recent_events(limit=10)
+
+        self.assertIn("working_memory_summary", [event["event_type"] for event in events])
+        summary_events = [event for event in events if event["event_type"] == "working_memory_summary"]
+        self.assertEqual(summary_events[0]["content"], "old context")
+
     def test_format_guard_notice_warns_when_laya_unavailable(self):
         decision = server.GuardDecision(available=False, reason="missing package")
 

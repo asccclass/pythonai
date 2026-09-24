@@ -10,6 +10,7 @@ from openai import OpenAI
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
 from memory import MemoryStore
+from working_memory import compact_messages
 
 
 load_dotenv()
@@ -126,6 +127,10 @@ def main():
             print(f"\n{guard_notice}")
 
         messages.append({"role": "user", "content": user_input})
+        compacted_messages, working_summary = compact_messages(messages)
+        if working_summary is not None:
+            messages[:] = compacted_messages
+            memory.add_event(episode_id, "working_memory_summary", content=working_summary)
         try:
             reply = run_agent(messages)
         except ValueError as e:
