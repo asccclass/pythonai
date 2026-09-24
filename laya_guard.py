@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shlex
 from typing import Any
 
 
@@ -81,3 +82,8 @@ class LayaGuard:
             risk=float(risk_answer.get("score", 0.0)),
             needs_confirmation=bool(confirmation_answer.get("noul", False)),
         )
+
+    def assess_command(self, command: list[str], cwd: str | Path | None = None) -> GuardDecision:
+        command_text = " ".join(shlex.quote(part) for part in command)
+        cwd_text = str(cwd) if cwd is not None else "."
+        return self.assess(f"Run local command: {command_text}\nWorking directory: {cwd_text}")

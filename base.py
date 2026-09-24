@@ -4,6 +4,12 @@ import platform
 import subprocess
 from pathlib import Path
 
+from laya_guard import GuardDecision, LayaGuard
+
+
+_approved_commands: set[tuple[tuple[str, ...], str | None]] = set()
+_command_guard: LayaGuard | None = None
+
 
 def read_file(path: str | Path) -> str:
     try:
@@ -43,15 +49,31 @@ def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def get_command_guard() -> LayaGuard:
+    global _command_guard
+    if _command_guard is None:
+        _command_guard = LayaGuard()
+    return _command_guard
+
+
+def command_key(command: list[str], cwd: str | Path | None = None) -> tuple[tuple[str, ...], str | None]:
+    return tuple(command), str(cwd) if cwd is not None else None
+
+
 def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
-    answer = input(f" Run '{command}'? [y/N]: ")
-    if answer.lower() != "y":
-        return subprocess.CompletedProcess(
-            args=command,
-            returncode=1,
-            stdout="",
-            stderr="User cancelled",
-        )
+    key = command_key(command, cwd)
+    if key not in _approved_commands:
+        decision = get_command_guard().assess_command(command, cwd)
+        if decision.needs_confirmation or not decision.available:
+            answer = input(f" Run '{command}'? [y/N]: ")
+            if answer.lower() != "y":
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=1,
+                    stdout="",
+                    stderr="User cancelled",
+                )
+        _approved_commands.add(key)
     return subprocess.run(
         command,
         cwd=cwd,

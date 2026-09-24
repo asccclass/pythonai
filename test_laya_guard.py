@@ -65,6 +65,35 @@ class LayaGuardTests(unittest.TestCase):
         self.assertEqual(decision.risk, 1.7)
         self.assertTrue(decision.needs_confirmation)
 
+    def test_guard_assesses_command(self):
+        class Agent:
+            received_state = None
+
+            def predict(self, state, questions):
+                self.received_state = state
+                return {
+                    "answers": {
+                        "intent": {"choice": "run_command"},
+                        "risk": {"score": 0.4},
+                        "needs_confirmation": {"noul": False},
+                    }
+                }
+
+        agent = Agent()
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            fake_laya = types.SimpleNamespace(load=lambda path: agent)
+
+            with patch.dict(sys.modules, {"laya": fake_laya}):
+                guard = LayaGuard(model_dir=model_dir)
+
+        decision = guard.assess_command(["python", "-m", "unittest"], cwd=".")
+
+        self.assertEqual(decision.intent, "run_command")
+        self.assertFalse(decision.needs_confirmation)
+        self.assertIn("Run local command:", agent.received_state["message"])
+        self.assertIn("python -m unittest", agent.received_state["message"])
+
     def test_guard_falls_back_when_prediction_fails(self):
         class Agent:
             def predict(self, state, questions):
