@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import re
 from typing import Any
 
 
@@ -30,10 +29,6 @@ GUARD_QUESTIONS = {
 }
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "laya-multilingual"
-WRITE_INTENT_PATTERN = re.compile(
-    r"(write|save|create|edit|modify|overwrite|append|delete|寫入|儲存|保存|建立|新增|修改|編輯|覆寫|刪除)"
-)
-FILE_REFERENCE_PATTERN = re.compile(r"[\w.-]+\.[A-Za-z0-9]+")
 
 
 @dataclass(frozen=True)
@@ -63,17 +58,6 @@ class LayaGuard:
     def available(self) -> bool:
         return self._agent is not None
 
-    def _apply_deterministic_overrides(self, user_input: str, decision: GuardDecision) -> GuardDecision:
-        if WRITE_INTENT_PATTERN.search(user_input) and FILE_REFERENCE_PATTERN.search(user_input):
-            return GuardDecision(
-                intent="write_file",
-                risk=max(decision.risk, 1.5),
-                needs_confirmation=True,
-                available=decision.available,
-                reason=decision.reason,
-            )
-        return decision
-
     def assess(self, user_input: str) -> GuardDecision:
         if self._agent is None:
             return GuardDecision(
@@ -91,9 +75,8 @@ class LayaGuard:
         risk_answer = answers.get("risk", {})
         confirmation_answer = answers.get("needs_confirmation", {})
 
-        decision = GuardDecision(
+        return GuardDecision(
             intent=str(intent_answer.get("choice", "chat")),
             risk=float(risk_answer.get("score", 0.0)),
             needs_confirmation=bool(confirmation_answer.get("noul", False)),
         )
-        return self._apply_deterministic_overrides(user_input, decision)
