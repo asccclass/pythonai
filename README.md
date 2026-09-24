@@ -46,6 +46,10 @@ python .\server.py
 
 Type a message at the `You:` prompt. Type `exit` or `quit` to stop.
 
+## Memory
+
+The agent records episodic memory in a local SQLite database at `memory.db`. This file is ignored by Git. Set `MEMORY_DB_PATH` to use a different database location.
+
 ## Tools
 
 The agent exposes these local tools to the model:
@@ -66,5 +70,5 @@ python -m unittest
 Run syntax checks:
 
 ```powershell
-python -m py_compile base.py server.py laya_guard.py test_base.py test_server.py test_laya_guard.py
+python -m py_compile base.py server.py laya_guard.py memory.py test_base.py test_server.py test_laya_guard.py test_memory.py
 ```

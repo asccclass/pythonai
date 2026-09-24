@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
+from memory import MemoryStore
 
 
 load_dotenv()
@@ -103,6 +104,7 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
 def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     guard = LayaGuard()
+    memory = MemoryStore()
     print("Mini agent ready. Type 'exit' to quit.")
 
     while True:
@@ -110,7 +112,16 @@ def main():
         if user_input.lower() in ("exit", "quit"):
             break
 
-        guard_notice = format_guard_notice(guard.assess(user_input))
+        episode_id = memory.start_episode()
+        memory.add_event(episode_id, "message", role="user", content=user_input)
+
+        guard_decision = guard.assess(user_input)
+        guard_notice = format_guard_notice(guard_decision)
+        memory.add_event(
+            episode_id,
+            "guard_decision",
+            metadata={"guard": guard_decision},
+        )
         if guard_notice:
             print(f"\n{guard_notice}")
 
@@ -118,14 +129,22 @@ def main():
         try:
             reply = run_agent(messages)
         except ValueError as e:
+            memory.add_event(episode_id, "error", content=str(e), metadata={"error_type": "ValueError"})
+            memory.finish_episode(episode_id, status="failed")
             print(f"\nConfiguration error: {e}")
             break
         except AuthenticationError as e:
+            memory.add_event(episode_id, "error", content=str(e), metadata={"error_type": "AuthenticationError"})
+            memory.finish_episode(episode_id, status="failed")
             print(f"\n{format_authentication_error(e)}")
             break
         except APIStatusError as e:
+            memory.add_event(episode_id, "error", content=str(e), metadata={"error_type": "APIStatusError"})
+            memory.finish_episode(episode_id, status="failed")
             print(f"\n{format_api_status_error(e)}")
             break
+        memory.add_event(episode_id, "message", role="assistant", content=reply)
+        memory.finish_episode(episode_id)
         print(f"\nMiniAgent: {reply}")
 
 if __name__ == "__main__":

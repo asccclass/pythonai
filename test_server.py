@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import patch
+import tempfile
+from pathlib import Path
 
 import base
+from memory import MemoryStore
 import server
 
 
@@ -92,6 +95,32 @@ class ServerTests(unittest.TestCase):
     def test_read_user_input_treats_ctrl_c_as_exit(self):
         with patch("builtins.input", side_effect=KeyboardInterrupt):
             self.assertEqual(server.read_user_input(), "exit")
+
+    def test_main_logs_episode_memory_for_completed_turn(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["hello", "exit"]),
+                patch("server.run_agent", return_value="hi"),
+                patch("builtins.print"),
+            ):
+                server.main()
+
+            events = store.recent_events(limit=10)
+
+        event_types = [event["event_type"] for event in events]
+        self.assertEqual(event_types, ["message", "guard_decision", "message"])
+        self.assertEqual(events[0]["role"], "assistant")
+        self.assertEqual(events[0]["content"], "hi")
+        self.assertEqual(events[1]["metadata"]["guard"]["intent"], "chat")
+        self.assertEqual(events[2]["role"], "user")
+        self.assertEqual(events[2]["content"], "hello")
 
     def test_format_guard_notice_warns_when_laya_unavailable(self):
         decision = server.GuardDecision(available=False, reason="missing package")
