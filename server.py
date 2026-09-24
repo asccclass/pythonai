@@ -8,6 +8,7 @@ from openai import APIStatusError, AuthenticationError
 from openai import OpenAI
 
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
+from laya_guard import GuardDecision, LayaGuard
 
 
 load_dotenv()
@@ -59,6 +60,19 @@ message = [
     {"role": "user", "content": "You are a helpful assistant."}
 ]
 
+
+def format_guard_notice(decision: GuardDecision) -> str:
+    if not decision.available:
+        return f"Laya guard unavailable; continuing without guard. {decision.reason}"
+    if decision.needs_confirmation or decision.risk >= 1.5:
+        return (
+            "Laya guard: "
+            f"intent={decision.intent}, risk={decision.risk:.2f}, "
+            f"needs_confirmation={decision.needs_confirmation}"
+        )
+    return ""
+
+
 def run_agent(messages):
     while True:
         response = get_client().chat.completions.create(
@@ -79,12 +93,17 @@ def run_agent(messages):
 
 def main():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    guard = LayaGuard()
     print("Mini agent ready. Type 'exit' to quit.")
 
     while True:
         user_input = input("\nYou: ")
         if user_input.lower() in ("exit", "quit"):
             break
+
+        guard_notice = format_guard_notice(guard.assess(user_input))
+        if guard_notice:
+            print(f"\n{guard_notice}")
 
         messages.append({"role": "user", "content": user_input})
         try:

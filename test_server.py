@@ -89,6 +89,31 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(result, "hello")
         self.assertIs(messages[-1], Choice.message)
 
+    def test_format_guard_notice_warns_when_laya_unavailable(self):
+        decision = server.GuardDecision(available=False, reason="missing package")
+
+        notice = server.format_guard_notice(decision)
+
+        self.assertIn("continuing without guard", notice)
+        self.assertIn("missing package", notice)
+
+    def test_format_guard_notice_warns_for_risky_request(self):
+        decision = server.GuardDecision(
+            intent="run_command",
+            risk=1.5,
+            needs_confirmation=True,
+        )
+
+        notice = server.format_guard_notice(decision)
+
+        self.assertIn("intent=run_command", notice)
+        self.assertIn("needs_confirmation=True", notice)
+
+    def test_format_guard_notice_is_empty_for_low_risk_request(self):
+        decision = server.GuardDecision(intent="chat", risk=0.2, needs_confirmation=False)
+
+        self.assertEqual(server.format_guard_notice(decision), "")
+
 
 if __name__ == "__main__":
     unittest.main()

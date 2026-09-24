@@ -14,6 +14,14 @@ python -m pip install openai
 python download_model.py  // 只需要執行一次
 ```
 
+Optional Laya guard layer:
+
+```powershell
+python -m pip install laya
+```
+
+When installed, Laya classifies each user request before it is sent to the agent and prints a warning for risky or confirmation-worthy requests. If Laya is not installed or cannot load, the agent continues without the guard.
+
 ## Configuration
 
 Create a local `.env` file in the project root:
@@ -58,5 +66,5 @@ python -m unittest
 Run syntax checks:
 
 ```powershell
-python -m py_compile base.py server.py test_base.py test_server.py
+python -m py_compile base.py server.py laya_guard.py test_base.py test_server.py test_laya_guard.py
 ```
