@@ -11,6 +11,8 @@ from openai import OpenAI
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
+from memory_review import process_memory_review_candidates
+from forgetting import run_forgetting_policy
 from retrieval_ranker import LayaMemoryRanker
 from memory import MemoryStore
 from retrieval import build_memory_context, inject_memory_context
@@ -229,10 +231,17 @@ def main():
         if memory_context:
             log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
         agent_messages = inject_memory_context(messages, memory_context)
-        compacted_messages, working_summary = compact_messages(agent_messages)
+        compacted_messages, working_summary, preservation_decision = compact_messages(agent_messages)
         if working_summary is not None:
             agent_messages = compacted_messages
             log_episode_event(memory, episode_id, "working_memory_summary", content=working_summary)
+            if preservation_decision is not None and preservation_decision.should_preserve:
+                log_episode_event(
+                    memory,
+                    episode_id,
+                    "working_memory_preservation_candidate",
+                    metadata={"preservation": preservation_decision},
+                )
         try:
             reply = run_agent(agent_messages, memory=memory, episode_id=episode_id)
         except ValueError as e:
@@ -261,6 +270,8 @@ def main():
             metadata={"candidate": memory_candidate},
         )
         queue_memory_review_candidate(memory, episode_id, memory_candidate)
+        safe_memory_call(process_memory_review_candidates, memory, episode_id) if memory is not None and episode_id is not None else None
+        safe_memory_call(run_forgetting_policy, memory) if memory is not None else None
         finish_episode_safely(memory, episode_id)
         print(f"\nMiniAgent: {reply}")
 

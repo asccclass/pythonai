@@ -1,6 +1,6 @@
 import unittest
 
-from working_memory import compact_messages, normalize_content, summarize_messages
+from working_memory import PreservationDecision, compact_messages, normalize_content, summarize_messages
 
 
 class WorkingMemoryTests(unittest.TestCase):
@@ -9,9 +9,10 @@ class WorkingMemoryTests(unittest.TestCase):
         for index in range(1, 8):
             messages.append({"role": "user", "content": f"message {index}"})
 
-        compacted, summary = compact_messages(messages, max_messages=5, keep_recent=3)
+        compacted, summary, preservation = compact_messages(messages, max_messages=5, keep_recent=3)
 
         self.assertIsNotNone(summary)
+        self.assertEqual(preservation, PreservationDecision())
         self.assertEqual(compacted[0], {"role": "system", "content": "system"})
         self.assertEqual(compacted[1]["role"], "system")
         self.assertIn("Earlier conversation summary", compacted[1]["content"])
@@ -21,10 +22,35 @@ class WorkingMemoryTests(unittest.TestCase):
     def test_compact_messages_returns_original_when_under_limit(self):
         messages = [{"role": "user", "content": "hello"}]
 
-        compacted, summary = compact_messages(messages, max_messages=5)
+        compacted, summary, preservation = compact_messages(messages, max_messages=5)
 
         self.assertIs(compacted, messages)
         self.assertIsNone(summary)
+        self.assertIsNone(preservation)
+
+    def test_compact_messages_uses_preservation_classifier(self):
+        class Classifier:
+            def predict(self, state, questions):
+                return {
+                    "answers": {
+                        "should_preserve": {"noul": True},
+                        "preservation_kind": {"choice": "semantic"},
+                    }
+                }
+
+        messages = [{"role": "system", "content": "system"}]
+        for index in range(1, 8):
+            messages.append({"role": "user", "content": f"message {index}"})
+
+        compacted, summary, preservation = compact_messages(
+            messages,
+            max_messages=5,
+            keep_recent=3,
+            preservation_classifier=Classifier(),
+        )
+
+        self.assertTrue(preservation.should_preserve)
+        self.assertEqual(preservation.preservation_kind, "semantic")
 
     def test_summarize_messages_includes_roles(self):
         summary = summarize_messages(

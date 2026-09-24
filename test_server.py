@@ -177,14 +177,18 @@ class ServerTests(unittest.TestCase):
             events = store.recent_events(limit=10)
 
         event_types = [event["event_type"] for event in events]
-        self.assertEqual(event_types, ["memory_review_candidate", "memory_candidate_decision", "message", "guard_decision", "message"])
+        self.assertEqual(
+            event_types,
+            ["memory_review_result", "memory_review_candidate", "memory_candidate_decision", "message", "guard_decision", "message"],
+        )
         self.assertEqual(events[0]["metadata"]["memory_kind"], "semantic")
-        self.assertEqual(events[1]["metadata"]["candidate"]["memory_kind"], "semantic")
-        self.assertEqual(events[2]["role"], "assistant")
-        self.assertEqual(events[2]["content"], "hi")
-        self.assertEqual(events[3]["metadata"]["guard"]["intent"], "chat")
-        self.assertEqual(events[4]["role"], "user")
-        self.assertEqual(events[4]["content"], "hello")
+        self.assertEqual(events[1]["metadata"]["memory_kind"], "semantic")
+        self.assertEqual(events[2]["metadata"]["candidate"]["memory_kind"], "semantic")
+        self.assertEqual(events[3]["role"], "assistant")
+        self.assertEqual(events[3]["content"], "hi")
+        self.assertEqual(events[4]["metadata"]["guard"]["intent"], "chat")
+        self.assertEqual(events[5]["role"], "user")
+        self.assertEqual(events[5]["content"], "hello")
 
     def test_main_continues_when_memory_classifier_fails(self):
         class Guard:
@@ -227,7 +231,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.LayaGuard", return_value=Guard()),
                 patch("server.MemoryStore", return_value=store),
                 patch("server.read_user_input", side_effect=["hello", "exit"]),
-                patch("server.compact_messages", return_value=(compacted, "old context")),
+                patch("server.compact_messages", return_value=(compacted, "old context", None)),
                 patch("server.run_agent", return_value="hi"),
                 patch("builtins.print"),
             ):

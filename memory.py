@@ -208,6 +208,33 @@ class MemoryStore:
             rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
+    def archived_semantic_memories(self) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, subject, predicate, object, confidence, source_event_id,
+                       created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
+                FROM semantic_memories
+                WHERE archived_at IS NOT NULL
+                ORDER BY archived_at DESC, id DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def archive_semantic_memory(self, memory_id: int, reason: str = "archived") -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE semantic_memories
+                SET archived_at = CURRENT_TIMESTAMP,
+                    archive_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (reason, memory_id),
+            )
+            connection.commit()
+
     def supersede_semantic_memory(
         self,
         old_memory_id: int,
@@ -324,6 +351,34 @@ class MemoryStore:
                 (reason, procedure_id),
             )
             connection.commit()
+
+    def archived_procedures(self) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, task_type, context_pattern, steps, confidence, success_count,
+                       failure_count, source_episode_id, created_at, updated_at,
+                       last_success_at, archived_at, archive_reason
+                FROM procedures
+                WHERE archived_at IS NOT NULL
+                ORDER BY archived_at DESC, id DESC
+                """
+            ).fetchall()
+        return [_procedure_from_row(row) for row in rows]
+
+    def review_candidates(self, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, episode_id, event_type, role, content, metadata, created_at
+                FROM episode_events
+                WHERE event_type IN ('memory_review_candidate', 'memory_review_result')
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_event_from_row(row) for row in rows]
 
 
 def _event_from_row(row: sqlite3.Row) -> dict[str, Any]:
