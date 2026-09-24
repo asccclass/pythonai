@@ -52,6 +52,8 @@ The agent records episodic memory in a local SQLite database at `memory.db`. Thi
 
 The memory store also supports semantic memories as auditable subject-predicate-object facts linked back to source episode events.
 
+Procedural memories store reusable workflows with success and failure counts linked back to source episodes.
+
 ## Tools
 
 The agent exposes these local tools to the model:

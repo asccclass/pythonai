@@ -96,6 +96,60 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertEqual(memories, [])
 
+    def test_store_adds_and_queries_active_procedure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+
+            procedure_id = store.add_procedure(
+                task_type="run_tests",
+                context_pattern="python project",
+                steps=["python -m unittest", "python -m py_compile base.py"],
+                source_episode_id=episode_id,
+                confidence=0.8,
+            )
+            procedures = store.active_procedures(task_type="run_tests")
+
+        self.assertEqual(len(procedures), 1)
+        self.assertEqual(procedures[0]["id"], procedure_id)
+        self.assertEqual(procedures[0]["steps"], ["python -m unittest", "python -m py_compile base.py"])
+        self.assertEqual(procedures[0]["success_count"], 1)
+        self.assertEqual(procedures[0]["failure_count"], 0)
+
+    def test_store_records_procedure_results(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            procedure_id = store.add_procedure(
+                "run_tests",
+                "python project",
+                ["python -m unittest"],
+                source_episode_id=episode_id,
+            )
+
+            store.record_procedure_result(procedure_id, succeeded=True)
+            store.record_procedure_result(procedure_id, succeeded=False)
+            procedures = store.active_procedures(task_type="run_tests")
+
+        self.assertEqual(procedures[0]["success_count"], 2)
+        self.assertEqual(procedures[0]["failure_count"], 1)
+
+    def test_store_excludes_archived_procedures(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            procedure_id = store.add_procedure(
+                "run_tests",
+                "python project",
+                ["python -m unittest"],
+                source_episode_id=episode_id,
+            )
+
+            store.archive_procedure(procedure_id, reason="obsolete")
+            procedures = store.active_procedures(task_type="run_tests")
+
+        self.assertEqual(procedures, [])
+
 
 if __name__ == "__main__":
     unittest.main()

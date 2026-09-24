@@ -74,6 +74,26 @@ class MemoryStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS procedures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_type TEXT NOT NULL,
+                    context_pattern TEXT NOT NULL,
+                    steps TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    source_episode_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_success_at TEXT,
+                    archived_at TEXT,
+                    archive_reason TEXT,
+                    FOREIGN KEY (source_episode_id) REFERENCES episodes(id)
+                )
+                """
+            )
             connection.commit()
 
     def start_episode(self) -> int:
@@ -208,11 +228,101 @@ class MemoryStore:
             connection.commit()
             return new_memory_id
 
+    def add_procedure(
+        self,
+        task_type: str,
+        context_pattern: str,
+        steps: list[str],
+        source_episode_id: int,
+        confidence: float = 0.5,
+        success_count: int = 1,
+        failure_count: int = 0,
+    ) -> int:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO procedures (
+                    task_type, context_pattern, steps, confidence,
+                    success_count, failure_count, source_episode_id,
+                    last_success_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? > 0 THEN CURRENT_TIMESTAMP ELSE NULL END)
+                """,
+                (
+                    task_type,
+                    context_pattern,
+                    json.dumps(steps, ensure_ascii=False),
+                    confidence,
+                    success_count,
+                    failure_count,
+                    source_episode_id,
+                    success_count,
+                ),
+            )
+            connection.commit()
+            return int(cursor.lastrowid)
+
+    def active_procedures(self, task_type: str | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT id, task_type, context_pattern, steps, confidence, success_count,
+                   failure_count, source_episode_id, created_at, updated_at,
+                   last_success_at, archived_at, archive_reason
+            FROM procedures
+            WHERE archived_at IS NULL
+        """
+        params: list[Any] = []
+        if task_type is not None:
+            query += " AND task_type = ?"
+            params.append(task_type)
+        query += " ORDER BY confidence DESC, success_count DESC, updated_at DESC, id DESC"
+
+        with closing(self.connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_procedure_from_row(row) for row in rows]
+
+    def record_procedure_result(self, procedure_id: int, succeeded: bool) -> None:
+        success_increment = 1 if succeeded else 0
+        failure_increment = 0 if succeeded else 1
+        success_timestamp = ", last_success_at = CURRENT_TIMESTAMP" if succeeded else ""
+        with closing(self.connect()) as connection:
+            connection.execute(
+                f"""
+                UPDATE procedures
+                SET success_count = success_count + ?,
+                    failure_count = failure_count + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                    {success_timestamp}
+                WHERE id = ?
+                """,
+                (success_increment, failure_increment, procedure_id),
+            )
+            connection.commit()
+
+    def archive_procedure(self, procedure_id: int, reason: str = "archived") -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE procedures
+                SET archived_at = CURRENT_TIMESTAMP,
+                    archive_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (reason, procedure_id),
+            )
+            connection.commit()
+
 
 def _event_from_row(row: sqlite3.Row) -> dict[str, Any]:
     event = dict(row)
     event["metadata"] = json.loads(event["metadata"] or "{}")
     return event
+
+
+def _procedure_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    procedure = dict(row)
+    procedure["steps"] = json.loads(procedure["steps"] or "[]")
+    return procedure
 
 
 def _jsonable(value: Any) -> Any:
