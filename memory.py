@@ -165,6 +165,23 @@ class MemoryStore:
             ).fetchall()
         return [_event_from_row(row) for row in rows]
 
+    def message_events(self, limit: int = 50, episode_id: int | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT id, episode_id, event_type, role, content, metadata, created_at
+            FROM episode_events
+            WHERE event_type = 'message'
+        """
+        params: list[Any] = []
+        if episode_id is not None:
+            query += " AND episode_id = ?"
+            params.append(episode_id)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+
+        with closing(self.connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_event_from_row(row) for row in rows]
+
     def add_semantic_memory(
         self,
         subject: str,

@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from memory import MemoryStore
-from observability import inspect_episode, main, memory_overview
+from observability import inspect_episode, main, memory_messages, memory_overview
 
 
 class ObservabilityTests(unittest.TestCase):
@@ -34,6 +34,20 @@ class ObservabilityTests(unittest.TestCase):
         self.assertEqual(result["episode_id"], episode_id)
         self.assertEqual(result["events"][0]["content"], "hello")
 
+    def test_memory_messages_returns_only_message_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_event(episode_id, "guard_decision", metadata={"intent": "chat"})
+            store.add_event(episode_id, "message", role="assistant", content="hi")
+
+            result = memory_messages(store, episode_id=episode_id)
+
+        self.assertEqual(result["episode_id"], episode_id)
+        self.assertEqual([message["content"] for message in result["messages"]], ["hi", "hello"])
+        self.assertEqual({message["event_type"] for message in result["messages"]}, {"message"})
+
     def test_cli_overview_prints_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "memory.db"
@@ -46,6 +60,23 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("recent_events", print_mock.call_args.args[0])
+
+    def test_cli_messages_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "memory.db"
+            store = MemoryStore(db_path)
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="hello")
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "messages", "--episode-id", str(episode_id), "--limit", "5"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        printed = print_mock.call_args.args[0]
+        self.assertIn('"messages"', printed)
+        self.assertIn("hello", printed)
 
 
 if __name__ == "__main__":

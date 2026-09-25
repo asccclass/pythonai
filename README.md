@@ -60,6 +60,8 @@ Inspect memory from the command line:
 ```powershell
 python .\observability.py overview
 python .\observability.py episode --episode-id 1
+python .\observability.py messages --limit 50
+python .\observability.py messages --episode-id 1
 ```
 
 ## Tools
