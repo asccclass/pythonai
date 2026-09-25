@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from memory import MemoryStore
-from observability import inspect_episode, main, memory_messages, memory_overview
+from observability import inspect_episode, list_skills, main, memory_messages, memory_overview, skill_runs
 
 
 class ObservabilityTests(unittest.TestCase):
@@ -77,6 +77,42 @@ class ObservabilityTests(unittest.TestCase):
         printed = print_mock.call_args.args[0]
         self.assertIn('"messages"', printed)
         self.assertIn("hello", printed)
+
+    def test_list_skills_returns_registry_skills(self):
+        class Skill:
+            def to_dict(self):
+                return {"name": "example_skill"}
+
+        class Registry:
+            def list(self):
+                return [Skill()]
+
+        self.assertEqual(list_skills(Registry()), {"skills": [{"name": "example_skill"}]})
+
+    def test_skill_runs_returns_skill_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "skill_result", metadata={"skill": "example_skill", "success": True})
+
+            result = skill_runs(store)
+
+        self.assertEqual(result["events"][0]["event_type"], "skill_result")
+
+    def test_cli_skill_runs_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "memory.db"
+            store = MemoryStore(db_path)
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "skill_result", metadata={"skill": "example_skill", "success": True})
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "skill-runs", "--limit", "5"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("skill_result", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":

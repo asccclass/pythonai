@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from laya_guard import GuardDecision, LayaGuard
+from skills import SkillExecutor, SkillRegistry
 
 
 _approved_commands: set[tuple[tuple[str, ...], str | None]] = set()
@@ -83,6 +84,12 @@ def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess
     )
 
 
+def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None) -> dict:
+    skill = SkillRegistry().get(name)
+    result = SkillExecutor(TOOLS, memory=memory, episode_id=episode_id).execute(skill, inputs or {})
+    return result.to_dict()
+
+
 def load_dotenv(path: str | Path = ".env") -> None:
     """Load simple KEY=value pairs into the process environment."""
 
@@ -107,6 +114,7 @@ TOOLS = {
     "write_file": write_file,
     "delete_file": delete_file,
     "run_command": run_command,
+    "run_skill": run_skill,
 }
 
 
@@ -118,6 +126,20 @@ def run_tool(tool_call):
     try:
         result = TOOLS[name](**args)
         return result
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None):
+    name = tool_call.function.name
+    args = json.loads(tool_call.function.arguments)
+    if name == "run_skill":
+        args["memory"] = memory
+        args["episode_id"] = episode_id
+    if name not in TOOLS:
+        return f"Error: Tool '{name}' not found"
+    try:
+        return TOOLS[name](**args)
     except Exception as e:
         return f"Error: {e}"
 
@@ -213,6 +235,27 @@ TOOLS_SCHEMAS = [
                         }
                     },
                     "required": ["command"]
+                }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+                "name": "run_skill",
+                "description": "Run a local registered Skill by name with structured inputs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The local Skill name"
+                        },
+                        "inputs": {
+                            "type": "object",
+                            "description": "Skill inputs matching the Skill input schema"
+                        }
+                    },
+                    "required": ["name"]
                 }
         }
     }

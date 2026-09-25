@@ -72,6 +72,19 @@ The agent exposes these local tools to the model:
 - `list_files`: list files in a directory
 - `write_file`: write text to a file
 - `run_command`: run a command after interactive confirmation
+- `run_skill`: run a local registered Skill
+
+## Skills
+
+Local Skills live under `skills\<skill_name>\` with a `skill.json` metadata file and a `SKILL.md` instruction file. The first implementation supports deterministic `tool_sequence` Skills that call existing tools through an explicit allowlist.
+
+Inspect Skills and Skill runs from the command line:
+
+```powershell
+python .\observability.py skills
+python .\observability.py skill --name example_skill
+python .\observability.py skill-runs --limit 20
+```
 
 ## Tests
 
@@ -84,5 +97,5 @@ python -m unittest discover -s tests -p "test_*.py"
 Run syntax checks:
 
 ```powershell
-python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py request_budget.py retrieval.py retrieval_ranker.py semantic_extractor.py vector_search.py working_memory.py tests\test_base.py tests\test_forgetting.py tests\test_laya_guard.py tests\test_memory.py tests\test_memory_classifier.py tests\test_memory_review.py tests\test_observability.py tests\test_procedure_similarity.py tests\test_retrieval.py tests\test_retrieval_ranker.py tests\test_semantic_extractor.py tests\test_vector_search.py tests\test_server.py tests\test_working_memory.py
+python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py request_budget.py retrieval.py retrieval_ranker.py semantic_extractor.py skills.py vector_search.py working_memory.py tests\test_base.py tests\test_forgetting.py tests\test_laya_guard.py tests\test_memory.py tests\test_memory_classifier.py tests\test_memory_review.py tests\test_observability.py tests\test_procedure_similarity.py tests\test_retrieval.py tests\test_retrieval_ranker.py tests\test_semantic_extractor.py tests\test_skills.py tests\test_vector_search.py tests\test_server.py tests\test_working_memory.py
 ```

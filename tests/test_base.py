@@ -6,7 +6,7 @@ import os
 from unittest.mock import patch
 
 import base
-from base import delete_file, list_files, load_dotenv, read_file, run_command, write_file
+from base import delete_file, list_files, load_dotenv, read_file, run_command, run_skill, write_file
 
 
 class BaseTests(unittest.TestCase):
@@ -166,6 +166,32 @@ class BaseTests(unittest.TestCase):
         finally:
             os.environ.pop("TEST_DOTENV_VALUE", None)
             env_path.unlink()
+
+    def test_run_skill_executes_registered_skill(self):
+        class Registry:
+            def get(self, name):
+                self.name = name
+                from skills import Skill
+
+                return Skill(
+                    name="read_note",
+                    description="Read a note.",
+                    triggers=[],
+                    inputs={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+                    allowed_tools=["read_file"],
+                    execution={"mode": "tool_sequence", "steps": [{"tool": "read_file", "args": {"path": "{{path}}"}}]},
+                    path=Path("."),
+                    instructions="",
+                )
+
+        with (
+            patch("base.SkillRegistry", return_value=Registry()),
+            patch.dict(base.TOOLS, {"read_file": lambda path: "hello"}),
+        ):
+            result = run_skill("read_note", {"path": "note.txt"})
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["steps"][0]["output"], "hello")
 
 
 if __name__ == "__main__":

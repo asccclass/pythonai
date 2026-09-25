@@ -9,7 +9,7 @@ from typing import Any, Callable
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
 from openai import OpenAI
 
-from base import TOOLS_SCHEMAS, load_dotenv, run_tool
+from base import TOOLS_SCHEMAS, load_dotenv, run_tool_with_context
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from memory_review import process_memory_review_candidates
@@ -19,6 +19,7 @@ from semantic_extractor import LLMSemanticExtractor
 from forgetting import run_forgetting_policy
 from memory import MemoryStore
 from retrieval import build_memory_context, inject_memory_context
+from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
 from working_memory import compact_messages
 
@@ -303,7 +304,7 @@ def run_agent(
                         "arguments": tool_call.function.arguments,
                     },
                 )
-                result = run_tool(tool_call)
+                result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
                 log_episode_event(
                     memory,
                     episode_id,
@@ -342,6 +343,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     memory_classifier_factory = LayaMemoryClassifier
     memory = safe_memory_call(MemoryStore)
     memory_searcher = VectorMemorySearcher(OpenAICompatibleEmbeddingProvider(get_client, OLLAMA_EMBEDDING_MODEL), store=memory)
+    skill_matcher = SkillMatcher(SkillRegistry())
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     procedure_matcher = LLMProcedureSimilarityMatcher(get_client, OLLAMA_MODEL)
     worker = MemoryReviewWorker(async_mode=async_memory_review)
@@ -369,6 +371,14 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
                 print(f"\n{guard_notice}")
 
             messages.append({"role": "user", "content": user_input})
+            skill_matches = safe_memory_call(skill_matcher.match, user_input) or []
+            if skill_matches:
+                log_episode_event(
+                    memory,
+                    episode_id,
+                    "skill_candidates",
+                    metadata={"candidates": [match.to_dict() for match in skill_matches]},
+                )
             memory_context = (
                 safe_memory_call(
                     build_memory_context,

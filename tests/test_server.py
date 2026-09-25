@@ -233,7 +233,7 @@ class ServerTests(unittest.TestCase):
             episode_id = store.start_episode()
             with (
                 patch("server.get_client", return_value=Client()),
-                patch("server.run_tool", return_value=["sample.txt"]),
+                patch("server.run_tool_with_context", return_value=["sample.txt"]),
             ):
                 result = server.run_agent([{"role": "user", "content": "list"}], memory=store, episode_id=episode_id)
 
@@ -244,6 +244,36 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(events[1]["metadata"]["name"], "list_files")
         self.assertEqual(events[0]["metadata"]["tool_call_id"], "tool-1")
         self.assertEqual(events[0]["content"], "['sample.txt']")
+
+    def test_main_logs_skill_candidates(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        class Match:
+            def to_dict(self):
+                return {"name": "read_note", "reason": "trigger:read note"}
+
+        class Matcher:
+            def match(self, text):
+                return [Match()]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.SkillMatcher", return_value=Matcher()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["read note", "exit"]),
+                patch("server.run_agent", return_value="hi"),
+                patch("builtins.print"),
+            ):
+                server.main(async_memory_review=False)
+
+            events = store.recent_events(limit=10)
+
+        skill_events = [event for event in events if event["event_type"] == "skill_candidates"]
+        self.assertEqual(skill_events[0]["metadata"]["candidates"][0]["name"], "read_note")
 
     def test_read_user_input_treats_ctrl_c_as_exit(self):
         with patch("builtins.input", side_effect=KeyboardInterrupt):

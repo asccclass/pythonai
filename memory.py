@@ -465,6 +465,26 @@ class MemoryStore:
             ).fetchall()
         return [_event_from_row(row) for row in rows]
 
+    def skill_run_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, episode_id, event_type, role, content, metadata, created_at
+                FROM episode_events
+                WHERE event_type IN (
+                    'skill_candidates',
+                    'skill_selected',
+                    'skill_step',
+                    'skill_step_result',
+                    'skill_result'
+                )
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_event_from_row(row) for row in rows]
+
 
 def _event_from_row(row: sqlite3.Row) -> dict[str, Any]:
     event = dict(row)

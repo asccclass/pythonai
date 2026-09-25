@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from memory import MemoryStore
+from skills import SkillRegistry
 
 
 def memory_overview(store: MemoryStore) -> dict[str, Any]:
@@ -33,11 +34,26 @@ def memory_messages(store: MemoryStore, limit: int = 50, episode_id: int | None 
     }
 
 
+def list_skills(registry: SkillRegistry | None = None) -> dict[str, Any]:
+    registry = registry or SkillRegistry()
+    return {"skills": [skill.to_dict() for skill in registry.list()]}
+
+
+def inspect_skill(name: str, registry: SkillRegistry | None = None) -> dict[str, Any]:
+    registry = registry or SkillRegistry()
+    return {"skill": registry.get(name).to_dict()}
+
+
+def skill_runs(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+    return {"limit": limit, "events": store.skill_run_events(limit=limit)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect bot memory.")
-    parser.add_argument("command", choices=["overview", "episode", "messages"])
+    parser.add_argument("command", choices=["overview", "episode", "messages", "skills", "skill", "skill-runs"])
     parser.add_argument("--episode-id", type=int)
     parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--name")
     args = parser.parse_args()
 
     store = MemoryStore()
@@ -47,8 +63,16 @@ def main() -> None:
         if args.episode_id is None:
             parser.error("--episode-id is required for episode")
         payload = inspect_episode(store, args.episode_id)
-    else:
+    elif args.command == "messages":
         payload = memory_messages(store, limit=args.limit, episode_id=args.episode_id)
+    elif args.command == "skills":
+        payload = list_skills()
+    elif args.command == "skill":
+        if args.name is None:
+            parser.error("--name is required for skill")
+        payload = inspect_skill(args.name)
+    else:
+        payload = skill_runs(store, limit=args.limit)
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 
