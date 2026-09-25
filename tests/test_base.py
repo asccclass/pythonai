@@ -6,7 +6,18 @@ import os
 from unittest.mock import patch
 
 import base
-from base import curl_command, delete_file, fetch_url, list_files, load_dotenv, read_file, run_command, run_skill, write_file
+from base import (
+    curl_command,
+    delete_file,
+    fetch_url,
+    list_files,
+    load_dotenv,
+    read_file,
+    run_command,
+    run_skill,
+    subprocess_text_options,
+    write_file,
+)
 
 
 class BaseTests(unittest.TestCase):
@@ -51,9 +62,7 @@ class BaseTests(unittest.TestCase):
         self.assertIs(result, completed)
         run.assert_called_once_with(
             ["cmd", "/c", "del", "/f", "/q", "sample.txt"],
-            capture_output=True,
-            check=False,
-            text=True,
+            **subprocess_text_options(),
         )
 
     def test_delete_file_uses_rm_command_on_non_windows(self):
@@ -68,9 +77,7 @@ class BaseTests(unittest.TestCase):
         self.assertIs(result, completed)
         run.assert_called_once_with(
             ["rm", "-f", "sample.txt"],
-            capture_output=True,
-            check=False,
-            text=True,
+            **subprocess_text_options(),
         )
 
     def test_delete_file_refuses_directories(self):
@@ -108,10 +115,14 @@ class BaseTests(unittest.TestCase):
         self.assertIs(result, completed)
         run.assert_called_once_with(
             ["curl", "--silent", "--show-error", "--location", "--max-time", "3", "https://example.test"],
-            capture_output=True,
-            check=False,
-            text=True,
+            **subprocess_text_options(),
         )
+
+    def test_subprocess_text_options_decode_utf8_with_replacement(self):
+        options = subprocess_text_options()
+
+        self.assertEqual(options["encoding"], "utf-8")
+        self.assertEqual(options["errors"], "replace")
 
     def test_run_command_returns_completed_process(self):
         class Guard:
@@ -146,9 +157,7 @@ class BaseTests(unittest.TestCase):
         run.assert_called_once_with(
             ["echo", "hello"],
             cwd=None,
-            capture_output=True,
-            check=False,
-            text=True,
+            **subprocess_text_options(),
         )
 
     def test_run_command_reuses_previous_confirmation(self):

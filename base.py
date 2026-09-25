@@ -31,6 +31,16 @@ def write_file(path: str | Path, content: str) -> None:
     Path(path).write_text(content, encoding="utf-8")
 
 
+def subprocess_text_options() -> dict:
+    return {
+        "capture_output": True,
+        "check": False,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+
+
 def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
     target = Path(path)
     if target.is_dir():
@@ -42,12 +52,7 @@ def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
         )
 
     command = ["cmd", "/c", "del", "/f", "/q", str(target)] if platform.system() == "Windows" else ["rm", "-f", str(target)]
-    return subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+    return subprocess.run(command, **subprocess_text_options())
 
 
 def curl_command(url: str, max_time: int = 20, follow_redirects: bool = True) -> list[str]:
@@ -65,12 +70,7 @@ def curl_command(url: str, max_time: int = 20, follow_redirects: bool = True) ->
 
 def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True) -> subprocess.CompletedProcess[str]:
     command = curl_command(url, max_time=max_time, follow_redirects=follow_redirects)
-    return subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+    return subprocess.run(command, **subprocess_text_options())
 
 
 def get_command_guard() -> LayaGuard:
@@ -98,13 +98,7 @@ def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess
                     stderr="User cancelled",
                 )
         _approved_commands.add(key)
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+    return subprocess.run(command, cwd=cwd, **subprocess_text_options())
 
 
 def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None) -> dict:
