@@ -1,0 +1,23 @@
+{
+  "name": "laya",
+  "description": "Guidance for designing and improving Laya System-1 judgment questions, state, criteria, thresholds, and code composition.",
+  "triggers": [
+    "laya",
+    "system one",
+    "system-1",
+    "choice question",
+    "score question",
+    "noul",
+    "guard decision",
+    "confidence threshold"
+  ],
+  "inputs": {
+    "type": "object",
+    "properties": {}
+  },
+  "allowed_tools": [],
+  "execution": {
+    "mode": "tool_sequence",
+    "steps": []
+  }
+}
