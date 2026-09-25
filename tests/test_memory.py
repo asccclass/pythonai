@@ -3,10 +3,14 @@ import unittest
 from pathlib import Path
 
 from laya_guard import GuardDecision
-from memory import MemoryStore
+from memory import DEFAULT_MEMORY_DB, MemoryStore
 
 
 class MemoryStoreTests(unittest.TestCase):
+    def test_default_memory_db_lives_under_memory_directory(self):
+        self.assertEqual(DEFAULT_MEMORY_DB.name, "memory.db")
+        self.assertEqual(DEFAULT_MEMORY_DB.parent.name, "memory")
+
     def test_store_logs_episode_events(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

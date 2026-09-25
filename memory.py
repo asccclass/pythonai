@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 
-DEFAULT_MEMORY_DB = Path(__file__).resolve().parent / "memory.db"
+DEFAULT_MEMORY_DB = Path(__file__).resolve().parent / "memory" / "memory.db"
 
 
 def memory_db_path() -> Path:

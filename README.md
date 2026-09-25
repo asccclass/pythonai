@@ -49,7 +49,7 @@ Type a message at the `You:` prompt. Type `exit` or `quit` to stop.
 
 ## Memory
 
-The agent records episodic memory in a local SQLite database at `memory.db`. This file is ignored by Git. Set `MEMORY_DB_PATH` to use a different database location.
+The agent records episodic memory in a local SQLite database at `memory\memory.db`. This file is ignored by Git. Set `MEMORY_DB_PATH` to use a different database location.
 
 The memory store also supports semantic memories as auditable subject-predicate-object facts linked back to source episode events.
 
