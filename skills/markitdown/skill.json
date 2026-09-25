@@ -1,0 +1,25 @@
+{
+  "name": "markitdown",
+  "description": "Guidance for using Microsoft MarkItDown to convert files, office documents, URLs, media, and other inputs to Markdown for LLM-friendly analysis.",
+  "triggers": [
+    "markitdown",
+    "convert to markdown",
+    "document to markdown",
+    "pdf to markdown",
+    "docx to markdown",
+    "pptx to markdown",
+    "xlsx to markdown",
+    "office document",
+    "markdown conversion",
+    "extract markdown"
+  ],
+  "inputs": {
+    "type": "object",
+    "properties": {}
+  },
+  "allowed_tools": [],
+  "execution": {
+    "mode": "tool_sequence",
+    "steps": []
+  }
+}
