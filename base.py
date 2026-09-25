@@ -50,6 +50,29 @@ def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def curl_command(url: str, max_time: int = 20, follow_redirects: bool = True) -> list[str]:
+    executable = "curl.exe" if platform.system() == "Windows" else "curl"
+    command = [
+        executable,
+        "--silent",
+        "--show-error",
+    ]
+    if follow_redirects:
+        command.append("--location")
+    command.extend(["--max-time", str(max_time), url])
+    return command
+
+
+def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True) -> subprocess.CompletedProcess[str]:
+    command = curl_command(url, max_time=max_time, follow_redirects=follow_redirects)
+    return subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+
 def get_command_guard() -> LayaGuard:
     global _command_guard
     if _command_guard is None:
@@ -113,6 +136,7 @@ TOOLS = {
     "list_files": list_files,
     "write_file": write_file,
     "delete_file": delete_file,
+    "fetch_url": fetch_url,
     "run_command": run_command,
     "run_skill": run_skill,
 }
@@ -213,6 +237,31 @@ TOOLS_SCHEMAS = [
                         }
                     },
                     "required": ["path"]
+                }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+                "name": "fetch_url",
+                "description": "Fetch a URL over the network using curl and return the completed process result.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The URL to fetch"
+                        },
+                        "max_time": {
+                            "type": "integer",
+                            "description": "Maximum curl runtime in seconds"
+                        },
+                        "follow_redirects": {
+                            "type": "boolean",
+                            "description": "Whether curl should follow redirects"
+                        }
+                    },
+                    "required": ["url"]
                 }
         }
     },

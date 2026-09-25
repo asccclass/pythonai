@@ -72,6 +72,7 @@ The agent exposes these local tools to the model:
 - `list_files`: list files in a directory
 - `write_file`: write text to a file
 - `run_command`: run a command after interactive confirmation
+- `fetch_url`: fetch a URL using `curl`
 - `run_skill`: run a local registered Skill
 
 ## Skills

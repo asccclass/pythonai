@@ -6,7 +6,7 @@ import os
 from unittest.mock import patch
 
 import base
-from base import delete_file, list_files, load_dotenv, read_file, run_command, run_skill, write_file
+from base import curl_command, delete_file, fetch_url, list_files, load_dotenv, read_file, run_command, run_skill, write_file
 
 
 class BaseTests(unittest.TestCase):
@@ -79,6 +79,39 @@ class BaseTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("Refusing to delete directory", result.stderr)
+
+    def test_curl_command_uses_curl_exe_on_windows(self):
+        with patch("base.platform.system", return_value="Windows"):
+            command = curl_command("https://example.test", max_time=7)
+
+        self.assertEqual(command[0], "curl.exe")
+        self.assertIn("--location", command)
+        self.assertIn("7", command)
+        self.assertEqual(command[-1], "https://example.test")
+
+    def test_curl_command_uses_curl_on_non_windows(self):
+        with patch("base.platform.system", return_value="Linux"):
+            command = curl_command("https://example.test", follow_redirects=False)
+
+        self.assertEqual(command[0], "curl")
+        self.assertNotIn("--location", command)
+
+    def test_fetch_url_runs_curl_command(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="body", stderr="")
+
+        with (
+            patch("base.platform.system", return_value="Linux"),
+            patch("base.subprocess.run", return_value=completed) as run,
+        ):
+            result = fetch_url("https://example.test", max_time=3)
+
+        self.assertIs(result, completed)
+        run.assert_called_once_with(
+            ["curl", "--silent", "--show-error", "--location", "--max-time", "3", "https://example.test"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
 
     def test_run_command_returns_completed_process(self):
         class Guard:
