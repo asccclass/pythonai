@@ -1,0 +1,95 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+import httpx
+from openai import APIStatusError
+
+from memory import MemoryStore
+from memory_classifier import MemoryCandidateDecision
+from memory_worker import MemoryBackgroundWorker, ProviderCooldown
+
+
+class NoopClassifier:
+    def assess_episode(self, events):
+        return MemoryCandidateDecision(should_extract=False)
+
+
+class NoopExtractor:
+    allow_remote = None
+
+    def extract(self, text):
+        return []
+
+
+class NoopMatcher:
+    allow_remote = None
+
+    def find_match(self, candidate, procedures, threshold=0.72):
+        return None
+
+
+class StaticEmbeddingProvider:
+    def embed(self, text):
+        return [1.0, 0.0]
+
+
+class RateLimitedEmbeddingProvider:
+    def embed(self, text):
+        request = httpx.Request("POST", "https://example.test/v1/embeddings")
+        response = httpx.Response(429, headers={"Retry-After": "3"}, request=request)
+        raise APIStatusError("rate limited", response=response, body={})
+
+
+class MemoryWorkerTests(unittest.TestCase):
+    def test_worker_backfills_missing_embeddings_after_review(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            worker = MemoryBackgroundWorker(
+                async_mode=False,
+                embedding_provider=StaticEmbeddingProvider(),
+                embedding_batch_size=5,
+            )
+
+            worker.enqueue(store, episode_id, NoopClassifier(), NoopExtractor(), NoopMatcher())
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(memories[0]["id"], memory_id)
+        self.assertIn("1.0", memories[0]["embedding"])
+        self.assertIsNotNone(memories[0]["embedding_updated_at"])
+
+    def test_worker_records_provider_cooldown_after_rate_limit(self):
+        slept = []
+        now = [100.0]
+
+        def clock():
+            return now[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            cooldown = ProviderCooldown(now=clock, sleep=slept.append)
+            worker = MemoryBackgroundWorker(
+                async_mode=False,
+                embedding_provider=RateLimitedEmbeddingProvider(),
+                embedding_batch_size=5,
+                cooldown=cooldown,
+            )
+
+            worker.enqueue(store, episode_id, NoopClassifier(), NoopExtractor(), NoopMatcher())
+            events = store.recent_events(limit=10)
+
+        cooldown_events = [event for event in events if event["event_type"] == "memory_background_cooldown"]
+        self.assertEqual(len(cooldown_events), 1)
+        self.assertEqual(cooldown_events[0]["metadata"]["retry_after_seconds"], 3.0)
+        self.assertEqual(cooldown.available_at, 103.0)
+        self.assertEqual(slept, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

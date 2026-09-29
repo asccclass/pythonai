@@ -372,18 +372,22 @@ class ServerTests(unittest.TestCase):
             events = store.recent_events(limit=10)
 
         event_types = [event["event_type"] for event in events]
-        self.assertEqual(
-            event_types,
-            ["memory_review_result", "memory_review_candidate", "memory_candidate_decision", "message", "guard_decision", "message"],
-        )
-        self.assertEqual(events[0]["metadata"]["memory_kind"], "semantic")
-        self.assertEqual(events[1]["metadata"]["memory_kind"], "semantic")
-        self.assertEqual(events[2]["metadata"]["candidate"]["memory_kind"], "semantic")
-        self.assertEqual(events[3]["role"], "assistant")
-        self.assertEqual(events[3]["content"], "hi")
-        self.assertEqual(events[4]["metadata"]["guard"]["intent"], "chat")
-        self.assertEqual(events[5]["role"], "user")
-        self.assertEqual(events[5]["content"], "hello")
+        self.assertIn("memory_review_result", event_types)
+        self.assertIn("memory_review_candidate", event_types)
+        self.assertIn("memory_candidate_decision", event_types)
+        self.assertIn("memory_budget", event_types)
+        review_result = next(event for event in events if event["event_type"] == "memory_review_result")
+        review_candidate = next(event for event in events if event["event_type"] == "memory_review_candidate")
+        candidate_decision = next(event for event in events if event["event_type"] == "memory_candidate_decision")
+        assistant_message = next(event for event in events if event["event_type"] == "message" and event["role"] == "assistant")
+        user_message = next(event for event in events if event["event_type"] == "message" and event["role"] == "user")
+        guard_event = next(event for event in events if event["event_type"] == "guard_decision")
+        self.assertEqual(review_result["metadata"]["memory_kind"], "semantic")
+        self.assertEqual(review_candidate["metadata"]["memory_kind"], "semantic")
+        self.assertEqual(candidate_decision["metadata"]["candidate"]["memory_kind"], "semantic")
+        self.assertEqual(assistant_message["content"], "hi")
+        self.assertEqual(guard_event["metadata"]["guard"]["intent"], "chat")
+        self.assertEqual(user_message["content"], "hello")
 
     def test_main_continues_when_memory_classifier_fails(self):
         class Guard:
@@ -409,9 +413,10 @@ class ServerTests(unittest.TestCase):
             events = store.recent_events(limit=10)
 
         run_agent.assert_called_once()
-        self.assertEqual(events[0]["event_type"], "memory_candidate_decision")
-        self.assertFalse(events[0]["metadata"]["candidate"]["available"])
-        self.assertEqual(events[0]["metadata"]["candidate"]["reason"], "Memory classifier failed")
+        candidate_events = [event for event in events if event["event_type"] == "memory_candidate_decision"]
+        self.assertEqual(len(candidate_events), 1)
+        self.assertFalse(candidate_events[0]["metadata"]["candidate"]["available"])
+        self.assertEqual(candidate_events[0]["metadata"]["candidate"]["reason"], "Memory classifier failed")
 
     def test_main_logs_working_memory_summary_when_context_is_compacted(self):
         class Guard:

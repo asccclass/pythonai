@@ -12,12 +12,11 @@ from openai import OpenAI
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool_with_context
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
-from memory_review import process_memory_review_candidates
 from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
-from request_budget import background_memory_budget, foreground_memory_budget
+from request_budget import foreground_memory_budget
 from semantic_extractor import LLMSemanticExtractor
-from forgetting import run_forgetting_policy
 from memory import MemoryStore
+from memory_worker import MemoryReviewWorker
 from retrieval import build_combined_memory_context, build_memory_context, inject_memory_context
 from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
@@ -183,85 +182,7 @@ def queue_memory_review_candidate(
     )
 
 
-import queue
 import random
-import threading
-
-
-class MemoryReviewWorker:
-    def __init__(self, async_mode: bool = True) -> None:
-        self.queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
-        self.async_mode = async_mode
-        self._thread: threading.Thread | None = None
-        self._stop_event = threading.Event()
-        if self.async_mode:
-            self._thread = threading.Thread(target=self._worker_loop, daemon=True)
-            self._thread.start()
-
-    def enqueue(
-        self,
-        memory: MemoryStore | None,
-        episode_id: int | None,
-        memory_classifier: Any,
-        semantic_extractor: Any,
-        procedure_matcher: Any,
-    ) -> None:
-        if memory is None or episode_id is None or not hasattr(memory, "episode_events"):
-            return
-        item = (memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
-        if self.async_mode:
-            self.queue.put(item)
-        else:
-            self._process_item(item)
-
-    def _worker_loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                item = self.queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            try:
-                self._process_item(item)
-            finally:
-                self.queue.task_done()
-
-    def _process_item(self, item: tuple[Any, ...]) -> None:
-        memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
-        if callable(memory_classifier):
-            memory_classifier = memory_classifier()
-        review_budget = background_memory_budget()
-        if hasattr(semantic_extractor, "allow_remote"):
-            semantic_extractor.allow_remote = review_budget.try_acquire
-        if hasattr(procedure_matcher, "allow_remote"):
-            procedure_matcher.allow_remote = review_budget.try_acquire
-        episode_events = episode_events_safely(memory, episode_id)
-        memory_candidate = classify_memory_safely(memory_classifier, episode_events or [])
-        log_episode_event(
-            memory,
-            episode_id,
-            "memory_candidate_decision",
-            metadata={"candidate": memory_candidate},
-        )
-        queue_memory_review_candidate(memory, episode_id, memory_candidate)
-        safe_memory_call(
-            process_memory_review_candidates,
-            memory,
-            episode_id,
-            semantic_extractor=semantic_extractor,
-            procedure_matcher=procedure_matcher,
-        ) if memory is not None and episode_id is not None else None
-        safe_memory_call(run_forgetting_policy, memory) if memory is not None else None
-        log_memory_budget(memory, episode_id, "background_review", review_budget)
-        finish_episode_safely(memory, episode_id)
-
-    def join(self) -> None:
-        if self.async_mode and self._thread is not None and self._thread.is_alive():
-            self.queue.join()
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        if self.async_mode and self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
 
 
 def run_agent(
@@ -396,7 +317,10 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     skill_matcher = SkillMatcher(SkillRegistry())
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     procedure_matcher = LLMProcedureSimilarityMatcher(get_client, OLLAMA_MODEL)
-    worker = MemoryReviewWorker(async_mode=async_memory_review)
+    worker = MemoryReviewWorker(
+        async_mode=async_memory_review,
+        embedding_provider=memory_searcher.embedding_provider,
+    )
     print("Mini agent ready. Type 'exit' to quit.")
 
     try:
