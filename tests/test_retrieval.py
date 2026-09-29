@@ -83,6 +83,26 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("type=user_profile, scope=global", context)
         self.assertIn("type=project_fact, scope=pythonai", context)
 
+    def test_build_memory_context_includes_entity_alias_matches(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="Project uses SQLite")
+            project_id = store.get_or_create_entity("project", entity_type="project", aliases=["python ai"])
+            store.add_semantic_memory(
+                "project",
+                "uses",
+                "SQLite",
+                event_id,
+                memory_type="project_fact",
+                scope="pythonai",
+                subject_entity_id=project_id,
+            )
+
+            context = build_memory_context(store, query="python ai")
+
+        self.assertIn("project uses SQLite", context)
+
     def test_build_memory_context_uses_vector_search(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

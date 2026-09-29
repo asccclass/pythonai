@@ -91,6 +91,41 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(profile_memories[0]["scope"], "global")
         self.assertEqual(project_memories, [])
 
+    def test_store_creates_and_finds_entity_aliases(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+
+            entity_id = store.get_or_create_entity("PythonAI", entity_type="project", aliases=["python ai"])
+            same_entity_id = store.get_or_create_entity("pythonai", entity_type="project")
+            entity = store.find_entity("python ai", entity_type="project")
+            aliases = store.entity_aliases(entity_id)
+
+        self.assertEqual(same_entity_id, entity_id)
+        self.assertEqual(entity["id"], entity_id)
+        self.assertIn("python ai", {alias["normalized_alias"] for alias in aliases})
+
+    def test_store_links_semantic_memory_to_entities(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="Project uses SQLite")
+
+            memory_id = store.add_semantic_memory(
+                subject="project",
+                predicate="uses",
+                object_value="SQLite",
+                source_event_id=event_id,
+                memory_type="project_fact",
+                scope="pythonai",
+            )
+            memory = store.active_semantic_memories()[0]
+            project = store.find_entity("project", entity_type="project")
+            sqlite = store.find_entity("sqlite")
+
+        self.assertEqual(memory["id"], memory_id)
+        self.assertEqual(memory["subject_entity_id"], project["id"])
+        self.assertEqual(memory["object_entity_id"], sqlite["id"])
+
     def test_store_migrates_existing_semantic_memory_type_columns(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "memory.db"

@@ -19,7 +19,10 @@ def build_memory_context(
     vector_candidate_limit: int = DEFAULT_VECTOR_CANDIDATE_LIMIT,
 ) -> str:
     searcher = vector_searcher or VectorMemorySearcher()
-    candidates = candidate_memories(store.active_semantic_memories(), query, vector_candidate_limit)
+    active_memories = store.active_semantic_memories()
+    entity_memories = linked_entity_memories(store, active_memories, query)
+    candidates = candidate_memories(active_memories, query, vector_candidate_limit)
+    candidates = merge_candidate_memories(entity_memories, candidates, vector_candidate_limit)
     if hasattr(searcher, "search_with_budget"):
         memories = searcher.search_with_budget(
             query,
@@ -30,6 +33,8 @@ def build_memory_context(
         )
     else:
         memories = searcher.search(query, candidates, limit)
+    if not memories and entity_memories:
+        memories = entity_memories[:limit]
     if not memories:
         return ""
 
@@ -55,6 +60,33 @@ def candidate_memories(memories: list[dict[str, Any]], query: str = "", limit: i
     selected: dict[int, dict[str, Any]] = {int(memory["id"]): memory for memory in lexical[:limit]}
 
     for memory in rank_memories(memories):
+        if len(selected) >= limit:
+            break
+        selected.setdefault(int(memory["id"]), memory)
+    return list(selected.values())
+
+
+def linked_entity_memories(store: MemoryStore, memories: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:
+    if not query or not hasattr(store, "find_entity"):
+        return []
+    entity = store.find_entity(query)
+    if entity is None:
+        return []
+    entity_id = entity["id"]
+    return [
+        memory
+        for memory in rank_memories(memories)
+        if memory.get("subject_entity_id") == entity_id or memory.get("object_entity_id") == entity_id
+    ]
+
+
+def merge_candidate_memories(
+    preferred: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    selected: dict[int, dict[str, Any]] = {}
+    for memory in [*preferred, *candidates]:
         if len(selected) >= limit:
             break
         selected.setdefault(int(memory["id"]), memory)

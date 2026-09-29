@@ -61,6 +61,8 @@ class MemoryStore:
                     subject TEXT NOT NULL,
                     predicate TEXT NOT NULL,
                     object TEXT NOT NULL,
+                    subject_entity_id INTEGER,
+                    object_entity_id INTEGER,
                     memory_type TEXT NOT NULL DEFAULT 'fact',
                     scope TEXT NOT NULL DEFAULT 'global',
                     confidence REAL NOT NULL DEFAULT 0.5,
@@ -73,7 +75,37 @@ class MemoryStore:
                     archived_at TEXT,
                     archive_reason TEXT,
                     FOREIGN KEY (source_event_id) REFERENCES episode_events(id),
+                    FOREIGN KEY (subject_entity_id) REFERENCES entities(id),
+                    FOREIGN KEY (object_entity_id) REFERENCES entities(id),
                     FOREIGN KEY (superseded_by) REFERENCES semantic_memories(id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL,
+                    entity_type TEXT NOT NULL DEFAULT 'entity',
+                    source_event_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(normalized_name, entity_type),
+                    FOREIGN KEY (source_event_id) REFERENCES episode_events(id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entity_aliases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_id INTEGER NOT NULL,
+                    alias TEXT NOT NULL,
+                    normalized_alias TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(normalized_alias, entity_id),
+                    FOREIGN KEY (entity_id) REFERENCES entities(id)
                 )
                 """
             )
@@ -87,6 +119,14 @@ class MemoryStore:
                 pass
             try:
                 connection.execute("ALTER TABLE semantic_memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                connection.execute("ALTER TABLE semantic_memories ADD COLUMN subject_entity_id INTEGER")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                connection.execute("ALTER TABLE semantic_memories ADD COLUMN object_entity_id INTEGER")
             except sqlite3.OperationalError:
                 pass
             connection.execute(
@@ -203,21 +243,29 @@ class MemoryStore:
         embedding: list[float] | str | None = None,
         memory_type: str = "fact",
         scope: str = "global",
+        subject_entity_id: int | None = None,
+        object_entity_id: int | None = None,
     ) -> int:
         embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
+            if subject_entity_id is None:
+                subject_entity_id = self._get_or_create_entity(connection, subject, infer_entity_type(subject, memory_type), source_event_id)
+            if object_entity_id is None and should_link_object_entity(object_value, memory_type):
+                object_entity_id = self._get_or_create_entity(connection, object_value, infer_entity_type(object_value, memory_type), source_event_id)
             cursor = connection.execute(
                 """
                 INSERT INTO semantic_memories (
-                    subject, predicate, object, memory_type, scope,
+                    subject, predicate, object, subject_entity_id, object_entity_id, memory_type, scope,
                     confidence, source_event_id, expires_at, embedding
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     subject,
                     predicate,
                     object_value,
+                    subject_entity_id,
+                    object_entity_id,
                     memory_type,
                     scope,
                     confidence,
@@ -228,6 +276,90 @@ class MemoryStore:
             )
             connection.commit()
             return int(cursor.lastrowid)
+
+    def get_or_create_entity(
+        self,
+        name: str,
+        entity_type: str = "entity",
+        source_event_id: int | None = None,
+        aliases: list[str] | None = None,
+    ) -> int:
+        with closing(self.connect()) as connection:
+            entity_id = self._get_or_create_entity(connection, name, entity_type, source_event_id)
+            for alias in aliases or []:
+                self._add_entity_alias(connection, entity_id, alias)
+            connection.commit()
+            return entity_id
+
+    def find_entity(self, name_or_alias: str, entity_type: str | None = None) -> dict[str, Any] | None:
+        normalized = normalize_entity_name(name_or_alias)
+        query = """
+            SELECT e.id, e.name, e.normalized_name, e.entity_type, e.source_event_id, e.created_at, e.updated_at
+            FROM entities e
+            LEFT JOIN entity_aliases a ON a.entity_id = e.id
+            WHERE (e.normalized_name = ? OR a.normalized_alias = ?)
+        """
+        params: list[Any] = [normalized, normalized]
+        if entity_type is not None:
+            query += " AND e.entity_type = ?"
+            params.append(entity_type)
+        query += " ORDER BY e.updated_at DESC, e.id DESC LIMIT 1"
+        with closing(self.connect()) as connection:
+            row = connection.execute(query, params).fetchone()
+        return dict(row) if row is not None else None
+
+    def entity_aliases(self, entity_id: int) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, entity_id, alias, normalized_alias, created_at
+                FROM entity_aliases
+                WHERE entity_id = ?
+                ORDER BY id ASC
+                """,
+                (entity_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _get_or_create_entity(
+        self,
+        connection: sqlite3.Connection,
+        name: str,
+        entity_type: str = "entity",
+        source_event_id: int | None = None,
+    ) -> int:
+        normalized_name = normalize_entity_name(name)
+        row = connection.execute(
+            """
+            SELECT id
+            FROM entities
+            WHERE normalized_name = ? AND entity_type = ?
+            """,
+            (normalized_name, entity_type),
+        ).fetchone()
+        if row is not None:
+            self._add_entity_alias(connection, int(row["id"]), name)
+            return int(row["id"])
+        cursor = connection.execute(
+            """
+            INSERT INTO entities (name, normalized_name, entity_type, source_event_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            (name, normalized_name, entity_type, source_event_id),
+        )
+        entity_id = int(cursor.lastrowid)
+        self._add_entity_alias(connection, entity_id, name)
+        return entity_id
+
+    def _add_entity_alias(self, connection: sqlite3.Connection, entity_id: int, alias: str) -> None:
+        normalized_alias = normalize_entity_name(alias)
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO entity_aliases (entity_id, alias, normalized_alias)
+            VALUES (?, ?, ?)
+            """,
+            (entity_id, alias, normalized_alias),
+        )
 
     def update_semantic_confidence(self, memory_id: int, confidence: float) -> None:
         with closing(self.connect()) as connection:
@@ -264,7 +396,8 @@ class MemoryStore:
         scope: str | None = None,
     ) -> list[dict[str, Any]]:
         query = """
-            SELECT id, subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding,
+            SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
+                   memory_type, scope, confidence, source_event_id, embedding,
                    created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
             FROM semantic_memories
             WHERE superseded_by IS NULL
@@ -294,7 +427,8 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding,
+                SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
+                       memory_type, scope, confidence, source_event_id, embedding,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE archived_at IS NOT NULL
@@ -307,7 +441,8 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding,
+                SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
+                       memory_type, scope, confidence, source_event_id, embedding,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE superseded_by IS NULL
@@ -345,17 +480,35 @@ class MemoryStore:
         embedding: list[float] | str | None = None,
         memory_type: str = "fact",
         scope: str = "global",
+        subject_entity_id: int | None = None,
+        object_entity_id: int | None = None,
     ) -> int:
         embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
+            if subject_entity_id is None:
+                subject_entity_id = self._get_or_create_entity(connection, subject, infer_entity_type(subject, memory_type), source_event_id)
+            if object_entity_id is None and should_link_object_entity(object_value, memory_type):
+                object_entity_id = self._get_or_create_entity(connection, object_value, infer_entity_type(object_value, memory_type), source_event_id)
             cursor = connection.execute(
                 """
                 INSERT INTO semantic_memories (
-                    subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding
+                    subject, predicate, object, subject_entity_id, object_entity_id,
+                    memory_type, scope, confidence, source_event_id, embedding
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject, predicate, object_value, memory_type, scope, confidence, source_event_id, embedding_json),
+                (
+                    subject,
+                    predicate,
+                    object_value,
+                    subject_entity_id,
+                    object_entity_id,
+                    memory_type,
+                    scope,
+                    confidence,
+                    source_event_id,
+                    embedding_json,
+                ),
             )
             new_memory_id = int(cursor.lastrowid)
             connection.execute(
@@ -531,6 +684,32 @@ def _procedure_from_row(row: sqlite3.Row) -> dict[str, Any]:
     procedure = dict(row)
     procedure["steps"] = json.loads(procedure["steps"] or "[]")
     return procedure
+
+
+def normalize_entity_name(name: str) -> str:
+    return " ".join(str(name).strip().casefold().split())
+
+
+def infer_entity_type(name: str, memory_type: str = "fact") -> str:
+    normalized = normalize_entity_name(name)
+    if normalized == "user":
+        return "user"
+    if normalized in {"project", "repo", "repository"} or memory_type == "project_fact":
+        return "project"
+    if memory_type == "agent_persona":
+        return "agent"
+    if memory_type == "task_fact":
+        return "task"
+    return "entity"
+
+
+def should_link_object_entity(object_value: str, memory_type: str = "fact") -> bool:
+    normalized = normalize_entity_name(object_value)
+    if not normalized:
+        return False
+    if memory_type in {"entity_fact", "project_fact", "agent_persona"}:
+        return True
+    return len(normalized.split()) <= 4 and not any(char.isdigit() for char in normalized)
 
 
 def _jsonable(value: Any) -> Any:
