@@ -15,17 +15,40 @@ def process_memory_review_candidates(
     procedure_matcher: ProcedureSimilarityMatcher | None = None,
 ) -> list[dict[str, Any]]:
     events = store.episode_events(episode_id)
-    candidates = [event for event in events if event["event_type"] == "memory_review_candidate"]
+    candidates = review_candidate_events(events)
     processed = []
     for candidate in candidates:
-        kind = candidate["metadata"].get("memory_kind", "none")
-        if kind == "semantic":
-            processed.append(process_semantic_candidate(store, episode_id, events, candidate, semantic_extractor))
-        elif kind == "procedure":
-            processed.append(process_procedure_candidate(store, episode_id, events, candidate, procedure_matcher))
-        elif kind == "forgetting":
-            processed.append(process_forgetting_candidate(store, episode_id, candidate))
+        for kind in candidate_memory_kinds(candidate):
+            if kind == "semantic":
+                processed.append(process_semantic_candidate(store, episode_id, events, candidate, semantic_extractor))
+            elif kind == "procedure":
+                processed.append(process_procedure_candidate(store, episode_id, events, candidate, procedure_matcher))
+            elif kind == "forgetting":
+                processed.append(process_forgetting_candidate(store, episode_id, candidate))
     return [item for item in processed if item]
+
+
+def review_candidate_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in events
+        if event["event_type"] in {"memory_review_candidate", "working_memory_preservation_candidate"}
+    ]
+
+
+def candidate_memory_kinds(candidate: dict[str, Any]) -> list[str]:
+    if candidate["event_type"] == "memory_review_candidate":
+        kind = candidate["metadata"].get("memory_kind", "none")
+    else:
+        preservation = candidate["metadata"].get("preservation") or {}
+        if not preservation.get("should_preserve", False):
+            return []
+        kind = preservation.get("preservation_kind", "none")
+    if kind == "both":
+        return ["semantic", "procedure"]
+    if kind in {"semantic", "procedure", "forgetting"}:
+        return [kind]
+    return []
 
 
 def process_semantic_candidate(
@@ -35,7 +58,7 @@ def process_semantic_candidate(
     candidate: dict[str, Any],
     semantic_extractor: SemanticExtractor | None = None,
 ) -> dict[str, Any] | None:
-    source = next((event for event in events if event["event_type"] == "message" and event["role"] == "user"), None)
+    source = semantic_source_event(events, candidate)
     if source is None:
         return None
     candidate_confidence = float(candidate["metadata"].get("confidence", 0.5))
@@ -63,6 +86,23 @@ def process_semantic_candidate(
         metadata=metadata,
     )
     return metadata
+
+
+def semantic_source_event(events: list[dict[str, Any]], candidate: dict[str, Any]) -> dict[str, Any] | None:
+    if candidate["event_type"] == "working_memory_preservation_candidate":
+        summary_event = latest_event_before(events, candidate["id"], "working_memory_summary")
+        if summary_event is not None:
+            return summary_event
+        if candidate.get("content"):
+            return candidate
+    return next((event for event in events if event["event_type"] == "message" and event["role"] == "user"), None)
+
+
+def latest_event_before(events: list[dict[str, Any]], event_id: int, event_type: str) -> dict[str, Any] | None:
+    matches = [event for event in events if event["event_type"] == event_type and event["id"] < event_id]
+    if not matches:
+        return None
+    return sorted(matches, key=lambda event: event["id"], reverse=True)[0]
 
 
 def process_procedure_candidate(

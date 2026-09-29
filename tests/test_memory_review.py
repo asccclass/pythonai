@@ -69,6 +69,59 @@ class MemoryReviewTests(unittest.TestCase):
         self.assertEqual({memory["predicate"] for memory in memories}, {"prefers", "uses"})
         self.assertEqual(review_results[0]["metadata"]["semantic_memory_ids"], results[0]["semantic_memory_ids"])
 
+    def test_process_working_memory_preservation_candidate_extracts_from_summary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="Do not extract this.")
+            summary_event_id = store.add_event(
+                episode_id,
+                "working_memory_summary",
+                content="The user prefers Python for automation tasks.",
+            )
+            store.add_event(
+                episode_id,
+                "working_memory_preservation_candidate",
+                metadata={
+                    "preservation": {
+                        "should_preserve": True,
+                        "preservation_kind": "semantic",
+                    }
+                },
+            )
+
+            results = process_memory_review_candidates(store, episode_id)
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(results[0]["memory_kind"], "semantic")
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["source_event_id"], summary_event_id)
+        self.assertIn("Python", memories[0]["object"])
+
+    def test_process_working_memory_preservation_candidate_with_both_does_not_create_procedure_without_tools(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "working_memory_summary", content="I live in Taipei.")
+            store.add_event(
+                episode_id,
+                "working_memory_preservation_candidate",
+                metadata={
+                    "preservation": {
+                        "should_preserve": True,
+                        "preservation_kind": "both",
+                    }
+                },
+            )
+
+            results = process_memory_review_candidates(store, episode_id)
+            memories = store.active_semantic_memories()
+            procedures = store.active_procedures()
+
+        self.assertEqual([result["memory_kind"] for result in results], ["semantic"])
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(procedures, [])
+
     def test_process_procedure_review_candidate_creates_procedure_from_tool_calls(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
