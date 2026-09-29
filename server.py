@@ -251,6 +251,7 @@ class MemoryReviewWorker:
             procedure_matcher=procedure_matcher,
         ) if memory is not None and episode_id is not None else None
         safe_memory_call(run_forgetting_policy, memory) if memory is not None else None
+        log_memory_budget(memory, episode_id, "background_review", review_budget)
         finish_episode_safely(memory, episode_id)
 
     def join(self) -> None:
@@ -447,6 +448,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
                     query=user_input,
                     semantic_context=memory_context,
                 ) or memory_context
+            log_memory_budget(memory, episode_id, "foreground_retrieval", turn_budget)
             if memory_context:
                 log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
             agent_messages = inject_memory_context(messages, memory_context)
@@ -503,6 +505,16 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         if drain_memory_on_exit:
             worker.join()
         worker.stop()
+
+
+def log_memory_budget(
+    memory: MemoryStore | None,
+    episode_id: int | None,
+    phase: str,
+    budget: Any,
+) -> None:
+    snapshot = budget.snapshot() if hasattr(budget, "snapshot") else {}
+    log_episode_event(memory, episode_id, "memory_budget", metadata={"phase": phase, "budget": snapshot})
 
 if __name__ == "__main__":
     main()

@@ -24,6 +24,17 @@ class RemoteRequestBudget:
             return None
         return max(0, limit - self.used.get(operation, 0))
 
+    def snapshot(self) -> dict[str, dict[str, int | None]]:
+        operations = sorted(set(self.limits) | set(self.used))
+        return {
+            operation: {
+                "limit": self.limits.get(operation),
+                "used": self.used.get(operation, 0),
+                "remaining": self.remaining(operation),
+            }
+            for operation in operations
+        }
+
 
 def foreground_memory_budget() -> RemoteRequestBudget:
     return RemoteRequestBudget(
