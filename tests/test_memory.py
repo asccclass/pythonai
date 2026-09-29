@@ -45,6 +45,18 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertEqual([event["content"] for event in events], ["one", "two"])
 
+    def test_store_returns_events_by_type(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="hello")
+            error_id = store.add_event(episode_id, "error", content="429", metadata={"error_type": "APIStatusError"})
+
+            events = store.events_by_type("error", limit=5)
+
+        self.assertEqual([event["id"] for event in events], [error_id])
+        self.assertEqual(events[0]["metadata"]["error_type"], "APIStatusError")
+
     def test_store_adds_and_queries_active_semantic_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

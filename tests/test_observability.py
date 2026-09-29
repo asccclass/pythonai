@@ -17,6 +17,7 @@ from observability import (
     list_skills,
     low_confidence_facts,
     main,
+    memory_health,
     memory_messages,
     memory_overview,
     procedures,
@@ -188,6 +189,33 @@ class ObservabilityTests(unittest.TestCase):
             result = embedding_backfill_candidates(store, limit=5)
 
         self.assertEqual([memory["id"] for memory in result["memories"]], [missing_id])
+
+    def test_memory_health_summarizes_budget_errors_and_queue_depth(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            store.add_event(
+                episode_id,
+                "memory_budget",
+                metadata={
+                    "phase": "foreground_retrieval",
+                    "budget": {
+                        "memory_query_embedding": {"limit": 1, "used": 1, "remaining": 0},
+                        "memory_embedding_backfill": {"limit": 0, "used": 0, "remaining": 0},
+                    },
+                },
+            )
+            store.add_event(episode_id, "error", content="HTTP 429 rate limited", metadata={"error_type": "APIStatusError"})
+
+            result = memory_health(store, limit=10)
+
+        self.assertEqual(result["budget_events"], 1)
+        self.assertEqual(result["rate_limit_429_errors"], 1)
+        self.assertEqual(result["capped_operation_events"], 1)
+        self.assertEqual(result["embedding_backfill_queue_depth"], 1)
+        self.assertEqual(result["budget_summary"]["foreground_retrieval"]["operations"]["memory_query_embedding"]["used"], 1)
 
     def test_semantic_conflicts_groups_different_objects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -394,6 +422,18 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("updated_ids", print_mock.call_args.args[0])
+
+    def test_cli_memory_health_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "memory-health", "--limit", "5"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("budget_summary", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":

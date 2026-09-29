@@ -94,6 +94,38 @@ def backfill_embeddings(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
     return backfill_semantic_embeddings(store, HashingEmbeddingProvider(), limit=limit)
 
 
+def memory_health(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+    budget_events = store.events_by_type("memory_budget", limit=limit)
+    error_events = store.events_by_type("error", limit=limit)
+    budget_summary: dict[str, dict[str, Any]] = {}
+    capped_operations = 0
+    for event in budget_events:
+        phase = str(event["metadata"].get("phase", "unknown"))
+        phase_summary = budget_summary.setdefault(phase, {"events": 0, "operations": {}})
+        phase_summary["events"] += 1
+        for operation, operation_budget in event["metadata"].get("budget", {}).items():
+            operation_summary = phase_summary["operations"].setdefault(
+                operation,
+                {"limit": operation_budget.get("limit"), "used": 0, "remaining": None},
+            )
+            operation_summary["used"] += int(operation_budget.get("used") or 0)
+            operation_summary["remaining"] = operation_budget.get("remaining")
+            if operation_budget.get("limit") == 0:
+                capped_operations += 1
+    rate_limit_errors = [
+        event for event in error_events
+        if event["metadata"].get("error_type") == "APIStatusError" and "429" in str(event.get("content") or "")
+    ]
+    return {
+        "limit": limit,
+        "budget_events": len(budget_events),
+        "budget_summary": budget_summary,
+        "rate_limit_429_errors": len(rate_limit_errors),
+        "capped_operation_events": capped_operations,
+        "embedding_backfill_queue_depth": len(store.semantic_memories_missing_embeddings(limit=limit)),
+    }
+
+
 def semantic_conflicts(store: MemoryStore) -> dict[str, Any]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for memory in store.active_semantic_memories():
@@ -254,6 +286,7 @@ def main() -> None:
             "low-confidence",
             "embedding-candidates",
             "backfill-embeddings",
+            "memory-health",
             "conflicts",
             "archive-fact",
             "confirm-fact",
@@ -307,6 +340,8 @@ def main() -> None:
         payload = embedding_backfill_candidates(store, limit=args.limit)
     elif args.command == "backfill-embeddings":
         payload = backfill_embeddings(store, limit=args.limit)
+    elif args.command == "memory-health":
+        payload = memory_health(store, limit=args.limit)
     elif args.command == "conflicts":
         payload = semantic_conflicts(store)
     elif args.command == "archive-fact":

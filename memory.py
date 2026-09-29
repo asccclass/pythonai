@@ -680,6 +680,20 @@ class MemoryStore:
             ).fetchall()
         return [_event_from_row(row) for row in rows]
 
+    def events_by_type(self, event_type: str, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, episode_id, event_type, role, content, metadata, created_at
+                FROM episode_events
+                WHERE event_type = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (event_type, limit),
+            ).fetchall()
+        return [_event_from_row(row) for row in rows]
+
     def skill_run_events(self, limit: int = 50) -> list[dict[str, Any]]:
         with closing(self.connect()) as connection:
             rows = connection.execute(
