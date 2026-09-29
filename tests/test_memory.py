@@ -67,6 +67,7 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(memories[0]["source_event_id"], event_id)
         self.assertEqual(memories[0]["memory_type"], "fact")
         self.assertEqual(memories[0]["scope"], "global")
+        self.assertIsNone(memories[0]["embedding_updated_at"])
 
     def test_store_adds_and_filters_typed_semantic_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -296,10 +297,24 @@ class MemoryStoreTests(unittest.TestCase):
             memories = store.active_semantic_memories()
             self.assertEqual(memories[0]["id"], memory_id)
             self.assertIn("0.1", memories[0]["embedding"])
+            self.assertIsNotNone(memories[0]["embedding_updated_at"])
 
             store.update_semantic_embedding(memory_id, [0.3, 0.4])
             updated_memories = store.active_semantic_memories()
             self.assertIn("0.3", updated_memories[0]["embedding"])
+            self.assertIsNotNone(updated_memories[0]["embedding_updated_at"])
+
+    def test_store_leaves_embedding_timestamp_empty_without_embedding(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+
+            memories = store.active_semantic_memories()
+
+        self.assertIsNone(memories[0]["embedding"])
+        self.assertIsNone(memories[0]["embedding_updated_at"])
 
 
 if __name__ == "__main__":

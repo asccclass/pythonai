@@ -68,6 +68,7 @@ class MemoryStore:
                     confidence REAL NOT NULL DEFAULT 0.5,
                     source_event_id INTEGER NOT NULL,
                     embedding TEXT,
+                    embedding_updated_at TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     expires_at TEXT,
@@ -111,6 +112,10 @@ class MemoryStore:
             )
             try:
                 connection.execute("ALTER TABLE semantic_memories ADD COLUMN embedding TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                connection.execute("ALTER TABLE semantic_memories ADD COLUMN embedding_updated_at TEXT")
             except sqlite3.OperationalError:
                 pass
             try:
@@ -256,9 +261,9 @@ class MemoryStore:
                 """
                 INSERT INTO semantic_memories (
                     subject, predicate, object, subject_entity_id, object_entity_id, memory_type, scope,
-                    confidence, source_event_id, expires_at, embedding
+                    confidence, source_event_id, expires_at, embedding, embedding_updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
                 """,
                 (
                     subject,
@@ -271,6 +276,7 @@ class MemoryStore:
                     confidence,
                     source_event_id,
                     expires_at,
+                    embedding_json,
                     embedding_json,
                 ),
             )
@@ -381,6 +387,7 @@ class MemoryStore:
                 """
                 UPDATE semantic_memories
                 SET embedding = ?,
+                    embedding_updated_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -397,7 +404,7 @@ class MemoryStore:
     ) -> list[dict[str, Any]]:
         query = """
             SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
-                   memory_type, scope, confidence, source_event_id, embedding,
+                   memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at,
                    created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
             FROM semantic_memories
             WHERE superseded_by IS NULL
@@ -428,7 +435,7 @@ class MemoryStore:
             rows = connection.execute(
                 """
                 SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
-                       memory_type, scope, confidence, source_event_id, embedding,
+                       memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE archived_at IS NOT NULL
@@ -442,7 +449,7 @@ class MemoryStore:
             rows = connection.execute(
                 """
                 SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
-                       memory_type, scope, confidence, source_event_id, embedding,
+                       memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE superseded_by IS NULL
@@ -493,9 +500,9 @@ class MemoryStore:
                 """
                 INSERT INTO semantic_memories (
                     subject, predicate, object, subject_entity_id, object_entity_id,
-                    memory_type, scope, confidence, source_event_id, embedding
+                    memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
                 """,
                 (
                     subject,
@@ -507,6 +514,7 @@ class MemoryStore:
                     scope,
                     confidence,
                     source_event_id,
+                    embedding_json,
                     embedding_json,
                 ),
             )
