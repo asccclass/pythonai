@@ -50,6 +50,88 @@ class StoryMotionTests(unittest.TestCase):
         self.assertNotIn("李", merged_tokens)
         self.assertNotIn("大叔", merged_tokens)
 
+    def test_extract_chapter_characters_keeps_only_people(self):
+        story_ner = [
+            [
+                Entity("張小明", "PERSON", (0, 3)),
+                Entity("平安村", "GPE", (4, 7)),
+            ],
+            [
+                Entity("李大叔", "PERSON", (0, 3)),
+                Entity("黑龍會", "ORG", (4, 7)),
+            ],
+        ]
+
+        chapter_characters = motion.extract_chapter_characters(story_ner)
+
+        self.assertEqual(chapter_characters, [["張小明"], ["李大叔"]])
+
+    def test_build_edges_data_returns_relation_edge_tuples(self):
+        chapter_characters = [
+            ["張小明", "張小華"],
+            ["張小明", "李大叔"],
+            ["李大叔", "張小華", "張小明"],
+        ]
+
+        edges_data = motion.build_edges_data(chapter_characters)
+
+        self.assertEqual(
+            edges_data,
+            [
+                ("張小明", "張小華", 2),
+                ("張小明", "李大叔", 2),
+                ("張小華", "李大叔", 1),
+            ],
+        )
+
+    def test_analyze_character_centrality_returns_ranked_table(self):
+        graph = motion.build_relation_graph([
+            ["張小明", "張小華"],
+            ["張小明", "李大叔"],
+            ["李大叔", "張小華", "張小明"],
+        ])
+
+        df = motion.analyze_character_centrality(graph)
+
+        self.assertEqual(
+            list(df.columns),
+            [
+                "角色名稱",
+                "加權度中心性 (互動廣度)",
+                "加權中介中心性 (情節橋樑)",
+                "加權特徵向量中心性 (影響力)",
+            ],
+        )
+        self.assertEqual(set(df["角色名稱"]), {"張小明", "張小華", "李大叔"})
+
+    def test_analyze_character_centrality_uses_edge_weights(self):
+        graph = motion.nx.Graph()
+        graph.add_edge("主角", "夥伴", weight=10)
+        graph.add_edge("主角", "配角", weight=1)
+        graph.add_edge("夥伴", "配角", weight=1)
+
+        df = motion.analyze_character_centrality(graph)
+        rows = {row["角色名稱"]: row for row in df.to_dict("records")}
+
+        self.assertEqual(rows["主角"]["加權度中心性 (互動廣度)"], 1.0)
+        self.assertEqual(rows["夥伴"]["加權度中心性 (互動廣度)"], 1.0)
+        self.assertEqual(rows["配角"]["加權度中心性 (互動廣度)"], 0.182)
+        self.assertGreater(
+            rows["主角"]["加權特徵向量中心性 (影響力)"],
+            rows["配角"]["加權特徵向量中心性 (影響力)"],
+        )
+
+    def test_draw_relation_graph_saves_output_file(self):
+        graph = motion.build_relation_graph([["張小明", "張小華"]])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "relation_graph.png"
+            result = motion.draw_relation_graph(graph, output_path=output_path)
+
+            self.assertEqual(result, output_path)
+            self.assertTrue(output_path.exists())
+            self.assertGreater(output_path.stat().st_size, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
