@@ -16,6 +16,11 @@ class FakeSemanticExtractor:
         ]
 
 
+class DuplicateSemanticExtractor:
+    def extract(self, text: str) -> list[SemanticTriple]:
+        return [SemanticTriple("user", "prefers", "Python", 0.9)]
+
+
 class FakeProcedureMatcher:
     def __init__(self, procedure_id: int):
         self.procedure_id = procedure_id
@@ -121,6 +126,44 @@ class MemoryReviewTests(unittest.TestCase):
         self.assertEqual([result["memory_kind"] for result in results], ["semantic"])
         self.assertEqual(len(memories), 1)
         self.assertEqual(procedures, [])
+
+    def test_process_semantic_candidates_deduplicates_episode_facts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="I prefer Python.")
+            store.add_event(
+                episode_id,
+                "memory_review_candidate",
+                metadata={"memory_kind": "semantic", "confidence": 0.8},
+            )
+            store.add_event(
+                episode_id,
+                "working_memory_summary",
+                content="The user prefers Python.",
+            )
+            store.add_event(
+                episode_id,
+                "working_memory_preservation_candidate",
+                metadata={
+                    "preservation": {
+                        "should_preserve": True,
+                        "preservation_kind": "semantic",
+                    }
+                },
+            )
+
+            results = process_memory_review_candidates(
+                store,
+                episode_id,
+                semantic_extractor=DuplicateSemanticExtractor(),
+            )
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(results[0]["created_semantic_memory_ids"], [memories[0]["id"]])
+        self.assertEqual(results[1]["deduplicated_semantic_memory_ids"], [memories[0]["id"]])
 
     def test_process_procedure_review_candidate_creates_procedure_from_tool_calls(self):
         with tempfile.TemporaryDirectory() as temp_dir:

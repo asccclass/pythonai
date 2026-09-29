@@ -65,21 +65,34 @@ def process_semantic_candidate(
     extractor = semantic_extractor or _FallbackSemanticExtractor()
     triples = extractor.extract(source["content"] or "")
     memory_ids = []
+    deduplicated_memory_ids = []
+    existing_episode_memories = semantic_memories_for_episode(store, events)
     for triple in triples:
-        memory_ids.append(
-            store.add_semantic_memory(
-                subject=triple.subject,
-                predicate=triple.predicate,
-                object_value=triple.object_value,
-                source_event_id=source["id"],
-                confidence=min(candidate_confidence, triple.confidence),
-            )
+        existing_memory = existing_episode_memories.get(semantic_memory_key(triple.subject, triple.predicate, triple.object_value))
+        if existing_memory is not None:
+            deduplicated_memory_ids.append(existing_memory["id"])
+            continue
+        memory_id = store.add_semantic_memory(
+            subject=triple.subject,
+            predicate=triple.predicate,
+            object_value=triple.object_value,
+            source_event_id=source["id"],
+            confidence=min(candidate_confidence, triple.confidence),
         )
-    if not memory_ids:
+        memory_ids.append(memory_id)
+        existing_episode_memories[semantic_memory_key(triple.subject, triple.predicate, triple.object_value)] = {
+            "id": memory_id
+        }
+    if not memory_ids and not deduplicated_memory_ids:
         return None
-    metadata = {"memory_kind": "semantic", "semantic_memory_ids": memory_ids}
-    if len(memory_ids) == 1:
-        metadata["semantic_memory_id"] = memory_ids[0]
+    all_memory_ids = [*memory_ids, *deduplicated_memory_ids]
+    metadata = {"memory_kind": "semantic", "semantic_memory_ids": all_memory_ids}
+    if memory_ids:
+        metadata["created_semantic_memory_ids"] = memory_ids
+    if deduplicated_memory_ids:
+        metadata["deduplicated_semantic_memory_ids"] = deduplicated_memory_ids
+    if len(all_memory_ids) == 1:
+        metadata["semantic_memory_id"] = all_memory_ids[0]
     store.add_event(
         episode_id,
         "memory_review_result",
@@ -96,6 +109,24 @@ def semantic_source_event(events: list[dict[str, Any]], candidate: dict[str, Any
         if candidate.get("content"):
             return candidate
     return next((event for event in events if event["event_type"] == "message" and event["role"] == "user"), None)
+
+
+def semantic_memories_for_episode(store: MemoryStore, events: list[dict[str, Any]]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    event_ids = {event["id"] for event in events}
+    memories = {}
+    for memory in store.active_semantic_memories():
+        if memory["source_event_id"] not in event_ids:
+            continue
+        memories[semantic_memory_key(memory["subject"], memory["predicate"], memory["object"])] = memory
+    return memories
+
+
+def semantic_memory_key(subject: str, predicate: str, object_value: str) -> tuple[str, str, str]:
+    return (normalize_memory_part(subject), normalize_memory_part(predicate), normalize_memory_part(object_value))
+
+
+def normalize_memory_part(value: str) -> str:
+    return " ".join(str(value).strip().casefold().split())
 
 
 def latest_event_before(events: list[dict[str, Any]], event_id: int, event_type: str) -> dict[str, Any] | None:
