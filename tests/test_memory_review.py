@@ -21,6 +21,16 @@ class DuplicateSemanticExtractor:
         return [SemanticTriple("user", "prefers", "Python", 0.9)]
 
 
+class TypeScriptPreferenceExtractor:
+    def extract(self, text: str) -> list[SemanticTriple]:
+        return [SemanticTriple("user", "prefers", "TypeScript", 0.9, "user_profile", "global")]
+
+
+class LowConfidenceExtractor:
+    def extract(self, text: str) -> list[SemanticTriple]:
+        return [SemanticTriple("user", "maybe_prefers", "Rust", 0.1, "user_profile", "global")]
+
+
 class FakeProcedureMatcher:
     def __init__(self, procedure_id: int):
         self.procedure_id = procedure_id
@@ -164,6 +174,89 @@ class MemoryReviewTests(unittest.TestCase):
         self.assertEqual(len(memories), 1)
         self.assertEqual(results[0]["created_semantic_memory_ids"], [memories[0]["id"]])
         self.assertEqual(results[1]["deduplicated_semantic_memory_ids"], [memories[0]["id"]])
+
+    def test_process_semantic_candidate_reinforces_existing_fact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            first_episode = store.start_episode()
+            first_event_id = store.add_event(first_episode, "message", role="user", content="I prefer Python")
+            memory_id = store.add_semantic_memory(
+                "user",
+                "prefers",
+                "Python",
+                source_event_id=first_event_id,
+                confidence=0.4,
+                memory_type="user_profile",
+            )
+            second_episode = store.start_episode()
+            store.add_event(second_episode, "message", role="user", content="I prefer Python")
+            store.add_event(second_episode, "memory_review_candidate", metadata={"memory_kind": "semantic", "confidence": 0.8})
+
+            results = process_memory_review_candidates(
+                store,
+                second_episode,
+                semantic_extractor=DuplicateSemanticExtractor(),
+            )
+            memories = store.active_semantic_memories()
+            update_events = [
+                event for event in store.episode_events(second_episode) if event["event_type"] == "memory_update_decision"
+            ]
+
+        self.assertEqual(results[0]["reinforced_semantic_memory_ids"], [memory_id])
+        self.assertEqual(len(memories), 1)
+        self.assertGreater(memories[0]["confidence"], 0.8)
+        self.assertEqual(update_events[0]["metadata"]["action"], "reinforce")
+
+    def test_process_semantic_candidate_supersedes_changed_fact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            first_episode = store.start_episode()
+            first_event_id = store.add_event(first_episode, "message", role="user", content="I prefer Python")
+            old_memory_id = store.add_semantic_memory(
+                "user",
+                "prefers",
+                "Python",
+                source_event_id=first_event_id,
+                confidence=0.7,
+                memory_type="user_profile",
+            )
+            second_episode = store.start_episode()
+            store.add_event(second_episode, "message", role="user", content="I prefer TypeScript")
+            store.add_event(second_episode, "memory_review_candidate", metadata={"memory_kind": "semantic", "confidence": 0.8})
+
+            results = process_memory_review_candidates(
+                store,
+                second_episode,
+                semantic_extractor=TypeScriptPreferenceExtractor(),
+            )
+            active = store.active_semantic_memories(subject="user", predicate="prefers")
+            archived = store.archived_semantic_memories()
+
+        self.assertEqual(results[0]["superseded_semantic_memory_ids"], [old_memory_id])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["object"], "TypeScript")
+        self.assertEqual(archived[0]["id"], old_memory_id)
+
+    def test_process_semantic_candidate_ignores_low_confidence_fact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="Maybe Rust")
+            store.add_event(episode_id, "memory_review_candidate", metadata={"memory_kind": "semantic", "confidence": 0.8})
+
+            results = process_memory_review_candidates(
+                store,
+                episode_id,
+                semantic_extractor=LowConfidenceExtractor(),
+            )
+            memories = store.active_semantic_memories()
+            update_events = [
+                event for event in store.episode_events(episode_id) if event["event_type"] == "memory_update_decision"
+            ]
+
+        self.assertEqual(results, [])
+        self.assertEqual(memories, [])
+        self.assertEqual(update_events[0]["metadata"]["action"], "ignore")
 
     def test_process_procedure_review_candidate_creates_procedure_from_tool_calls(self):
         with tempfile.TemporaryDirectory() as temp_dir:

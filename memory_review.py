@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from memory import MemoryStore
+from memory_update import decide_semantic_update, reinforced_confidence, semantic_memory_key
 from procedure_similarity import ProcedureCandidate, ProcedureSimilarityMatcher
 from semantic_extractor import SemanticExtractor, extract_semantic_triple, fallback_semantic_triples
 
@@ -65,34 +66,85 @@ def process_semantic_candidate(
     extractor = semantic_extractor or _FallbackSemanticExtractor()
     triples = extractor.extract(source["content"] or "")
     memory_ids = []
+    reinforced_memory_ids = []
+    superseded_memory_ids = []
     deduplicated_memory_ids = []
+    ignored_triples = 0
     existing_episode_memories = semantic_memories_for_episode(store, events)
     for triple in triples:
         existing_memory = existing_episode_memories.get(semantic_memory_key(triple.subject, triple.predicate, triple.object_value))
         if existing_memory is not None:
             deduplicated_memory_ids.append(existing_memory["id"])
             continue
-        memory_id = store.add_semantic_memory(
-            subject=triple.subject,
-            predicate=triple.predicate,
-            object_value=triple.object_value,
-            source_event_id=source["id"],
-            confidence=min(candidate_confidence, triple.confidence),
-            memory_type=triple.memory_type,
-            scope=triple.scope,
+        decision = decide_semantic_update(triple, store.active_semantic_memories(), candidate_confidence)
+        store.add_event(
+            episode_id,
+            "memory_update_decision",
+            metadata={
+                "action": decision.action,
+                "reason": decision.reason,
+                "existing_memory_id": decision.existing_memory_id,
+                "candidate": {
+                    "subject": triple.subject,
+                    "predicate": triple.predicate,
+                    "object": triple.object_value,
+                    "memory_type": triple.memory_type,
+                    "scope": triple.scope,
+                    "confidence": min(candidate_confidence, triple.confidence),
+                },
+            },
         )
+        if decision.action == "ignore":
+            ignored_triples += 1
+            continue
+        if decision.action == "reinforce" and decision.existing_memory_id is not None:
+            existing = memory_by_id(store.active_semantic_memories(), decision.existing_memory_id)
+            if existing is not None:
+                store.update_semantic_confidence(
+                    decision.existing_memory_id,
+                    reinforced_confidence(existing["confidence"], min(candidate_confidence, triple.confidence)),
+                )
+            reinforced_memory_ids.append(decision.existing_memory_id)
+            continue
+        if decision.action == "supersede" and decision.existing_memory_id is not None:
+            memory_id = store.supersede_semantic_memory(
+                decision.existing_memory_id,
+                subject=triple.subject,
+                predicate=triple.predicate,
+                object_value=triple.object_value,
+                source_event_id=source["id"],
+                confidence=min(candidate_confidence, triple.confidence),
+                reason=decision.reason,
+                memory_type=triple.memory_type,
+                scope=triple.scope,
+            )
+            superseded_memory_ids.append(decision.existing_memory_id)
+        else:
+            memory_id = store.add_semantic_memory(
+                subject=triple.subject,
+                predicate=triple.predicate,
+                object_value=triple.object_value,
+                source_event_id=source["id"],
+                confidence=min(candidate_confidence, triple.confidence),
+                memory_type=triple.memory_type,
+                scope=triple.scope,
+            )
         memory_ids.append(memory_id)
-        existing_episode_memories[semantic_memory_key(triple.subject, triple.predicate, triple.object_value)] = {
-            "id": memory_id
-        }
-    if not memory_ids and not deduplicated_memory_ids:
+        existing_episode_memories[semantic_memory_key(triple.subject, triple.predicate, triple.object_value)] = {"id": memory_id}
+    if not memory_ids and not deduplicated_memory_ids and not reinforced_memory_ids:
         return None
-    all_memory_ids = [*memory_ids, *deduplicated_memory_ids]
+    all_memory_ids = [*memory_ids, *deduplicated_memory_ids, *reinforced_memory_ids]
     metadata = {"memory_kind": "semantic", "semantic_memory_ids": all_memory_ids}
     if memory_ids:
         metadata["created_semantic_memory_ids"] = memory_ids
+    if reinforced_memory_ids:
+        metadata["reinforced_semantic_memory_ids"] = reinforced_memory_ids
+    if superseded_memory_ids:
+        metadata["superseded_semantic_memory_ids"] = superseded_memory_ids
     if deduplicated_memory_ids:
         metadata["deduplicated_semantic_memory_ids"] = deduplicated_memory_ids
+    if ignored_triples:
+        metadata["ignored_semantic_triples"] = ignored_triples
     if len(all_memory_ids) == 1:
         metadata["semantic_memory_id"] = all_memory_ids[0]
     store.add_event(
@@ -123,12 +175,8 @@ def semantic_memories_for_episode(store: MemoryStore, events: list[dict[str, Any
     return memories
 
 
-def semantic_memory_key(subject: str, predicate: str, object_value: str) -> tuple[str, str, str]:
-    return (normalize_memory_part(subject), normalize_memory_part(predicate), normalize_memory_part(object_value))
-
-
-def normalize_memory_part(value: str) -> str:
-    return " ".join(str(value).strip().casefold().split())
+def memory_by_id(memories: list[dict[str, Any]], memory_id: int) -> dict[str, Any] | None:
+    return next((memory for memory in memories if memory["id"] == memory_id), None)
 
 
 def latest_event_before(events: list[dict[str, Any]], event_id: int, event_type: str) -> dict[str, Any] | None:
