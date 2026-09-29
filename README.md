@@ -70,6 +70,7 @@ python .\observability.py confirm-fact --memory-id 1
 python .\observability.py contradict-fact --memory-id 1
 python .\observability.py supersede-fact --memory-id 1 --subject user --predicate prefers --object TypeScript --memory-type user_profile
 python .\observability.py export
+python .\observability.py import --path .\memory-export.json
 ```
 
 ## Tools

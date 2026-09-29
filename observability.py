@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Any
 
 from memory import MemoryStore
@@ -160,6 +161,58 @@ def export_memory(store: MemoryStore) -> dict[str, Any]:
     }
 
 
+def import_memory(store: MemoryStore, payload: dict[str, Any]) -> dict[str, Any]:
+    episode_id = store.start_episode()
+    source_event_id = store.add_event(
+        episode_id,
+        "memory_import",
+        metadata={
+            "semantic_count": len(payload.get("active_semantic_memories", [])),
+            "procedure_count": len(payload.get("active_procedures", [])),
+        },
+    )
+    imported_semantic_ids = []
+    for memory in payload.get("active_semantic_memories", []):
+        imported_semantic_ids.append(
+            store.add_semantic_memory(
+                subject=str(memory["subject"]),
+                predicate=str(memory["predicate"]),
+                object_value=str(memory["object"]),
+                source_event_id=source_event_id,
+                confidence=float(memory.get("confidence", 0.5)),
+                expires_at=memory.get("expires_at"),
+                embedding=memory.get("embedding"),
+                memory_type=str(memory.get("memory_type", "fact")),
+                scope=str(memory.get("scope", "global")),
+            )
+        )
+    imported_procedure_ids = []
+    for procedure in payload.get("active_procedures", []):
+        imported_procedure_ids.append(
+            store.add_procedure(
+                task_type=str(procedure["task_type"]),
+                context_pattern=str(procedure["context_pattern"]),
+                steps=[str(step) for step in procedure.get("steps", [])],
+                source_episode_id=episode_id,
+                confidence=float(procedure.get("confidence", 0.5)),
+                success_count=int(procedure.get("success_count", 1)),
+                failure_count=int(procedure.get("failure_count", 0)),
+            )
+        )
+    store.finish_episode(episode_id, summary="Imported memory export")
+    return {
+        "episode_id": episode_id,
+        "source_event_id": source_event_id,
+        "imported_semantic_memory_ids": imported_semantic_ids,
+        "imported_procedure_ids": imported_procedure_ids,
+    }
+
+
+def import_memory_file(store: MemoryStore, path: str | Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    return import_memory(store, payload)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect bot memory.")
     parser.add_argument(
@@ -179,6 +232,7 @@ def main() -> None:
             "contradict-fact",
             "supersede-fact",
             "export",
+            "import",
         ],
     )
     parser.add_argument("--episode-id", type=int)
@@ -193,6 +247,7 @@ def main() -> None:
     parser.add_argument("--predicate")
     parser.add_argument("--object")
     parser.add_argument("--confidence", type=float, default=0.8)
+    parser.add_argument("--path")
     args = parser.parse_args()
 
     store = MemoryStore()
@@ -246,8 +301,12 @@ def main() -> None:
             scope=args.scope or "global",
             reason=args.reason,
         )
-    else:
+    elif args.command == "export":
         payload = export_memory(store)
+    else:
+        if args.path is None:
+            parser.error("--path is required for import")
+        payload = import_memory_file(store, args.path)
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 

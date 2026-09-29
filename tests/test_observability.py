@@ -10,6 +10,8 @@ from observability import (
     confirm_fact,
     contradict_fact,
     export_memory,
+    import_memory,
+    import_memory_file,
     inspect_episode,
     list_skills,
     low_confidence_facts,
@@ -196,6 +198,60 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIn("active_semantic_memories", result)
         self.assertIn("active_procedures", result)
 
+    def test_import_memory_imports_semantic_and_procedure_rows(self):
+        payload = {
+            "active_semantic_memories": [
+                {
+                    "subject": "user",
+                    "predicate": "prefers",
+                    "object": "Python",
+                    "confidence": 0.9,
+                    "memory_type": "user_profile",
+                    "scope": "global",
+                }
+            ],
+            "active_procedures": [
+                {
+                    "task_type": "run_command",
+                    "context_pattern": "python tests",
+                    "steps": ["run_command pytest"],
+                    "confidence": 0.8,
+                    "success_count": 2,
+                    "failure_count": 1,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+
+            result = import_memory(store, payload)
+            memories = store.active_semantic_memories()
+            procedures = store.active_procedures()
+            events = store.episode_events(result["episode_id"])
+
+        self.assertEqual(memories[0]["object"], "Python")
+        self.assertEqual(memories[0]["source_event_id"], result["source_event_id"])
+        self.assertEqual(procedures[0]["success_count"], 2)
+        self.assertEqual(events[0]["event_type"], "memory_import")
+
+    def test_import_memory_file_reads_json_payload(self):
+        payload = {
+            "active_semantic_memories": [
+                {"subject": "project", "predicate": "uses", "object": "SQLite"}
+            ],
+            "active_procedures": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "memory-export.json"
+            path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+
+            result = import_memory_file(store, path)
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(result["imported_semantic_memory_ids"], [memories[0]["id"]])
+        self.assertEqual(memories[0]["object"], "SQLite")
+
     def test_cli_skill_runs_prints_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "memory.db"
@@ -232,6 +288,26 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("Python", print_mock.call_args.args[0])
+
+    def test_cli_import_prints_json(self):
+        payload = {
+            "active_semantic_memories": [
+                {"subject": "user", "predicate": "prefers", "object": "Python"}
+            ],
+            "active_procedures": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "memory-export.json"
+            path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "import", "--path", str(path)]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("imported_semantic_memory_ids", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":
