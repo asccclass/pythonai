@@ -39,6 +39,24 @@ class StoryRelationTests(unittest.TestCase):
             device=-1,
         )
 
+    def test_build_edges_data_returns_x_py_edge_tuples(self):
+        chapter_characters = [
+            ["張小明", "張小華"],
+            ["張小明", "李大叔"],
+            ["李大叔", "張小華", "張小明"],
+        ]
+
+        edges_data = relation.build_edges_data(chapter_characters)
+
+        self.assertEqual(
+            edges_data,
+            [
+                ("張小明", "張小華", 2),
+                ("張小明", "李大叔", 2),
+                ("張小華", "李大叔", 1),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

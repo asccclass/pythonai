@@ -48,6 +48,14 @@ def extract_chapter_characters(chapters: list[str], ner_driver: CkipNerChunker) 
 
 
 def build_relation_graph(chapter_characters: list[list[str]]) -> nx.Graph:
+    edges_data = build_edges_data(chapter_characters)
+    graph = nx.Graph()
+    for u, v, weight in edges_data:
+        graph.add_edge(u, v, weight=weight)
+    return graph
+
+
+def build_edges_data(chapter_characters: list[list[str]]) -> list[tuple[str, str, int]]:
     edge_weights = defaultdict(int)
     for chars in chapter_characters:
         if len(chars) < 2:
@@ -56,10 +64,7 @@ def build_relation_graph(chapter_characters: list[list[str]]) -> nx.Graph:
         for u, v in pairs:
             edge_weights[(u, v)] += 1
 
-    graph = nx.Graph()
-    for (u, v), weight in edge_weights.items():
-        graph.add_edge(u, v, weight=weight)
-    return graph
+    return [(u, v, weight) for (u, v), weight in sorted(edge_weights.items())]
 
 
 def draw_relation_graph(graph: nx.Graph) -> None:
