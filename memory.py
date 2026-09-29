@@ -461,10 +461,20 @@ class MemoryStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def semantic_memories_missing_embeddings(self, limit: int = 50) -> list[dict[str, Any]]:
+    def semantic_memories_missing_embeddings(
+        self,
+        limit: int = 50,
+        stale_before: str | None = None,
+    ) -> list[dict[str, Any]]:
+        embedding_filter = "(embedding IS NULL OR embedding = '')"
+        params: list[Any] = []
+        if stale_before is not None:
+            embedding_filter = f"({embedding_filter} OR embedding_updated_at IS NULL OR embedding_updated_at < ?)"
+            params.append(stale_before)
+        params.append(limit)
         with closing(self.connect()) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
                        memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
@@ -472,11 +482,11 @@ class MemoryStore:
                 WHERE superseded_by IS NULL
                   AND archived_at IS NULL
                   AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-                  AND (embedding IS NULL OR embedding = '')
+                  AND {embedding_filter}
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 

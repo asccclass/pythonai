@@ -176,6 +176,30 @@ class VectorSearchTests(unittest.TestCase):
         self.assertIn("1.0", memories[0]["embedding"])
         self.assertIsNotNone(memories[0]["embedding_updated_at"])
 
+    def test_backfill_semantic_embeddings_can_refresh_stale_embeddings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory("user", "likes", "Python", source_event_id=event_id, embedding=[0.0, 1.0])
+            connection = store.connect()
+            try:
+                connection.execute(
+                    "UPDATE semantic_memories SET embedding_updated_at = ? WHERE id = ?",
+                    ("2026-01-01 00:00:00", memory_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            provider = StaticEmbeddingProvider({"user likes Python": [1.0, 0.0]})
+
+            result = backfill_semantic_embeddings(store, provider, limit=5, stale_before="2026-02-01 00:00:00")
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(result["updated_ids"], [memory_id])
+        self.assertEqual(result["stale_before"], "2026-02-01 00:00:00")
+        self.assertIn("1.0", memories[0]["embedding"])
+
 
 if __name__ == "__main__":
     unittest.main()

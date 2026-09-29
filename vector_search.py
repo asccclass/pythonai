@@ -128,9 +128,10 @@ def backfill_semantic_embeddings(
     store: Any,
     embedding_provider: EmbeddingProvider | None = None,
     limit: int = 50,
+    stale_before: str | None = None,
 ) -> dict[str, Any]:
     provider = embedding_provider or HashingEmbeddingProvider()
-    candidates = store.semantic_memories_missing_embeddings(limit=limit)
+    candidates = store.semantic_memories_missing_embeddings(limit=limit, stale_before=stale_before)
     updated_ids = []
     failed_ids = []
     for memory in candidates:
@@ -142,6 +143,7 @@ def backfill_semantic_embeddings(
             failed_ids.append(int(memory["id"]))
     return {
         "limit": limit,
+        "stale_before": stale_before,
         "candidate_count": len(candidates),
         "updated_ids": updated_ids,
         "failed_ids": failed_ids,

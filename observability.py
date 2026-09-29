@@ -83,15 +83,24 @@ def low_confidence_facts(store: MemoryStore, threshold: float = 0.35) -> dict[st
     return {"threshold": threshold, "memories": memories}
 
 
-def embedding_backfill_candidates(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+def embedding_backfill_candidates(
+    store: MemoryStore,
+    limit: int = 50,
+    stale_before: str | None = None,
+) -> dict[str, Any]:
     return {
         "limit": limit,
-        "memories": store.semantic_memories_missing_embeddings(limit=limit),
+        "stale_before": stale_before,
+        "memories": store.semantic_memories_missing_embeddings(limit=limit, stale_before=stale_before),
     }
 
 
-def backfill_embeddings(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
-    return backfill_semantic_embeddings(store, HashingEmbeddingProvider(), limit=limit)
+def backfill_embeddings(
+    store: MemoryStore,
+    limit: int = 50,
+    stale_before: str | None = None,
+) -> dict[str, Any]:
+    return backfill_semantic_embeddings(store, HashingEmbeddingProvider(), limit=limit, stale_before=stale_before)
 
 
 def memory_health(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
@@ -309,6 +318,7 @@ def main() -> None:
     parser.add_argument("--object")
     parser.add_argument("--confidence", type=float, default=0.8)
     parser.add_argument("--path")
+    parser.add_argument("--stale-before")
     args = parser.parse_args()
 
     store = MemoryStore()
@@ -337,9 +347,9 @@ def main() -> None:
     elif args.command == "low-confidence":
         payload = low_confidence_facts(store, threshold=args.threshold)
     elif args.command == "embedding-candidates":
-        payload = embedding_backfill_candidates(store, limit=args.limit)
+        payload = embedding_backfill_candidates(store, limit=args.limit, stale_before=args.stale_before)
     elif args.command == "backfill-embeddings":
-        payload = backfill_embeddings(store, limit=args.limit)
+        payload = backfill_embeddings(store, limit=args.limit, stale_before=args.stale_before)
     elif args.command == "memory-health":
         payload = memory_health(store, limit=args.limit)
     elif args.command == "conflicts":

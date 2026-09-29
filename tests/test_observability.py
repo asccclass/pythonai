@@ -190,6 +190,27 @@ class ObservabilityTests(unittest.TestCase):
 
         self.assertEqual([memory["id"] for memory in result["memories"]], [missing_id])
 
+    def test_embedding_backfill_candidates_can_include_stale_embeddings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id, embedding=[1.0, 0.0])
+            connection = store.connect()
+            try:
+                connection.execute(
+                    "UPDATE semantic_memories SET embedding_updated_at = ? WHERE id = ?",
+                    ("2026-01-01 00:00:00", memory_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            result = embedding_backfill_candidates(store, limit=5, stale_before="2026-02-01 00:00:00")
+
+        self.assertEqual(result["stale_before"], "2026-02-01 00:00:00")
+        self.assertEqual([memory["id"] for memory in result["memories"]], [memory_id])
+
     def test_memory_health_summarizes_budget_errors_and_queue_depth(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")
@@ -422,6 +443,18 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("updated_ids", print_mock.call_args.args[0])
+
+    def test_cli_embedding_candidates_accepts_stale_before(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "embedding-candidates", "--stale-before", "2026-02-01 00:00:00"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("2026-02-01 00:00:00", print_mock.call_args.args[0])
 
     def test_cli_memory_health_prints_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -340,6 +340,29 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertEqual([memory["id"] for memory in memories], [missing_id])
 
+    def test_store_returns_stale_semantic_embeddings_when_cutoff_is_set(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            stale_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id, embedding=[1.0, 0.0])
+            store.add_semantic_memory("user", "likes", "Taipei", source_event_id=event_id, embedding=[0.0, 1.0])
+            connection = store.connect()
+            try:
+                connection.execute(
+                    "UPDATE semantic_memories SET embedding_updated_at = ? WHERE id = ?",
+                    ("2026-01-01 00:00:00", stale_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            missing_only = store.semantic_memories_missing_embeddings(limit=10)
+            stale = store.semantic_memories_missing_embeddings(limit=10, stale_before="2026-02-01 00:00:00")
+
+        self.assertEqual(missing_only, [])
+        self.assertEqual([memory["id"] for memory in stale], [stale_id])
+
 
 if __name__ == "__main__":
     unittest.main()
