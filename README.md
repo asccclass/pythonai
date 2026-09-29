@@ -62,6 +62,9 @@ python .\observability.py overview
 python .\observability.py episode --episode-id 1
 python .\observability.py messages --limit 50
 python .\observability.py messages --episode-id 1
+python .\observability.py review-candidates --limit 20
+python .\observability.py procedures
+python .\observability.py procedures --name run_command
 python .\observability.py facts --memory-type user_profile
 python .\observability.py low-confidence --threshold 0.35
 python .\observability.py conflicts

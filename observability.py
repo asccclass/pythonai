@@ -49,6 +49,18 @@ def skill_runs(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
     return {"limit": limit, "events": store.skill_run_events(limit=limit)}
 
 
+def review_candidates(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+    return {"limit": limit, "events": store.review_candidates(limit=limit)}
+
+
+def procedures(store: MemoryStore, task_type: str | None = None) -> dict[str, Any]:
+    return {
+        "task_type": task_type,
+        "active_procedures": store.active_procedures(task_type=task_type),
+        "archived_procedures": store.archived_procedures() if task_type is None else [],
+    }
+
+
 def active_facts(
     store: MemoryStore,
     memory_type: str | None = None,
@@ -224,6 +236,8 @@ def main() -> None:
             "skills",
             "skill",
             "skill-runs",
+            "review-candidates",
+            "procedures",
             "facts",
             "low-confidence",
             "conflicts",
@@ -267,6 +281,10 @@ def main() -> None:
         payload = inspect_skill(args.name)
     elif args.command == "skill-runs":
         payload = skill_runs(store, limit=args.limit)
+    elif args.command == "review-candidates":
+        payload = review_candidates(store, limit=args.limit)
+    elif args.command == "procedures":
+        payload = procedures(store, task_type=args.name)
     elif args.command == "facts":
         payload = active_facts(store, memory_type=args.memory_type, scope=args.scope)
     elif args.command == "low-confidence":

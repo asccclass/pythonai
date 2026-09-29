@@ -18,6 +18,8 @@ from observability import (
     main,
     memory_messages,
     memory_overview,
+    procedures,
+    review_candidates,
     semantic_conflicts,
     skill_runs,
     supersede_fact,
@@ -115,6 +117,34 @@ class ObservabilityTests(unittest.TestCase):
             result = skill_runs(store)
 
         self.assertEqual(result["events"][0]["event_type"], "skill_result")
+
+    def test_review_candidates_returns_review_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "memory_review_candidate", metadata={"memory_kind": "semantic"})
+
+            result = review_candidates(store, limit=5)
+
+        self.assertEqual(result["limit"], 5)
+        self.assertEqual(result["events"][0]["event_type"], "memory_review_candidate")
+
+    def test_procedures_returns_active_and_archived_procedures(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            active_id = store.add_procedure("run_command", "python tests", ["pytest"], episode_id)
+            archived_id = store.add_procedure("run_skill", "story", ["run_skill story"], episode_id)
+            store.archive_procedure(archived_id, reason="manual_test")
+
+            all_result = procedures(store)
+            filtered_result = procedures(store, task_type="run_command")
+
+        self.assertEqual(all_result["active_procedures"][0]["id"], active_id)
+        self.assertEqual(all_result["archived_procedures"][0]["id"], archived_id)
+        self.assertEqual(filtered_result["task_type"], "run_command")
+        self.assertEqual(filtered_result["active_procedures"][0]["task_type"], "run_command")
+        self.assertEqual(filtered_result["archived_procedures"], [])
 
     def test_active_facts_filters_by_type_and_scope(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -266,6 +296,34 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("skill_result", print_mock.call_args.args[0])
+
+    def test_cli_review_candidates_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "memory_review_candidate", metadata={"memory_kind": "semantic"})
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "review-candidates", "--limit", "5"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("memory_review_candidate", print_mock.call_args.args[0])
+
+    def test_cli_procedures_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_procedure("run_command", "python tests", ["pytest"], episode_id)
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "procedures", "--name", "run_command"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("run_command", print_mock.call_args.args[0])
 
     def test_cli_facts_prints_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:
