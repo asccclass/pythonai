@@ -62,6 +62,14 @@ python .\observability.py overview
 python .\observability.py episode --episode-id 1
 python .\observability.py messages --limit 50
 python .\observability.py messages --episode-id 1
+python .\observability.py facts --memory-type user_profile
+python .\observability.py low-confidence --threshold 0.35
+python .\observability.py conflicts
+python .\observability.py archive-fact --memory-id 1 --reason obsolete
+python .\observability.py confirm-fact --memory-id 1
+python .\observability.py contradict-fact --memory-id 1
+python .\observability.py supersede-fact --memory-id 1 --subject user --predicate prefers --object TypeScript --memory-type user_profile
+python .\observability.py export
 ```
 
 ## Tools

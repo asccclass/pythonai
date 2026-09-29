@@ -4,7 +4,22 @@ from pathlib import Path
 from unittest.mock import patch
 
 from memory import MemoryStore
-from observability import inspect_episode, list_skills, main, memory_messages, memory_overview, skill_runs
+from observability import (
+    active_facts,
+    archive_fact,
+    confirm_fact,
+    contradict_fact,
+    export_memory,
+    inspect_episode,
+    list_skills,
+    low_confidence_facts,
+    main,
+    memory_messages,
+    memory_overview,
+    semantic_conflicts,
+    skill_runs,
+    supersede_fact,
+)
 
 
 class ObservabilityTests(unittest.TestCase):
@@ -99,6 +114,88 @@ class ObservabilityTests(unittest.TestCase):
 
         self.assertEqual(result["events"][0]["event_type"], "skill_result")
 
+    def test_active_facts_filters_by_type_and_scope(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            store.add_semantic_memory(
+                "user",
+                "prefers",
+                "Python",
+                source_event_id=event_id,
+                memory_type="user_profile",
+                scope="global",
+            )
+
+            result = active_facts(store, memory_type="user_profile", scope="global")
+
+        self.assertEqual(len(result["memories"]), 1)
+        self.assertEqual(result["memories"][0]["object"], "Python")
+
+    def test_low_confidence_facts_returns_threshold_matches(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="maybe")
+            store.add_semantic_memory("user", "maybe_prefers", "Rust", source_event_id=event_id, confidence=0.2)
+
+            result = low_confidence_facts(store, threshold=0.3)
+
+        self.assertEqual(result["memories"][0]["predicate"], "maybe_prefers")
+
+    def test_semantic_conflicts_groups_different_objects(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            first_event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            second_event_id = store.add_event(episode_id, "message", role="user", content="I prefer TypeScript")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=first_event_id)
+            store.add_semantic_memory("user", "prefers", "TypeScript", source_event_id=second_event_id)
+
+            result = semantic_conflicts(store)
+
+        self.assertEqual(result["conflicts"][0]["subject"], "user")
+        self.assertEqual(len(result["conflicts"][0]["memories"]), 2)
+
+    def test_archive_confirm_contradict_and_supersede_fact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            memory_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+
+            confirm_result = confirm_fact(store, memory_id)
+            contradict_result = contradict_fact(store, memory_id)
+            supersede_result = supersede_fact(
+                store,
+                memory_id,
+                "user",
+                "prefers",
+                "TypeScript",
+                memory_type="user_profile",
+            )
+            archive_result = archive_fact(store, supersede_result["new_memory_id"], reason="manual_test")
+            events = store.recent_events(limit=10)
+            archived = store.archived_semantic_memories()
+
+        self.assertEqual(confirm_result["semantic_memory_id"], memory_id)
+        self.assertEqual(contradict_result["semantic_memory_id"], memory_id)
+        self.assertEqual(supersede_result["old_memory_id"], memory_id)
+        self.assertEqual(archive_result["reason"], "manual_test")
+        self.assertIn("semantic_memory_confirmation", [event["event_type"] for event in events])
+        self.assertIn("semantic_memory_contradiction", [event["event_type"] for event in events])
+        self.assertTrue(any(memory["archive_reason"] == "manual_test" for memory in archived))
+
+    def test_export_memory_returns_memory_sections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+
+            result = export_memory(store)
+
+        self.assertIn("active_semantic_memories", result)
+        self.assertIn("active_procedures", result)
+
     def test_cli_skill_runs_prints_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "memory.db"
@@ -113,6 +210,28 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("skill_result", print_mock.call_args.args[0])
+
+    def test_cli_facts_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "memory.db"
+            store = MemoryStore(db_path)
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            store.add_semantic_memory(
+                "user",
+                "prefers",
+                "Python",
+                source_event_id=event_id,
+                memory_type="user_profile",
+            )
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "facts", "--memory-type", "user_profile"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("Python", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":

@@ -48,12 +48,151 @@ def skill_runs(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
     return {"limit": limit, "events": store.skill_run_events(limit=limit)}
 
 
+def active_facts(
+    store: MemoryStore,
+    memory_type: str | None = None,
+    scope: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "memory_type": memory_type,
+        "scope": scope,
+        "memories": store.active_semantic_memories(memory_type=memory_type, scope=scope),
+    }
+
+
+def low_confidence_facts(store: MemoryStore, threshold: float = 0.35) -> dict[str, Any]:
+    memories = [
+        memory
+        for memory in store.active_semantic_memories()
+        if float(memory["confidence"]) <= threshold
+    ]
+    return {"threshold": threshold, "memories": memories}
+
+
+def semantic_conflicts(store: MemoryStore) -> dict[str, Any]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for memory in store.active_semantic_memories():
+        grouped.setdefault((memory["subject"], memory["predicate"]), []).append(memory)
+    conflicts = [
+        {"subject": subject, "predicate": predicate, "memories": memories}
+        for (subject, predicate), memories in grouped.items()
+        if len({memory["object"] for memory in memories}) > 1
+    ]
+    return {"conflicts": conflicts}
+
+
+def archive_fact(store: MemoryStore, memory_id: int, reason: str = "manual_archive") -> dict[str, Any]:
+    store.archive_semantic_memory(memory_id, reason=reason)
+    return {"archived_memory_id": memory_id, "reason": reason}
+
+
+def confirm_fact(store: MemoryStore, memory_id: int) -> dict[str, Any]:
+    episode_id = store.start_episode()
+    event_id = store.add_event(
+        episode_id,
+        "semantic_memory_confirmation",
+        metadata={"semantic_memory_id": memory_id},
+    )
+    store.finish_episode(episode_id, summary=f"Confirmed semantic memory {memory_id}")
+    return {"event_id": event_id, "episode_id": episode_id, "semantic_memory_id": memory_id}
+
+
+def contradict_fact(store: MemoryStore, memory_id: int) -> dict[str, Any]:
+    episode_id = store.start_episode()
+    event_id = store.add_event(
+        episode_id,
+        "semantic_memory_contradiction",
+        metadata={"semantic_memory_id": memory_id},
+    )
+    store.finish_episode(episode_id, summary=f"Contradicted semantic memory {memory_id}")
+    return {"event_id": event_id, "episode_id": episode_id, "semantic_memory_id": memory_id}
+
+
+def supersede_fact(
+    store: MemoryStore,
+    old_memory_id: int,
+    subject: str,
+    predicate: str,
+    object_value: str,
+    confidence: float = 0.8,
+    memory_type: str = "fact",
+    scope: str = "global",
+    reason: str = "manual_supersede",
+) -> dict[str, Any]:
+    episode_id = store.start_episode()
+    source_event_id = store.add_event(
+        episode_id,
+        "manual_memory_supersession",
+        metadata={
+            "old_memory_id": old_memory_id,
+            "subject": subject,
+            "predicate": predicate,
+            "object": object_value,
+            "reason": reason,
+        },
+    )
+    new_memory_id = store.supersede_semantic_memory(
+        old_memory_id,
+        subject,
+        predicate,
+        object_value,
+        source_event_id=source_event_id,
+        confidence=confidence,
+        reason=reason,
+        memory_type=memory_type,
+        scope=scope,
+    )
+    store.finish_episode(episode_id, summary=f"Superseded semantic memory {old_memory_id}")
+    return {
+        "episode_id": episode_id,
+        "old_memory_id": old_memory_id,
+        "new_memory_id": new_memory_id,
+        "reason": reason,
+    }
+
+
+def export_memory(store: MemoryStore) -> dict[str, Any]:
+    return {
+        "active_semantic_memories": store.active_semantic_memories(),
+        "archived_semantic_memories": store.archived_semantic_memories(),
+        "active_procedures": store.active_procedures(),
+        "archived_procedures": store.archived_procedures(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect bot memory.")
-    parser.add_argument("command", choices=["overview", "episode", "messages", "skills", "skill", "skill-runs"])
+    parser.add_argument(
+        "command",
+        choices=[
+            "overview",
+            "episode",
+            "messages",
+            "skills",
+            "skill",
+            "skill-runs",
+            "facts",
+            "low-confidence",
+            "conflicts",
+            "archive-fact",
+            "confirm-fact",
+            "contradict-fact",
+            "supersede-fact",
+            "export",
+        ],
+    )
     parser.add_argument("--episode-id", type=int)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--name")
+    parser.add_argument("--memory-id", type=int)
+    parser.add_argument("--reason", default="manual_archive")
+    parser.add_argument("--memory-type")
+    parser.add_argument("--scope")
+    parser.add_argument("--threshold", type=float, default=0.35)
+    parser.add_argument("--subject")
+    parser.add_argument("--predicate")
+    parser.add_argument("--object")
+    parser.add_argument("--confidence", type=float, default=0.8)
     args = parser.parse_args()
 
     store = MemoryStore()
@@ -71,8 +210,44 @@ def main() -> None:
         if args.name is None:
             parser.error("--name is required for skill")
         payload = inspect_skill(args.name)
-    else:
+    elif args.command == "skill-runs":
         payload = skill_runs(store, limit=args.limit)
+    elif args.command == "facts":
+        payload = active_facts(store, memory_type=args.memory_type, scope=args.scope)
+    elif args.command == "low-confidence":
+        payload = low_confidence_facts(store, threshold=args.threshold)
+    elif args.command == "conflicts":
+        payload = semantic_conflicts(store)
+    elif args.command == "archive-fact":
+        if args.memory_id is None:
+            parser.error("--memory-id is required for archive-fact")
+        payload = archive_fact(store, args.memory_id, reason=args.reason)
+    elif args.command == "confirm-fact":
+        if args.memory_id is None:
+            parser.error("--memory-id is required for confirm-fact")
+        payload = confirm_fact(store, args.memory_id)
+    elif args.command == "contradict-fact":
+        if args.memory_id is None:
+            parser.error("--memory-id is required for contradict-fact")
+        payload = contradict_fact(store, args.memory_id)
+    elif args.command == "supersede-fact":
+        if args.memory_id is None:
+            parser.error("--memory-id is required for supersede-fact")
+        if args.subject is None or args.predicate is None or args.object is None:
+            parser.error("--subject, --predicate, and --object are required for supersede-fact")
+        payload = supersede_fact(
+            store,
+            args.memory_id,
+            args.subject,
+            args.predicate,
+            args.object,
+            confidence=args.confidence,
+            memory_type=args.memory_type or "fact",
+            scope=args.scope or "global",
+            reason=args.reason,
+        )
+    else:
+        payload = export_memory(store)
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 
