@@ -70,21 +70,35 @@ def build_edges_data(chapter_characters: list[list[str]]) -> list[tuple[str, str
 
 
 def analyze_character_centrality(graph: nx.Graph) -> pd.DataFrame:
-    degree_dict = nx.degree_centrality(graph)
-    betweenness_dict = nx.betweenness_centrality(graph, normalized=True)
-    eigenvector_dict = nx.eigenvector_centrality(graph, max_iter=1000)
+    weighted_degree_dict = {
+        node: sum(data.get("weight", 1) for _, _, data in graph.edges(node, data=True))
+        for node in graph.nodes()
+    }
+    max_weighted_degree = max(weighted_degree_dict.values(), default=0)
+    degree_dict = {
+        node: (value / max_weighted_degree if max_weighted_degree else 0.0)
+        for node, value in weighted_degree_dict.items()
+    }
+
+    distance_graph = graph.copy()
+    for _, _, data in distance_graph.edges(data=True):
+        weight = data.get("weight", 1)
+        data["distance"] = 1 / weight if weight else 1
+
+    betweenness_dict = nx.betweenness_centrality(distance_graph, normalized=True, weight="distance")
+    eigenvector_dict = nx.eigenvector_centrality(graph, max_iter=1000, weight="weight")
 
     metrics_data = []
     for char in graph.nodes():
         metrics_data.append({
             "角色名稱": char,
-            "度中心性 (社交廣度)": round(degree_dict[char], 3),
-            "中介中心性 (情節橋樑)": round(betweenness_dict[char], 3),
-            "特徵向量中心性 (影響力)": round(eigenvector_dict[char], 3),
+            "加權度中心性 (互動廣度)": round(degree_dict[char], 3),
+            "加權中介中心性 (情節橋樑)": round(betweenness_dict[char], 3),
+            "加權特徵向量中心性 (影響力)": round(eigenvector_dict[char], 3),
         })
 
     df = pd.DataFrame(metrics_data)
-    return df.sort_values(by="特徵向量中心性 (影響力)", ascending=False).reset_index(drop=True)
+    return df.sort_values(by="加權特徵向量中心性 (影響力)", ascending=False).reset_index(drop=True)
 
 
 def draw_relation_graph(graph: nx.Graph, output_path: Path = DEFAULT_GRAPH_OUTPUT_PATH) -> Path:

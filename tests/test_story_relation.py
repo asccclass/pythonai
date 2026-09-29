@@ -70,12 +70,29 @@ class StoryRelationTests(unittest.TestCase):
             list(df.columns),
             [
                 "角色名稱",
-                "度中心性 (社交廣度)",
-                "中介中心性 (情節橋樑)",
-                "特徵向量中心性 (影響力)",
+                "加權度中心性 (互動廣度)",
+                "加權中介中心性 (情節橋樑)",
+                "加權特徵向量中心性 (影響力)",
             ],
         )
         self.assertEqual(set(df["角色名稱"]), {"張小明", "張小華", "李大叔"})
+
+    def test_analyze_character_centrality_uses_edge_weights(self):
+        graph = relation.nx.Graph()
+        graph.add_edge("主角", "夥伴", weight=10)
+        graph.add_edge("主角", "配角", weight=1)
+        graph.add_edge("夥伴", "配角", weight=1)
+
+        df = relation.analyze_character_centrality(graph)
+        rows = {row["角色名稱"]: row for row in df.to_dict("records")}
+
+        self.assertEqual(rows["主角"]["加權度中心性 (互動廣度)"], 1.0)
+        self.assertEqual(rows["夥伴"]["加權度中心性 (互動廣度)"], 1.0)
+        self.assertEqual(rows["配角"]["加權度中心性 (互動廣度)"], 0.182)
+        self.assertGreater(
+            rows["主角"]["加權特徵向量中心性 (影響力)"],
+            rows["配角"]["加權特徵向量中心性 (影響力)"],
+        )
 
     def test_draw_relation_graph_saves_output_file(self):
         graph = relation.build_relation_graph([["張小明", "張小華"]])
