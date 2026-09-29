@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from memory import MemoryStore
-from retrieval import build_memory_context, inject_memory_context, rank_memories, tokenize
+from retrieval import build_combined_memory_context, build_memory_context, build_procedure_context, inject_memory_context, rank_memories, rank_procedures, tokenize
 
 
 class FakeVectorSearcher:
@@ -169,6 +169,70 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("Python", context)
         self.assertFalse(searcher.calls[0]["allow_query_embedding"])
         self.assertEqual(searcher.calls[0]["max_missing_embeddings"], 0)
+
+    def test_build_procedure_context_formats_reusable_workflows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_procedure(
+                "run_command",
+                "python tests",
+                ["run_command {\"command\":\"python -m unittest\"}"],
+                episode_id,
+                confidence=0.8,
+                success_count=3,
+            )
+
+            context = build_procedure_context(store, query="run python tests")
+
+        self.assertIn("Relevant reusable workflows:", context)
+        self.assertIn("run_command [python tests]", context)
+        self.assertIn("successes=3", context)
+
+    def test_build_combined_memory_context_includes_semantic_and_procedure_sections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_procedure("run_command", "python tests", ["run_command pytest"], episode_id)
+
+            context = build_combined_memory_context(
+                store,
+                query="python tests",
+                semantic_context="Relevant long-term memory:\nFacts:\n- user prefers Python",
+            )
+
+        self.assertIn("Relevant long-term memory:", context)
+        self.assertIn("Relevant reusable workflows:", context)
+
+    def test_rank_procedures_uses_query_overlap_and_success_rate(self):
+        procedures = [
+            {
+                "id": 1,
+                "task_type": "run_command",
+                "context_pattern": "python tests",
+                "steps": ["pytest"],
+                "confidence": 0.8,
+                "success_count": 1,
+                "failure_count": 3,
+                "updated_at": "2026-01-01",
+                "last_success_at": "2026-01-01",
+            },
+            {
+                "id": 2,
+                "task_type": "run_command",
+                "context_pattern": "python tests",
+                "steps": ["python -m unittest"],
+                "confidence": 0.8,
+                "success_count": 4,
+                "failure_count": 0,
+                "updated_at": "2026-01-01",
+                "last_success_at": "2026-01-01",
+            },
+        ]
+
+        ranked = rank_procedures(procedures, query="python tests")
+
+        self.assertEqual([procedure["id"] for procedure in ranked], [2, 1])
 
     def test_inject_memory_context_appends_system_message(self):
         messages = [{"role": "user", "content": "hello"}]

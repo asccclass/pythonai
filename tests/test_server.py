@@ -387,6 +387,10 @@ class ServerTests(unittest.TestCase):
                 patch("server.MemoryStore", return_value=store),
                 patch("server.read_user_input", side_effect=["hello", "exit"]),
                 patch("server.build_memory_context", return_value="Relevant long-term memory:\n- user prefers Python"),
+                patch(
+                    "server.build_combined_memory_context",
+                    return_value="Relevant long-term memory:\n- user prefers Python\n\nRelevant reusable workflows:\n- run_command [python tests]",
+                ),
                 patch("server.run_agent", side_effect=run_agent),
                 patch("builtins.print"),
             ):
@@ -395,7 +399,10 @@ class ServerTests(unittest.TestCase):
             events = store.recent_events(limit=10)
 
         self.assertIn(
-            {"role": "system", "content": "Relevant long-term memory:\n- user prefers Python"},
+            {
+                "role": "system",
+                "content": "Relevant long-term memory:\n- user prefers Python\n\nRelevant reusable workflows:\n- run_command [python tests]",
+            },
             captured_messages,
         )
         self.assertIn("retrieval_context", [event["event_type"] for event in events])

@@ -7,6 +7,22 @@ from memory import MemoryStore
 from vector_search import VectorMemorySearcher
 
 DEFAULT_VECTOR_CANDIDATE_LIMIT = 24
+DEFAULT_PROCEDURE_LIMIT = 4
+
+
+def build_combined_memory_context(
+    store: MemoryStore,
+    query: str = "",
+    semantic_context: str | None = None,
+    procedure_limit: int = DEFAULT_PROCEDURE_LIMIT,
+) -> str:
+    sections = []
+    if semantic_context:
+        sections.append(semantic_context)
+    procedure_context = build_procedure_context(store, query=query, limit=procedure_limit)
+    if procedure_context:
+        sections.append(procedure_context)
+    return "\n\n".join(sections)
 
 
 def build_memory_context(
@@ -64,6 +80,58 @@ def candidate_memories(memories: list[dict[str, Any]], query: str = "", limit: i
             break
         selected.setdefault(int(memory["id"]), memory)
     return list(selected.values())
+
+
+def build_procedure_context(store: MemoryStore, query: str = "", limit: int = DEFAULT_PROCEDURE_LIMIT) -> str:
+    procedures = rank_procedures(store.active_procedures(), query)[:limit]
+    if not procedures:
+        return ""
+    lines = ["Relevant reusable workflows:"]
+    for procedure in procedures:
+        steps = "; ".join(procedure["steps"])
+        lines.append(
+            "- "
+            f"{procedure['task_type']} [{procedure['context_pattern']}] "
+            f"steps={steps} "
+            f"(confidence={procedure['confidence']:.2f}, successes={procedure['success_count']}, "
+            f"failures={procedure['failure_count']}, source_episode_id={procedure['source_episode_id']})"
+        )
+    return "\n".join(lines)
+
+
+def rank_procedures(procedures: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:
+    if not query:
+        return sorted(procedures, key=procedure_base_score, reverse=True)
+    query_terms = tokenize(query)
+    scored = []
+    for procedure in procedures:
+        procedure_terms = tokenize(
+            " ".join([procedure["task_type"], procedure["context_pattern"], " ".join(procedure["steps"])])
+        )
+        overlap = len(query_terms & procedure_terms)
+        if overlap <= 0:
+            continue
+        scored.append((overlap, *procedure_base_score(procedure), procedure))
+    scored.sort(reverse=True)
+    return [procedure for *_, procedure in scored]
+
+
+def procedure_base_score(procedure: dict[str, Any]) -> tuple[float, int, str, int]:
+    return (
+        procedure_success_rate(procedure),
+        int(procedure["success_count"]),
+        str(procedure.get("last_success_at") or procedure.get("updated_at") or ""),
+        int(procedure["id"]),
+    )
+
+
+def procedure_success_rate(procedure: dict[str, Any]) -> float:
+    successes = int(procedure["success_count"])
+    failures = int(procedure["failure_count"])
+    attempts = successes + failures
+    if attempts == 0:
+        return 0.0
+    return successes / attempts
 
 
 def linked_entity_memories(store: MemoryStore, memories: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:

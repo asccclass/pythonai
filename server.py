@@ -18,7 +18,7 @@ from request_budget import background_memory_budget, foreground_memory_budget
 from semantic_extractor import LLMSemanticExtractor
 from forgetting import run_forgetting_policy
 from memory import MemoryStore
-from retrieval import build_memory_context, inject_memory_context
+from retrieval import build_combined_memory_context, build_memory_context, inject_memory_context
 from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
 from working_memory import compact_messages
@@ -391,6 +391,13 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
                 if memory is not None
                 else ""
             )
+            if memory is not None:
+                memory_context = safe_memory_call(
+                    build_combined_memory_context,
+                    memory,
+                    query=user_input,
+                    semantic_context=memory_context,
+                ) or memory_context
             if memory_context:
                 log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
             agent_messages = inject_memory_context(messages, memory_context)
