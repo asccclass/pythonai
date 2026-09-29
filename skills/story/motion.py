@@ -6,6 +6,7 @@ from snownlp import SnowNLP
 
 
 DEFAULT_STORY_PATH = Path(__file__).resolve().with_name("story.txt")
+STORY_ENTITY_TYPES = {"PERSON", "GPE", "ORG", "LOC"}
 
 
 def load_story_chapters(story_path: Path = DEFAULT_STORY_PATH) -> dict[str, str]:
@@ -34,19 +35,70 @@ def calculate_sentiment_scores(texts: list[str]) -> list[float]:
     return sentiment_scores
 
 
+def token_spans(text: str, tokens: list[str]) -> list[tuple[str, int, int]]:
+    spans = []
+    cursor = 0
+    for token in tokens:
+        start = text.find(token, cursor)
+        if start < 0:
+            start = cursor
+        end = start + len(token)
+        spans.append((token, start, end))
+        cursor = end
+    return spans
+
+
+def merge_tokens_with_entities(text: str, tokens: list[str], ner) -> list[str]:
+    entities = sorted(
+        (
+            (entity.idx[0], entity.idx[1], entity.word)
+            for entity in ner
+            if entity.ner in STORY_ENTITY_TYPES
+        ),
+        key=lambda item: item[0],
+    )
+    if not entities:
+        return tokens
+
+    merged_tokens = []
+    spans = token_spans(text, tokens)
+    entity_index = 0
+    token_index = 0
+    while token_index < len(spans):
+        token, start, end = spans[token_index]
+        while entity_index < len(entities) and entities[entity_index][1] <= start:
+            entity_index += 1
+
+        if entity_index < len(entities):
+            entity_start, entity_end, entity_word = entities[entity_index]
+            if entity_start <= start and end <= entity_end:
+                merged_tokens.append(entity_word)
+                token_index += 1
+                while token_index < len(spans) and spans[token_index][2] <= entity_end:
+                    token_index += 1
+                entity_index += 1
+                continue
+
+        merged_tokens.append(token)
+        token_index += 1
+    return merged_tokens
+
+
 def print_story_elements(
     chapters: list[str],
+    texts: list[str],
     story_ws: list[list[str]],
     story_ner,
 ) -> None:
     print("\n=== CKIP 敘事元素提取結果 ===")
-    for chapter, ws, ner in zip(chapters, story_ws, story_ner):
+    for chapter, text, ws, ner in zip(chapters, texts, story_ws, story_ner):
+        display_ws = merge_tokens_with_entities(text, ws, ner)
         print(f"\n【{chapter}】")
-        print(f"斷詞結果: {' / '.join(ws[:10])} ... (下略)")
+        print(f"斷詞結果: {' / '.join(display_ws[:10])} ... (下略)")
         entities = [
             f"{entity.word}({entity.ner})"
             for entity in ner
-            if entity.ner in ["PERSON", "GPE", "ORG", "LOC"]
+            if entity.ner in STORY_ENTITY_TYPES
         ]
         print(f"關鍵角色與場景: {', '.join(set(entities)) if entities else '無'}")
 
@@ -77,7 +129,7 @@ def main() -> None:
     print("正在進行 CKIP 斷詞與實體辨識...")
     story_ws = ws_driver(texts)
     story_ner = ner_driver(texts)
-    print_story_elements(chapters, story_ws, story_ner)
+    print_story_elements(chapters, texts, story_ws, story_ner)
 
     sentiment_scores = calculate_sentiment_scores(texts)
     draw_sentiment_curve(chapters, sentiment_scores)
