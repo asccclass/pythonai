@@ -245,6 +245,75 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(events[0]["metadata"]["tool_call_id"], "tool-1")
         self.assertEqual(events[0]["content"], "['sample.txt']")
 
+    def test_run_agent_records_matching_procedure_result(self):
+        class Function:
+            name = "run_command"
+            arguments = '{"command": "python -m unittest"}'
+
+        class ToolCall:
+            id = "tool-1"
+            function = Function()
+
+        class ToolMessage:
+            tool_calls = [ToolCall()]
+            content = None
+
+        class FinalMessage:
+            tool_calls = None
+            content = "done"
+
+        class Choice:
+            def __init__(self, message):
+                self.message = message
+
+        class Response:
+            def __init__(self, message):
+                self.choices = [Choice(message)]
+
+        class Completions:
+            def __init__(self):
+                self.responses = [Response(ToolMessage()), Response(FinalMessage())]
+
+            def create(self, **kwargs):
+                return self.responses.pop(0)
+
+        class Chat:
+            def __init__(self):
+                self.completions = Completions()
+
+        class Client:
+            def __init__(self):
+                self.chat = Chat()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            procedure_id = store.add_procedure(
+                "run_command",
+                "run_command",
+                ['run_command {"command": "python -m unittest"}'],
+                source_episode_id=episode_id,
+                success_count=1,
+            )
+            with (
+                patch("server.get_client", return_value=Client()),
+                patch("server.run_tool_with_context", return_value="ok"),
+            ):
+                server.run_agent([{"role": "user", "content": "run tests"}], memory=store, episode_id=episode_id)
+
+            procedures = store.active_procedures("run_command")
+            events = store.recent_events(limit=10)
+
+        self.assertEqual(procedures[0]["id"], procedure_id)
+        self.assertEqual(procedures[0]["success_count"], 2)
+        procedure_events = [event for event in events if event["event_type"] == "procedure_result"]
+        self.assertEqual(procedure_events[0]["metadata"]["procedure_id"], procedure_id)
+        self.assertTrue(procedure_events[0]["metadata"]["succeeded"])
+
+    def test_tool_result_succeeded_detects_error_string(self):
+        self.assertTrue(server.tool_result_succeeded("ok"))
+        self.assertFalse(server.tool_result_succeeded("Error: failed"))
+
     def test_main_logs_skill_candidates(self):
         class Guard:
             def assess(self, user_input):

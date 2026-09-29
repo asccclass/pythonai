@@ -13,7 +13,7 @@ from base import TOOLS_SCHEMAS, load_dotenv, run_tool_with_context
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from memory_review import process_memory_review_candidates
-from procedure_similarity import LLMProcedureSimilarityMatcher
+from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
 from request_budget import background_memory_budget, foreground_memory_budget
 from semantic_extractor import LLMSemanticExtractor
 from forgetting import run_forgetting_policy
@@ -294,6 +294,7 @@ def run_agent(
 
         if assistant_message.tool_calls:
             for tool_call in assistant_message.tool_calls:
+                matched_procedure = find_matching_procedure_for_tool_call(memory, tool_call)
                 log_episode_event(
                     memory,
                     episode_id,
@@ -312,10 +313,58 @@ def run_agent(
                     content=str(result),
                     metadata={"tool_call_id": tool_call.id},
                 )
+                record_tool_procedure_result(memory, episode_id, matched_procedure, result)
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
             continue
 
         return assistant_message.content or ""
+
+
+def find_matching_procedure_for_tool_call(
+    memory: MemoryStore | None,
+    tool_call: Any,
+) -> dict[str, Any] | None:
+    if memory is None or not hasattr(memory, "active_procedures"):
+        return None
+    tool_name = tool_call.function.name
+    procedures = safe_memory_call(memory.active_procedures, tool_name) or []
+    if not procedures:
+        return None
+    candidate = ProcedureCandidate(
+        task_type=tool_name,
+        context_pattern=tool_name,
+        steps=[f"{tool_name} {tool_call.function.arguments}"],
+    )
+    match = LexicalProcedureSimilarityMatcher().find_match(candidate, procedures, threshold=0.2)
+    if match is None:
+        return None
+    return next((procedure for procedure in procedures if procedure["id"] == match.procedure_id), None)
+
+
+def record_tool_procedure_result(
+    memory: MemoryStore | None,
+    episode_id: int | None,
+    procedure: dict[str, Any] | None,
+    result: Any,
+) -> None:
+    if memory is None or episode_id is None or procedure is None:
+        return
+    succeeded = tool_result_succeeded(result)
+    safe_memory_call(memory.record_procedure_result, int(procedure["id"]), succeeded=succeeded)
+    log_episode_event(
+        memory,
+        episode_id,
+        "procedure_result",
+        metadata={
+            "procedure_id": procedure["id"],
+            "succeeded": succeeded,
+            "task_type": procedure["task_type"],
+        },
+    )
+
+
+def tool_result_succeeded(result: Any) -> bool:
+    return not str(result).lstrip().lower().startswith("error:")
 
 
 def assistant_message_to_dict(assistant_message: Any) -> dict[str, Any]:
