@@ -124,6 +124,30 @@ def format_memory_for_embedding(memory: dict[str, Any]) -> str:
     return f"{memory['subject']} {memory['predicate']} {memory['object']}"
 
 
+def backfill_semantic_embeddings(
+    store: Any,
+    embedding_provider: EmbeddingProvider | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    provider = embedding_provider or HashingEmbeddingProvider()
+    candidates = store.semantic_memories_missing_embeddings(limit=limit)
+    updated_ids = []
+    failed_ids = []
+    for memory in candidates:
+        try:
+            embedding = _embed(provider, format_memory_for_embedding(memory), allow_remote=True)
+            store.update_semantic_embedding(int(memory["id"]), embedding)
+            updated_ids.append(int(memory["id"]))
+        except Exception:
+            failed_ids.append(int(memory["id"]))
+    return {
+        "limit": limit,
+        "candidate_count": len(candidates),
+        "updated_ids": updated_ids,
+        "failed_ids": failed_ids,
+    }
+
+
 def _embed(provider: EmbeddingProvider, text: str, allow_remote: bool = True) -> list[float]:
     try:
         return provider.embed(text, allow_remote=allow_remote)  # type: ignore[call-arg]

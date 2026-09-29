@@ -461,6 +461,25 @@ class MemoryStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def semantic_memories_missing_embeddings(self, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
+                       memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at,
+                       created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
+                FROM semantic_memories
+                WHERE superseded_by IS NULL
+                  AND archived_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+                  AND (embedding IS NULL OR embedding = '')
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def archive_semantic_memory(self, memory_id: int, reason: str = "archived") -> None:
         with closing(self.connect()) as connection:
             connection.execute(

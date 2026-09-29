@@ -316,6 +316,18 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertIsNone(memories[0]["embedding"])
         self.assertIsNone(memories[0]["embedding_updated_at"])
 
+    def test_store_returns_semantic_memories_missing_embeddings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            missing_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            store.add_semantic_memory("user", "likes", "Taipei", source_event_id=event_id, embedding=[1.0, 0.0])
+
+            memories = store.semantic_memories_missing_embeddings(limit=10)
+
+        self.assertEqual([memory["id"] for memory in memories], [missing_id])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ from typing import Any
 
 from memory import MemoryStore
 from skills import SkillRegistry
+from vector_search import HashingEmbeddingProvider, backfill_semantic_embeddings
 
 
 def memory_overview(store: MemoryStore) -> dict[str, Any]:
@@ -80,6 +81,17 @@ def low_confidence_facts(store: MemoryStore, threshold: float = 0.35) -> dict[st
         if float(memory["confidence"]) <= threshold
     ]
     return {"threshold": threshold, "memories": memories}
+
+
+def embedding_backfill_candidates(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+    return {
+        "limit": limit,
+        "memories": store.semantic_memories_missing_embeddings(limit=limit),
+    }
+
+
+def backfill_embeddings(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+    return backfill_semantic_embeddings(store, HashingEmbeddingProvider(), limit=limit)
 
 
 def semantic_conflicts(store: MemoryStore) -> dict[str, Any]:
@@ -240,6 +252,8 @@ def main() -> None:
             "procedures",
             "facts",
             "low-confidence",
+            "embedding-candidates",
+            "backfill-embeddings",
             "conflicts",
             "archive-fact",
             "confirm-fact",
@@ -289,6 +303,10 @@ def main() -> None:
         payload = active_facts(store, memory_type=args.memory_type, scope=args.scope)
     elif args.command == "low-confidence":
         payload = low_confidence_facts(store, threshold=args.threshold)
+    elif args.command == "embedding-candidates":
+        payload = embedding_backfill_candidates(store, limit=args.limit)
+    elif args.command == "backfill-embeddings":
+        payload = backfill_embeddings(store, limit=args.limit)
     elif args.command == "conflicts":
         payload = semantic_conflicts(store)
     elif args.command == "archive-fact":

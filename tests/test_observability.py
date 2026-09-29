@@ -9,6 +9,7 @@ from observability import (
     archive_fact,
     confirm_fact,
     contradict_fact,
+    embedding_backfill_candidates,
     export_memory,
     import_memory,
     import_memory_file,
@@ -175,6 +176,18 @@ class ObservabilityTests(unittest.TestCase):
             result = low_confidence_facts(store, threshold=0.3)
 
         self.assertEqual(result["memories"][0]["predicate"], "maybe_prefers")
+
+    def test_embedding_backfill_candidates_returns_missing_embeddings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            missing_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            store.add_semantic_memory("user", "likes", "Taipei", source_event_id=event_id, embedding=[1.0, 0.0])
+
+            result = embedding_backfill_candidates(store, limit=5)
+
+        self.assertEqual([memory["id"] for memory in result["memories"]], [missing_id])
 
     def test_semantic_conflicts_groups_different_objects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -366,6 +379,21 @@ class ObservabilityTests(unittest.TestCase):
                 main()
 
         self.assertIn("imported_semantic_memory_ids", print_mock.call_args.args[0])
+
+    def test_cli_backfill_embeddings_prints_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            with (
+                patch("observability.MemoryStore", return_value=store),
+                patch("sys.argv", ["observability.py", "backfill-embeddings", "--limit", "5"]),
+                patch("builtins.print") as print_mock,
+            ):
+                main()
+
+        self.assertIn("updated_ids", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":

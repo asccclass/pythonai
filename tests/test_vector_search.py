@@ -1,9 +1,13 @@
 import unittest
+import tempfile
+from pathlib import Path
 
+from memory import MemoryStore
 from vector_search import (
     HashingEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
     VectorMemorySearcher,
+    backfill_semantic_embeddings,
     cosine_similarity,
     format_memory_for_embedding,
     normalize,
@@ -155,6 +159,22 @@ class VectorSearchTests(unittest.TestCase):
 
         self.assertEqual(ranked[0]["id"], 1)
         self.assertEqual(memories[0]["embedding"], [1.0, 0.0])
+
+    def test_backfill_semantic_embeddings_updates_missing_embeddings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory("user", "likes", "Python", source_event_id=event_id)
+            provider = StaticEmbeddingProvider({"user likes Python": [1.0, 0.0]})
+
+            result = backfill_semantic_embeddings(store, provider, limit=5)
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(result["updated_ids"], [memory_id])
+        self.assertEqual(result["failed_ids"], [])
+        self.assertIn("1.0", memories[0]["embedding"])
+        self.assertIsNotNone(memories[0]["embedding_updated_at"])
 
 
 if __name__ == "__main__":
