@@ -168,6 +168,54 @@ def analyze_character_centrality(graph: nx.Graph) -> pd.DataFrame:
     return df.sort_values(by="加權特徵向量中心性 (影響力)", ascending=False).reset_index(drop=True)
 
 
+def build_sentiment_relation_graph(
+    chapter_characters: list[list[str]],
+    sentiment_scores: list[float],
+) -> nx.Graph:
+    graph = nx.Graph()
+    for chars, sentiment_score in zip(chapter_characters, sentiment_scores):
+        if len(chars) < 2:
+            continue
+        pairs = itertools.combinations(sorted(chars), 2)
+        for u, v in pairs:
+            if graph.has_edge(u, v):
+                graph[u][v]["total_sentiment"] += sentiment_score
+                graph[u][v]["interactions"] += 1
+            else:
+                graph.add_edge(u, v, total_sentiment=sentiment_score, interactions=1)
+    return graph
+
+
+def narrative_role_tag(avg_sentiment: float) -> str:
+    if avg_sentiment > 0.2:
+        return "正向角色 / 救贖者"
+    if avg_sentiment < -0.2:
+        return "負向角色 / 衝突源"
+    return "中性角色 / 受害者"
+
+
+def analyze_character_sentiment_traits(graph: nx.Graph) -> pd.DataFrame:
+    character_narrative = []
+    for node in graph.nodes():
+        total_node_sentiment = 0.0
+        total_interactions = 0
+        for neighbor in graph.neighbors(node):
+            edge_data = graph[node][neighbor]
+            total_node_sentiment += edge_data["total_sentiment"]
+            total_interactions += edge_data["interactions"]
+
+        avg_sentiment = total_node_sentiment / total_interactions if total_interactions > 0 else 0.0
+        character_narrative.append({
+            "角色名稱": node,
+            "總互動次數": total_interactions,
+            "情感投射分數": round(avg_sentiment, 3),
+            "敘事角色診斷": narrative_role_tag(avg_sentiment),
+        })
+
+    df = pd.DataFrame(character_narrative)
+    return df.sort_values(by="情感投射分數", ascending=False).reset_index(drop=True)
+
+
 def draw_relation_graph(graph: nx.Graph, output_path: Path = DEFAULT_RELATION_GRAPH_OUTPUT_PATH) -> Path:
     plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei"]
     plt.rcParams["axes.unicode_minus"] = False
@@ -224,6 +272,8 @@ def main() -> None:
     for chapter, chars in zip(chapters, chapter_characters):
         print(f"{chapter}出現角色: {chars}")
 
+    sentiment_scores = calculate_sentiment_scores(texts)
+
     graph = build_relation_graph(chapter_characters)
     graph_path = draw_relation_graph(graph)
     print(f"\n人物關係網絡圖已輸出: {graph_path}")
@@ -232,7 +282,11 @@ def main() -> None:
     print("\n=== 計算敘事學：人物中心性定量分析表 ===")
     print(metrics_df.to_string())
 
-    sentiment_scores = calculate_sentiment_scores(texts)
+    sentiment_graph = build_sentiment_relation_graph(chapter_characters, sentiment_scores)
+    sentiment_traits_df = analyze_character_sentiment_traits(sentiment_graph)
+    print("\n=== 計算敘事學：角色情感特質定量分析表 ===")
+    print(sentiment_traits_df.to_string(index=False))
+
     draw_sentiment_curve(chapters, sentiment_scores)
 
 

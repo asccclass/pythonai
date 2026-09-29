@@ -132,6 +132,42 @@ class StoryMotionTests(unittest.TestCase):
             self.assertTrue(output_path.exists())
             self.assertGreater(output_path.stat().st_size, 0)
 
+    def test_build_sentiment_relation_graph_accumulates_edge_sentiment(self):
+        chapter_characters = [
+            ["張小明", "張小華"],
+            ["張小明", "張小華", "李大叔"],
+            ["張小明"],
+        ]
+        sentiment_scores = [-0.6, 0.4, 0.9]
+
+        graph = motion.build_sentiment_relation_graph(chapter_characters, sentiment_scores)
+
+        self.assertEqual(graph["張小明"]["張小華"]["interactions"], 2)
+        self.assertAlmostEqual(graph["張小明"]["張小華"]["total_sentiment"], -0.2)
+        self.assertEqual(graph["張小明"]["李大叔"]["interactions"], 1)
+        self.assertFalse(graph.has_node("孤立角色"))
+
+    def test_analyze_character_sentiment_traits_labels_roles(self):
+        graph = motion.nx.Graph()
+        graph.add_edge("李大叔", "張小明", total_sentiment=0.8, interactions=1)
+        graph.add_edge("黑龍會", "張小明", total_sentiment=-0.8, interactions=1)
+        graph.add_edge("張小華", "張小明", total_sentiment=0.0, interactions=1)
+
+        df = motion.analyze_character_sentiment_traits(graph)
+        rows = {row["角色名稱"]: row for row in df.to_dict("records")}
+
+        self.assertEqual(
+            list(df.columns),
+            ["角色名稱", "總互動次數", "情感投射分數", "敘事角色診斷"],
+        )
+        self.assertEqual(rows["李大叔"]["敘事角色診斷"], "正向角色 / 救贖者")
+        self.assertEqual(rows["黑龍會"]["敘事角色診斷"], "負向角色 / 衝突源")
+        self.assertEqual(rows["張小華"]["敘事角色診斷"], "中性角色 / 受害者")
+        self.assertGreater(
+            rows["李大叔"]["情感投射分數"],
+            rows["黑龍會"]["情感投射分數"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
