@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import networkx as nx
+import pandas as pd
 from ckip_transformers.nlp import CkipNerChunker
 from collections import defaultdict
 import itertools
@@ -10,6 +11,7 @@ from huggingface_hub import snapshot_download
 
 CKIP_NER_REPO_ID = "ckiplab/albert-tiny-chinese-ner"
 CKIP_MODEL_DIR = Path(__file__).resolve().parents[2] / "models" / "ckip" / "albert-tiny-chinese-ner"
+DEFAULT_GRAPH_OUTPUT_PATH = Path(__file__).resolve().with_name("relation_graph.png")
 
 
 def ensure_ckip_ner_model(model_dir: Path = CKIP_MODEL_DIR) -> Path:
@@ -67,10 +69,28 @@ def build_edges_data(chapter_characters: list[list[str]]) -> list[tuple[str, str
     return [(u, v, weight) for (u, v), weight in sorted(edge_weights.items())]
 
 
-def draw_relation_graph(graph: nx.Graph) -> None:
+def analyze_character_centrality(graph: nx.Graph) -> pd.DataFrame:
+    degree_dict = nx.degree_centrality(graph)
+    betweenness_dict = nx.betweenness_centrality(graph, normalized=True)
+    eigenvector_dict = nx.eigenvector_centrality(graph, max_iter=1000)
+
+    metrics_data = []
+    for char in graph.nodes():
+        metrics_data.append({
+            "角色名稱": char,
+            "度中心性 (社交廣度)": round(degree_dict[char], 3),
+            "中介中心性 (情節橋樑)": round(betweenness_dict[char], 3),
+            "特徵向量中心性 (影響力)": round(eigenvector_dict[char], 3),
+        })
+
+    df = pd.DataFrame(metrics_data)
+    return df.sort_values(by="特徵向量中心性 (影響力)", ascending=False).reset_index(drop=True)
+
+
+def draw_relation_graph(graph: nx.Graph, output_path: Path = DEFAULT_GRAPH_OUTPUT_PATH) -> Path:
     plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
     plt.rcParams['axes.unicode_minus'] = False
-    plt.figure(figsize=(7, 7))
+    figure = plt.figure(figsize=(7, 7))
 
     pos = nx.spring_layout(graph, k=0.8, seed=42)
     edges = graph.edges(data=True)
@@ -85,7 +105,9 @@ def draw_relation_graph(graph: nx.Graph) -> None:
 
     plt.title("基於 CKIP 提取之故事人物關係網絡圖", fontsize=14, fontweight='bold')
     plt.axis('off')
-    plt.show()
+    figure.savefig(output_path, bbox_inches="tight", dpi=150)
+    plt.close(figure)
+    return output_path
 
 
 def main() -> None:
@@ -100,7 +122,12 @@ def main() -> None:
         print(f"第 {i} 章出現角色: {chars}")
 
     graph = build_relation_graph(chapter_characters)
-    draw_relation_graph(graph)
+    graph_path = draw_relation_graph(graph)
+    print(f"\n人物關係網絡圖已輸出: {graph_path}")
+
+    metrics_df = analyze_character_centrality(graph)
+    print("\n=== 計算敘事學：人物中心性定量分析表 ===")
+    print(metrics_df.to_string())
 
 
 if __name__ == "__main__":

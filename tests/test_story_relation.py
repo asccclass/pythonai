@@ -57,6 +57,37 @@ class StoryRelationTests(unittest.TestCase):
             ],
         )
 
+    def test_analyze_character_centrality_returns_ranked_table(self):
+        graph = relation.build_relation_graph([
+            ["張小明", "張小華"],
+            ["張小明", "李大叔"],
+            ["李大叔", "張小華", "張小明"],
+        ])
+
+        df = relation.analyze_character_centrality(graph)
+
+        self.assertEqual(
+            list(df.columns),
+            [
+                "角色名稱",
+                "度中心性 (社交廣度)",
+                "中介中心性 (情節橋樑)",
+                "特徵向量中心性 (影響力)",
+            ],
+        )
+        self.assertEqual(set(df["角色名稱"]), {"張小明", "張小華", "李大叔"})
+
+    def test_draw_relation_graph_saves_output_file(self):
+        graph = relation.build_relation_graph([["張小明", "張小華"]])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "relation_graph.png"
+            result = relation.draw_relation_graph(graph, output_path=output_path)
+
+            self.assertEqual(result, output_path)
+            self.assertTrue(output_path.exists())
+            self.assertGreater(output_path.stat().st_size, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
