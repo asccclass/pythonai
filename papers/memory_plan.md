@@ -44,6 +44,28 @@ The memory system must also protect the primary chat path from excessive remote 
 
 This section records the next improvements after comparing the current project with Microsoft's agent-memory lesson. The current implementation already covers the core shape: working memory compaction, episodic event logs, semantic triples, procedure memory, retrieval injection, background review, and deterministic forgetting. The next work should focus on memory quality, structured retrieval, and making stored memories easier to govern.
 
+### Current Implementation Status
+
+Implemented after this plan:
+
+- Compacted working-memory summaries can enter the long-term review pipeline, with duplicate-safe semantic extraction from summaries.
+- Semantic memories now have explicit `memory_type` and `scope`, and extraction/retrieval preserves those fields.
+- Semantic memories can link to normalized entities and aliases through `entities`, `entity_aliases`, `subject_entity_id`, and `object_entity_id`.
+- Semantic updates are first-class: new candidates can add, reinforce, supersede, contradict, or ignore existing memories, with audit events.
+- Procedure memory can be retrieved into prompt context and procedure outcomes are tracked from later tool use.
+- Governance commands now cover review candidates, facts, low-confidence facts, conflicts, procedures, archive/confirm/contradict/supersede, export, and import.
+- Request budgets are logged for foreground retrieval and background review.
+- Semantic embeddings track `embedding_updated_at`; missing embedding backfill is available as a bounded maintenance command.
+- Memory observability includes `memory-health`, which summarizes request budgets, capped memory operations, 429 errors, and embedding backfill queue depth.
+
+Remaining work:
+
+- Add a persistent background worker for embedding and review queues instead of only explicit maintenance commands.
+- Add provider-wide 429 cooldown/backoff state for memory background work, honoring `Retry-After` before the next remote attempt.
+- Extend embedding backfill to refresh stale embeddings, not only missing embeddings.
+- Add a small skipped-missing-embedding counter in retrieval if more detail is needed than the current budget and queue-depth summaries.
+- Full repository test discovery still requires optional dependencies (`openai`, `networkx`, `ckip_transformers`) to be installed.
+
 ### Priority 1: Promote Compacted Working Memory Into Long-Term Review
 
 Current behavior records `working_memory_preservation_candidate` when compacted context may contain durable facts or procedures, but the memory review pipeline only processes `memory_review_candidate` events. This means useful information can be noticed during compaction without being extracted into semantic or procedural memory.
