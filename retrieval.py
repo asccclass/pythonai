@@ -34,12 +34,16 @@ def build_memory_context(
         return ""
 
     lines = ["Relevant long-term memory:"]
-    for memory in memories:
-        lines.append(
-            "- "
-            f"{memory['subject']} {memory['predicate']} {memory['object']} "
-            f"(confidence={memory['confidence']:.2f}, source_event_id={memory['source_event_id']})"
-        )
+    for section, section_memories in group_memories_by_type(memories):
+        lines.append(f"{section}:")
+        for memory in section_memories:
+            scope = memory.get("scope", "global")
+            lines.append(
+                "- "
+                f"{memory['subject']} {memory['predicate']} {memory['object']} "
+                f"(type={memory.get('memory_type', 'fact')}, scope={scope}, "
+                f"confidence={memory['confidence']:.2f}, source_event_id={memory['source_event_id']})"
+            )
     return "\n".join(lines)
 
 
@@ -59,7 +63,16 @@ def candidate_memories(memories: list[dict[str, Any]], query: str = "", limit: i
 
 def rank_memories(memories: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:
     if not query:
-        return sorted(memories, key=lambda memory: (memory["confidence"], memory["updated_at"], memory["id"]), reverse=True)
+        return sorted(
+            memories,
+            key=lambda memory: (
+                memory_type_priority(memory),
+                memory["confidence"],
+                memory["updated_at"],
+                memory["id"],
+            ),
+            reverse=True,
+        )
 
     query_terms = tokenize(query)
     scored = []
@@ -68,9 +81,47 @@ def rank_memories(memories: list[dict[str, Any]], query: str = "") -> list[dict[
         overlap = len(query_terms & memory_terms)
         if overlap <= 0:
             continue
-        scored.append((overlap, memory["confidence"], memory["updated_at"], memory["id"], memory))
+        scored.append((overlap, memory_type_priority(memory), memory["confidence"], memory["updated_at"], memory["id"], memory))
     scored.sort(reverse=True)
-    return [memory for _, _, _, _, memory in scored]
+    return [memory for _, _, _, _, _, memory in scored]
+
+
+def group_memories_by_type(memories: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for memory in memories:
+        grouped.setdefault(memory_section(memory), []).append(memory)
+    return [(section, grouped[section]) for section in MEMORY_SECTION_ORDER if section in grouped]
+
+
+MEMORY_SECTION_ORDER = [
+    "User profile",
+    "Project facts",
+    "Agent persona",
+    "Entity facts",
+    "Task facts",
+    "Facts",
+]
+
+
+def memory_section(memory: dict[str, Any]) -> str:
+    memory_type = memory.get("memory_type", "fact")
+    return {
+        "user_profile": "User profile",
+        "project_fact": "Project facts",
+        "agent_persona": "Agent persona",
+        "entity_fact": "Entity facts",
+        "task_fact": "Task facts",
+    }.get(memory_type, "Facts")
+
+
+def memory_type_priority(memory: dict[str, Any]) -> int:
+    return {
+        "user_profile": 50,
+        "project_fact": 40,
+        "agent_persona": 35,
+        "entity_fact": 30,
+        "task_fact": 20,
+    }.get(memory.get("memory_type", "fact"), 10)
 
 
 def tokenize(text: str) -> set[str]:

@@ -12,6 +12,8 @@ class SemanticTriple:
     predicate: str
     object_value: str
     confidence: float = 0.5
+    memory_type: str = "fact"
+    scope: str = "global"
 
 
 class SemanticExtractor(Protocol):
@@ -56,13 +58,15 @@ class LLMSemanticExtractor:
 
 SEMANTIC_EXTRACTION_PROMPT = """Extract durable semantic memory triples from the user's message.
 Return JSON only, with this shape:
-{"triples":[{"subject":"user","predicate":"prefers","object":"TypeScript","confidence":0.9}]}
+{"triples":[{"subject":"user","predicate":"prefers","object":"TypeScript","confidence":0.9,"memory_type":"user_profile","scope":"global"}]}
 
 Rules:
 - Extract stable facts, preferences, identities, entities, relationships, constraints, and long-lived project truths.
 - Do not extract transient task requests such as writing, deleting, listing, or running a command.
 - Use short lowercase snake_case predicates.
 - Use "user" for facts about the user unless another explicit entity is the subject.
+- Use memory_type values such as user_profile, project_fact, agent_persona, entity_fact, or task_fact.
+- Use scope="global" for user profile facts and a concise project/entity name when the fact belongs to a narrower scope.
 - Keep objects concise but complete.
 - Return {"triples":[]} when there is no durable semantic memory.
 """
@@ -89,6 +93,8 @@ def parse_semantic_triples(content: str) -> list[SemanticTriple]:
                 predicate=predicate,
                 object_value=object_value,
                 confidence=_clamp_confidence(item.get("confidence", 0.5)),
+                memory_type=_normalize_memory_type(str(item.get("memory_type", "fact"))),
+                scope=_normalize_scope(str(item.get("scope", "global"))),
             )
         )
     return triples
@@ -98,7 +104,7 @@ def fallback_semantic_triples(text: str) -> list[SemanticTriple]:
     subject, predicate, object_value = extract_semantic_triple(text)
     if not object_value:
         return []
-    return [SemanticTriple(subject, predicate, object_value, 0.5)]
+    return [SemanticTriple(subject, predicate, object_value, 0.5, infer_memory_type(subject, predicate), "global")]
 
 
 def extract_semantic_triple(text: str) -> tuple[str, str, str]:
@@ -139,6 +145,28 @@ def _load_json_object(content: str) -> Any:
 def _normalize_predicate(predicate: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9]+", "_", predicate.lower()).strip("_")
     return normalized or predicate
+
+
+def _normalize_memory_type(memory_type: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", memory_type.lower()).strip("_")
+    return normalized or "fact"
+
+
+def _normalize_scope(scope: str) -> str:
+    normalized = " ".join(scope.strip().split())
+    return normalized or "global"
+
+
+def infer_memory_type(subject: str, predicate: str) -> str:
+    normalized_subject = subject.strip().casefold()
+    normalized_predicate = predicate.strip().casefold()
+    if normalized_subject == "user":
+        return "user_profile"
+    if normalized_subject in {"project", "repo", "repository"}:
+        return "project_fact"
+    if normalized_predicate in {"steps", "workflow", "procedure"}:
+        return "task_fact"
+    return "entity_fact"
 
 
 def _clamp_confidence(value: Any) -> float:

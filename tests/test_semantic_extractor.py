@@ -42,7 +42,8 @@ class _Client:
 class SemanticExtractorTests(unittest.TestCase):
     def test_parse_semantic_triples_accepts_json_response(self):
         triples = parse_semantic_triples(
-            '{"triples":[{"subject":"user","predicate":"Preferred Language","object":"TypeScript","confidence":0.92}]}'
+            '{"triples":[{"subject":"user","predicate":"Preferred Language","object":"TypeScript",'
+            '"confidence":0.92,"memory_type":"User Profile","scope":"global"}]}'
         )
 
         self.assertEqual(len(triples), 1)
@@ -50,6 +51,8 @@ class SemanticExtractorTests(unittest.TestCase):
         self.assertEqual(triples[0].predicate, "preferred_language")
         self.assertEqual(triples[0].object_value, "TypeScript")
         self.assertEqual(triples[0].confidence, 0.92)
+        self.assertEqual(triples[0].memory_type, "user_profile")
+        self.assertEqual(triples[0].scope, "global")
 
     def test_llm_semantic_extractor_returns_multiple_triples(self):
         extractor = LLMSemanticExtractor(
@@ -76,6 +79,7 @@ class SemanticExtractorTests(unittest.TestCase):
         self.assertEqual(triples[0].subject, "user")
         self.assertEqual(triples[0].predicate, "prefers")
         self.assertEqual(triples[0].object_value, "Python")
+        self.assertEqual(triples[0].memory_type, "user_profile")
 
     def test_llm_semantic_extractor_falls_back_on_client_error(self):
         extractor = LLMSemanticExtractor(lambda: _Client(error=RuntimeError("boom")), "test-model")

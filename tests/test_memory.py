@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import sqlite3
 
 from laya_guard import GuardDecision
 from memory import DEFAULT_MEMORY_DB, MemoryStore
@@ -64,6 +65,68 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(memories[0]["object"], "Python")
         self.assertEqual(memories[0]["confidence"], 0.9)
         self.assertEqual(memories[0]["source_event_id"], event_id)
+        self.assertEqual(memories[0]["memory_type"], "fact")
+        self.assertEqual(memories[0]["scope"], "global")
+
+    def test_store_adds_and_filters_typed_semantic_memory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+
+            memory_id = store.add_semantic_memory(
+                subject="user",
+                predicate="prefers_language",
+                object_value="Python",
+                source_event_id=event_id,
+                confidence=0.9,
+                memory_type="user_profile",
+                scope="global",
+            )
+            profile_memories = store.active_semantic_memories(memory_type="user_profile", scope="global")
+            project_memories = store.active_semantic_memories(memory_type="project_fact")
+
+        self.assertEqual([memory["id"] for memory in profile_memories], [memory_id])
+        self.assertEqual(profile_memories[0]["memory_type"], "user_profile")
+        self.assertEqual(profile_memories[0]["scope"], "global")
+        self.assertEqual(project_memories, [])
+
+    def test_store_migrates_existing_semantic_memory_type_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "memory.db"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE semantic_memories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        subject TEXT NOT NULL,
+                        predicate TEXT NOT NULL,
+                        object TEXT NOT NULL,
+                        confidence REAL NOT NULL DEFAULT 0.5,
+                        source_event_id INTEGER NOT NULL,
+                        embedding TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TEXT,
+                        superseded_by INTEGER,
+                        archived_at TEXT,
+                        archive_reason TEXT
+                    )
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            store = MemoryStore(db_path)
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            memories = store.active_semantic_memories()
+
+        self.assertEqual(memories[0]["memory_type"], "fact")
+        self.assertEqual(memories[0]["scope"], "global")
 
     def test_store_supersedes_semantic_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -87,12 +150,15 @@ class MemoryStoreTests(unittest.TestCase):
                 source_event_id=new_event_id,
                 confidence=0.9,
                 reason="newer preference",
+                memory_type="user_profile",
+                scope="global",
             )
             memories = store.active_semantic_memories(subject="user", predicate="prefers_language")
 
         self.assertEqual(len(memories), 1)
         self.assertEqual(memories[0]["id"], new_memory_id)
         self.assertEqual(memories[0]["object"], "TypeScript")
+        self.assertEqual(memories[0]["memory_type"], "user_profile")
 
     def test_store_excludes_expired_semantic_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

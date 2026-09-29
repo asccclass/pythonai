@@ -78,6 +78,8 @@ def process_semantic_candidate(
             object_value=triple.object_value,
             source_event_id=source["id"],
             confidence=min(candidate_confidence, triple.confidence),
+            memory_type=triple.memory_type,
+            scope=triple.scope,
         )
         memory_ids.append(memory_id)
         existing_episode_memories[semantic_memory_key(triple.subject, triple.predicate, triple.object_value)] = {

@@ -45,8 +45,43 @@ class RetrievalTests(unittest.TestCase):
             context = build_memory_context(store)
 
         self.assertIn("Relevant long-term memory:", context)
+        self.assertIn("Facts:", context)
         self.assertIn("user prefers_language Python", context)
+        self.assertIn("type=fact, scope=global", context)
         self.assertIn("confidence=0.90", context)
+
+    def test_build_memory_context_groups_typed_memories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            user_event_id = store.add_event(episode_id, "message", role="user", content="I prefer Python")
+            project_event_id = store.add_event(episode_id, "message", role="user", content="Project uses SQLite")
+            store.add_semantic_memory(
+                "project",
+                "uses",
+                "SQLite",
+                project_event_id,
+                confidence=0.8,
+                memory_type="project_fact",
+                scope="pythonai",
+            )
+            store.add_semantic_memory(
+                "user",
+                "prefers",
+                "Python",
+                user_event_id,
+                confidence=0.7,
+                memory_type="user_profile",
+                scope="global",
+            )
+
+            context = build_memory_context(store)
+
+        self.assertIn("User profile:", context)
+        self.assertIn("Project facts:", context)
+        self.assertLess(context.index("User profile:"), context.index("Project facts:"))
+        self.assertIn("type=user_profile, scope=global", context)
+        self.assertIn("type=project_fact, scope=pythonai", context)
 
     def test_build_memory_context_uses_vector_search(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -133,6 +168,32 @@ class RetrievalTests(unittest.TestCase):
         memories = [
             {"id": 1, "subject": "user", "predicate": "likes", "object": "Python", "confidence": 0.5, "updated_at": "2026-01-01"},
             {"id": 2, "subject": "user", "predicate": "likes", "object": "TypeScript", "confidence": 0.9, "updated_at": "2026-01-01"},
+        ]
+
+        ranked = rank_memories(memories)
+
+        self.assertEqual([memory["id"] for memory in ranked], [2, 1])
+
+    def test_rank_memories_prefers_profile_type_when_confidence_is_close(self):
+        memories = [
+            {
+                "id": 1,
+                "subject": "project",
+                "predicate": "uses",
+                "object": "SQLite",
+                "confidence": 0.9,
+                "updated_at": "2026-01-01",
+                "memory_type": "fact",
+            },
+            {
+                "id": 2,
+                "subject": "user",
+                "predicate": "prefers",
+                "object": "Python",
+                "confidence": 0.7,
+                "updated_at": "2026-01-01",
+                "memory_type": "user_profile",
+            },
         ]
 
         ranked = rank_memories(memories)

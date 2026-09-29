@@ -61,6 +61,8 @@ class MemoryStore:
                     subject TEXT NOT NULL,
                     predicate TEXT NOT NULL,
                     object TEXT NOT NULL,
+                    memory_type TEXT NOT NULL DEFAULT 'fact',
+                    scope TEXT NOT NULL DEFAULT 'global',
                     confidence REAL NOT NULL DEFAULT 0.5,
                     source_event_id INTEGER NOT NULL,
                     embedding TEXT,
@@ -77,6 +79,14 @@ class MemoryStore:
             )
             try:
                 connection.execute("ALTER TABLE semantic_memories ADD COLUMN embedding TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                connection.execute("ALTER TABLE semantic_memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'fact'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                connection.execute("ALTER TABLE semantic_memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'")
             except sqlite3.OperationalError:
                 pass
             connection.execute(
@@ -191,17 +201,30 @@ class MemoryStore:
         confidence: float = 0.5,
         expires_at: str | None = None,
         embedding: list[float] | str | None = None,
+        memory_type: str = "fact",
+        scope: str = "global",
     ) -> int:
         embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO semantic_memories (
-                    subject, predicate, object, confidence, source_event_id, expires_at, embedding
+                    subject, predicate, object, memory_type, scope,
+                    confidence, source_event_id, expires_at, embedding
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject, predicate, object_value, confidence, source_event_id, expires_at, embedding_json),
+                (
+                    subject,
+                    predicate,
+                    object_value,
+                    memory_type,
+                    scope,
+                    confidence,
+                    source_event_id,
+                    expires_at,
+                    embedding_json,
+                ),
             )
             connection.commit()
             return int(cursor.lastrowid)
@@ -237,9 +260,11 @@ class MemoryStore:
         self,
         subject: str | None = None,
         predicate: str | None = None,
+        memory_type: str | None = None,
+        scope: str | None = None,
     ) -> list[dict[str, Any]]:
         query = """
-            SELECT id, subject, predicate, object, confidence, source_event_id, embedding,
+            SELECT id, subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding,
                    created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
             FROM semantic_memories
             WHERE superseded_by IS NULL
@@ -253,6 +278,12 @@ class MemoryStore:
         if predicate is not None:
             query += " AND predicate = ?"
             params.append(predicate)
+        if memory_type is not None:
+            query += " AND memory_type = ?"
+            params.append(memory_type)
+        if scope is not None:
+            query += " AND scope = ?"
+            params.append(scope)
         query += " ORDER BY updated_at DESC, id DESC"
 
         with closing(self.connect()) as connection:
@@ -263,7 +294,7 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, subject, predicate, object, confidence, source_event_id, embedding,
+                SELECT id, subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE archived_at IS NOT NULL
@@ -276,7 +307,7 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, subject, predicate, object, confidence, source_event_id, embedding,
+                SELECT id, subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding,
                        created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
                 FROM semantic_memories
                 WHERE superseded_by IS NULL
@@ -312,15 +343,19 @@ class MemoryStore:
         confidence: float = 0.5,
         reason: str = "superseded",
         embedding: list[float] | str | None = None,
+        memory_type: str = "fact",
+        scope: str = "global",
     ) -> int:
         embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO semantic_memories (subject, predicate, object, confidence, source_event_id, embedding)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO semantic_memories (
+                    subject, predicate, object, memory_type, scope, confidence, source_event_id, embedding
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject, predicate, object_value, confidence, source_event_id, embedding_json),
+                (subject, predicate, object_value, memory_type, scope, confidence, source_event_id, embedding_json),
             )
             new_memory_id = int(cursor.lastrowid)
             connection.execute(
