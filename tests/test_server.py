@@ -426,7 +426,7 @@ class ServerTests(unittest.TestCase):
             with (
                 patch("server.LayaGuard", return_value=Guard()),
                 patch("server.MemoryStore", return_value=store),
-                patch("server.read_user_input", side_effect=["hello"]),
+                patch("server.read_user_input", side_effect=["hello", "exit"]),
                 patch("server.run_agent", side_effect=APITimeoutError(request=None)),
                 patch("builtins.print") as print_mock,
             ):

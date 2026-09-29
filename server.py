@@ -424,17 +424,19 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
                 log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIStatusError"})
                 finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_api_status_error(e)}")
-                break
+                if e.status_code in (401, 403):
+                    break
+                continue
             except APITimeoutError as e:
                 log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APITimeoutError"})
                 finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_api_connection_error(e)}")
-                break
+                continue
             except APIConnectionError as e:
                 log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIConnectionError"})
                 finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_api_connection_error(e)}")
-                break
+                continue
             messages.append({"role": "assistant", "content": reply})
             log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
             print(f"\nMiniAgent: {reply}")
