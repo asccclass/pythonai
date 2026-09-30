@@ -154,6 +154,23 @@ class MemoryStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_type TEXT NOT NULL,
+                    episode_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    next_attempt_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (episode_id) REFERENCES episodes(id)
+                )
+                """
+            )
             connection.commit()
 
     def start_episode(self) -> int:
@@ -724,6 +741,114 @@ class MemoryStore:
             ).fetchall()
         return [_event_from_row(row) for row in rows]
 
+    def add_memory_job(
+        self,
+        job_type: str,
+        episode_id: int | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> int:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO memory_jobs (job_type, episode_id, payload)
+                VALUES (?, ?, ?)
+                """,
+                (job_type, episode_id, json.dumps(_jsonable(payload or {}), ensure_ascii=False)),
+            )
+            connection.commit()
+            return int(cursor.lastrowid)
+
+    def pending_memory_jobs(self, job_type: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        query = """
+            SELECT id, job_type, episode_id, status, payload, attempts, last_error,
+                   next_attempt_at, created_at, updated_at
+            FROM memory_jobs
+            WHERE status = 'pending'
+              AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+        """
+        params: list[Any] = []
+        if job_type is not None:
+            query += " AND job_type = ?"
+            params.append(job_type)
+        query += " ORDER BY next_attempt_at ASC, id ASC LIMIT ?"
+        params.append(limit)
+        with closing(self.connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_memory_job_from_row(row) for row in rows]
+
+    def memory_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, job_type, episode_id, status, payload, attempts, last_error,
+                       next_attempt_at, created_at, updated_at
+                FROM memory_jobs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_memory_job_from_row(row) for row in rows]
+
+    def claim_memory_job(self, job_id: int) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE memory_jobs
+                SET status = 'processing',
+                    attempts = attempts + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (job_id,),
+            )
+            connection.commit()
+
+    def complete_memory_job(self, job_id: int) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE memory_jobs
+                SET status = 'completed',
+                    last_error = NULL,
+                    next_attempt_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (job_id,),
+            )
+            connection.commit()
+
+    def defer_memory_job(self, job_id: int, retry_after_seconds: float, error: str | None = None) -> None:
+        next_attempt_at = _timestamp_after_seconds(retry_after_seconds)
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE memory_jobs
+                SET status = 'pending',
+                    last_error = ?,
+                    next_attempt_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (error, next_attempt_at, job_id),
+            )
+            connection.commit()
+
+    def fail_memory_job(self, job_id: int, error: str | None = None) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                UPDATE memory_jobs
+                SET status = 'failed',
+                    last_error = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (error, job_id),
+            )
+            connection.commit()
+
 
 def _event_from_row(row: sqlite3.Row) -> dict[str, Any]:
     event = dict(row)
@@ -735,6 +860,19 @@ def _procedure_from_row(row: sqlite3.Row) -> dict[str, Any]:
     procedure = dict(row)
     procedure["steps"] = json.loads(procedure["steps"] or "[]")
     return procedure
+
+
+def _memory_job_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    job = dict(row)
+    job["payload"] = json.loads(job["payload"] or "{}")
+    return job
+
+
+def _timestamp_after_seconds(seconds: float) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    retry_at = datetime.now(timezone.utc) + timedelta(seconds=max(0.0, seconds))
+    return retry_at.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def normalize_entity_name(name: str) -> str:

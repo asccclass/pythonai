@@ -363,6 +363,41 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(missing_only, [])
         self.assertEqual([memory["id"] for memory in stale], [stale_id])
 
+    def test_store_tracks_memory_job_lifecycle(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+
+            job_id = store.add_memory_job("memory_review", episode_id=episode_id, payload={"source": "test"})
+            pending = store.pending_memory_jobs(job_type="memory_review")
+            store.claim_memory_job(job_id)
+            processing = store.memory_jobs(limit=5)[0]
+            store.complete_memory_job(job_id)
+            completed = store.memory_jobs(limit=5)[0]
+
+        self.assertEqual([job["id"] for job in pending], [job_id])
+        self.assertEqual(pending[0]["payload"]["source"], "test")
+        self.assertEqual(processing["status"], "processing")
+        self.assertEqual(processing["attempts"], 1)
+        self.assertEqual(completed["status"], "completed")
+
+    def test_store_defers_memory_job_until_next_attempt(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+
+            job_id = store.add_memory_job("memory_review", episode_id=episode_id)
+            store.claim_memory_job(job_id)
+            store.defer_memory_job(job_id, retry_after_seconds=3600, error="rate limited")
+            pending = store.pending_memory_jobs(job_type="memory_review")
+            jobs = store.memory_jobs(limit=5)
+
+        self.assertEqual(pending, [])
+        self.assertEqual(jobs[0]["id"], job_id)
+        self.assertEqual(jobs[0]["status"], "pending")
+        self.assertEqual(jobs[0]["last_error"], "rate limited")
+        self.assertIsNotNone(jobs[0]["next_attempt_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

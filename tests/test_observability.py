@@ -234,6 +234,7 @@ class ObservabilityTests(unittest.TestCase):
                 "memory_retrieval_stats",
                 metadata={"stats": {"skipped_missing_embedding_backfill_count": 2}},
             )
+            store.add_memory_job("memory_review", episode_id=episode_id)
 
             result = memory_health(store, limit=10)
 
@@ -242,6 +243,7 @@ class ObservabilityTests(unittest.TestCase):
         self.assertEqual(result["capped_operation_events"], 1)
         self.assertEqual(result["retrieval_stats_events"], 1)
         self.assertEqual(result["skipped_missing_embedding_backfills"], 2)
+        self.assertEqual(result["memory_review_queue_depth"], 1)
         self.assertEqual(result["embedding_backfill_queue_depth"], 1)
         self.assertEqual(result["budget_summary"]["foreground_retrieval"]["operations"]["memory_query_embedding"]["used"], 1)
 

@@ -92,7 +92,30 @@ class MemoryBackgroundWorker:
     ) -> None:
         if memory is None or episode_id is None or not hasattr(memory, "episode_events"):
             return
-        item = (memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
+        job_id = self._add_review_job(memory, episode_id)
+        item = (job_id, memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
+        self._enqueue_item(item)
+
+    def enqueue_pending_reviews(
+        self,
+        memory: MemoryStore | None,
+        memory_classifier: Any,
+        semantic_extractor: Any,
+        procedure_matcher: Any,
+        limit: int = 25,
+    ) -> int:
+        if memory is None or not hasattr(memory, "pending_memory_jobs"):
+            return 0
+        jobs = memory.pending_memory_jobs(job_type="memory_review", limit=limit)
+        for job in jobs:
+            episode_id = job.get("episode_id")
+            if episode_id is None:
+                continue
+            item = (job["id"], memory, int(episode_id), memory_classifier, semantic_extractor, procedure_matcher)
+            self._enqueue_item(item)
+        return len(jobs)
+
+    def _enqueue_item(self, item: tuple[Any, ...]) -> None:
         if self.async_mode:
             self.queue.put(item)
         else:
@@ -117,7 +140,11 @@ class MemoryBackgroundWorker:
                 self.queue.task_done()
 
     def _process_item(self, item: tuple[Any, ...]) -> None:
-        memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
+        if len(item) == 6:
+            job_id, memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
+        else:
+            job_id = None
+            memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
         if callable(memory_classifier):
             memory_classifier = memory_classifier()
         review_budget = background_memory_budget()
@@ -127,6 +154,7 @@ class MemoryBackgroundWorker:
             procedure_matcher.allow_remote = review_budget.try_acquire
         self.cooldown.wait_if_needed()
         try:
+            self._claim_job(memory, job_id)
             episode_events = safe_memory_call(memory.episode_events, episode_id) or []
             memory_candidate = self._classify_memory(memory_classifier, episode_events)
             self._log_event(
@@ -146,9 +174,11 @@ class MemoryBackgroundWorker:
             safe_memory_call(run_forgetting_policy, memory)
             self._backfill_embeddings(memory)
             self.cooldown.record_success()
+            self._complete_job(memory, job_id)
         except Exception as error:
             if is_rate_limit_error(error):
                 delay = self.cooldown.record_rate_limit(retry_after_seconds(error))
+                self._defer_job(memory, job_id, delay, str(error))
                 self._log_event(
                     memory,
                     episode_id,
@@ -156,9 +186,8 @@ class MemoryBackgroundWorker:
                     content=str(error),
                     metadata={"retry_after_seconds": delay, "error_type": type(error).__name__},
                 )
-                if self.async_mode:
-                    self.queue.put(item)
             else:
+                self._fail_job(memory, job_id, str(error))
                 self._log_event(
                     memory,
                     episode_id,
@@ -233,6 +262,27 @@ class MemoryBackgroundWorker:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         safe_memory_call(memory.add_event, episode_id, event_type, role=role, content=content, metadata=metadata)
+
+    def _add_review_job(self, memory: MemoryStore, episode_id: int) -> int | None:
+        if not hasattr(memory, "add_memory_job"):
+            return None
+        return safe_memory_call(memory.add_memory_job, "memory_review", episode_id=episode_id)
+
+    def _claim_job(self, memory: MemoryStore, job_id: int | None) -> None:
+        if job_id is not None and hasattr(memory, "claim_memory_job"):
+            safe_memory_call(memory.claim_memory_job, job_id)
+
+    def _complete_job(self, memory: MemoryStore, job_id: int | None) -> None:
+        if job_id is not None and hasattr(memory, "complete_memory_job"):
+            safe_memory_call(memory.complete_memory_job, job_id)
+
+    def _defer_job(self, memory: MemoryStore, job_id: int | None, delay: float, error: str) -> None:
+        if job_id is not None and hasattr(memory, "defer_memory_job"):
+            safe_memory_call(memory.defer_memory_job, job_id, delay, error)
+
+    def _fail_job(self, memory: MemoryStore, job_id: int | None, error: str) -> None:
+        if job_id is not None and hasattr(memory, "fail_memory_job"):
+            safe_memory_call(memory.fail_memory_job, job_id, error)
 
 
 MemoryReviewWorker = MemoryBackgroundWorker

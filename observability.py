@@ -138,6 +138,7 @@ def memory_health(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
         "capped_operation_events": capped_operations,
         "retrieval_stats_events": len(retrieval_stats_events),
         "skipped_missing_embedding_backfills": skipped_missing_embedding_backfills,
+        "memory_review_queue_depth": len(store.pending_memory_jobs(job_type="memory_review", limit=limit)),
         "embedding_backfill_queue_depth": len(store.semantic_memories_missing_embeddings(limit=limit)),
     }
 
