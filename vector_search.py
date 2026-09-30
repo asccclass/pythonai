@@ -67,6 +67,12 @@ class VectorMemorySearcher:
         self.embedding_provider = embedding_provider or HashingEmbeddingProvider()
         self.min_score = min_score
         self.store = store
+        self.last_stats: dict[str, int] = {
+            "candidate_count": 0,
+            "missing_embedding_count": 0,
+            "remote_missing_embedding_backfill_count": 0,
+            "skipped_missing_embedding_backfill_count": 0,
+        }
 
     def search(self, query: str, memories: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
         return self.search_with_budget(query, memories, limit)
@@ -81,11 +87,19 @@ class VectorMemorySearcher:
         max_missing_embeddings: int | None = None,
     ) -> list[dict[str, Any]]:
         if not query:
+            self.last_stats = {
+                "candidate_count": len(memories),
+                "missing_embedding_count": 0,
+                "remote_missing_embedding_backfill_count": 0,
+                "skipped_missing_embedding_backfill_count": 0,
+            }
             return sorted(memories, key=lambda memory: (memory["confidence"], memory["updated_at"], memory["id"]), reverse=True)[:limit]
 
         query_vector = _embed(self.embedding_provider, query, allow_remote=allow_query_embedding)
         scored = []
         missing_embeddings_used = 0
+        missing_embedding_count = 0
+        skipped_missing_embedding_backfill_count = 0
         for memory in memories:
             memory_vector = None
             raw_embedding = memory.get("embedding")
@@ -101,10 +115,13 @@ class VectorMemorySearcher:
                         memory_vector = None
 
             if memory_vector is None:
+                missing_embedding_count += 1
                 allow_remote = max_missing_embeddings is None or missing_embeddings_used < max_missing_embeddings
                 memory_vector = _embed(self.embedding_provider, format_memory_for_embedding(memory), allow_remote=allow_remote)
                 if allow_remote:
                     missing_embeddings_used += 1
+                else:
+                    skipped_missing_embedding_backfill_count += 1
                 memory["embedding"] = memory_vector
                 if allow_remote and self.store is not None and "id" in memory and memory["id"]:
                     try:
@@ -117,6 +134,12 @@ class VectorMemorySearcher:
                 continue
             scored.append((score, float(memory["confidence"]), memory["updated_at"], int(memory["id"]), memory))
         scored.sort(reverse=True)
+        self.last_stats = {
+            "candidate_count": len(memories),
+            "missing_embedding_count": missing_embedding_count,
+            "remote_missing_embedding_backfill_count": missing_embeddings_used,
+            "skipped_missing_embedding_backfill_count": skipped_missing_embedding_backfill_count,
+        }
         return [memory for _, _, _, _, memory in scored[:limit]]
 
 

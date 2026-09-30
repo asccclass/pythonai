@@ -480,6 +480,7 @@ class ServerTests(unittest.TestCase):
             captured_messages,
         )
         self.assertIn("retrieval_context", [event["event_type"] for event in events])
+        self.assertIn("memory_retrieval_stats", [event["event_type"] for event in events])
         budget_events = [event for event in events if event["event_type"] == "memory_budget"]
         foreground_budget = next(event for event in budget_events if event["metadata"]["phase"] == "foreground_retrieval")
         self.assertIn("memory_query_embedding", foreground_budget["metadata"]["budget"])

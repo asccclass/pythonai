@@ -159,6 +159,9 @@ class VectorSearchTests(unittest.TestCase):
 
         self.assertEqual(ranked[0]["id"], 1)
         self.assertEqual(memories[0]["embedding"], [1.0, 0.0])
+        self.assertEqual(searcher.last_stats["missing_embedding_count"], 1)
+        self.assertEqual(searcher.last_stats["remote_missing_embedding_backfill_count"], 0)
+        self.assertEqual(searcher.last_stats["skipped_missing_embedding_backfill_count"], 1)
 
     def test_backfill_semantic_embeddings_updates_missing_embeddings(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -106,6 +106,7 @@ def backfill_embeddings(
 def memory_health(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
     budget_events = store.events_by_type("memory_budget", limit=limit)
     error_events = store.events_by_type("error", limit=limit)
+    retrieval_stats_events = store.events_by_type("memory_retrieval_stats", limit=limit)
     budget_summary: dict[str, dict[str, Any]] = {}
     capped_operations = 0
     for event in budget_events:
@@ -125,12 +126,18 @@ def memory_health(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
         event for event in error_events
         if event["metadata"].get("error_type") == "APIStatusError" and "429" in str(event.get("content") or "")
     ]
+    skipped_missing_embedding_backfills = sum(
+        int(event["metadata"].get("stats", {}).get("skipped_missing_embedding_backfill_count") or 0)
+        for event in retrieval_stats_events
+    )
     return {
         "limit": limit,
         "budget_events": len(budget_events),
         "budget_summary": budget_summary,
         "rate_limit_429_errors": len(rate_limit_errors),
         "capped_operation_events": capped_operations,
+        "retrieval_stats_events": len(retrieval_stats_events),
+        "skipped_missing_embedding_backfills": skipped_missing_embedding_backfills,
         "embedding_backfill_queue_depth": len(store.semantic_memories_missing_embeddings(limit=limit)),
     }
 

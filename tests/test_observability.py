@@ -229,12 +229,19 @@ class ObservabilityTests(unittest.TestCase):
                 },
             )
             store.add_event(episode_id, "error", content="HTTP 429 rate limited", metadata={"error_type": "APIStatusError"})
+            store.add_event(
+                episode_id,
+                "memory_retrieval_stats",
+                metadata={"stats": {"skipped_missing_embedding_backfill_count": 2}},
+            )
 
             result = memory_health(store, limit=10)
 
         self.assertEqual(result["budget_events"], 1)
         self.assertEqual(result["rate_limit_429_errors"], 1)
         self.assertEqual(result["capped_operation_events"], 1)
+        self.assertEqual(result["retrieval_stats_events"], 1)
+        self.assertEqual(result["skipped_missing_embedding_backfills"], 2)
         self.assertEqual(result["embedding_backfill_queue_depth"], 1)
         self.assertEqual(result["budget_summary"]["foreground_retrieval"]["operations"]["memory_query_embedding"]["used"], 1)
 

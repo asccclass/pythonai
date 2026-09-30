@@ -372,6 +372,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
                     query=user_input,
                     semantic_context=memory_context,
                 ) or memory_context
+            log_retrieval_stats(memory, episode_id, memory_searcher)
             log_memory_budget(memory, episode_id, "foreground_retrieval", turn_budget)
             if memory_context:
                 log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
@@ -439,6 +440,17 @@ def log_memory_budget(
 ) -> None:
     snapshot = budget.snapshot() if hasattr(budget, "snapshot") else {}
     log_episode_event(memory, episode_id, "memory_budget", metadata={"phase": phase, "budget": snapshot})
+
+
+def log_retrieval_stats(
+    memory: MemoryStore | None,
+    episode_id: int | None,
+    searcher: Any,
+) -> None:
+    stats = getattr(searcher, "last_stats", None)
+    if not stats:
+        return
+    log_episode_event(memory, episode_id, "memory_retrieval_stats", metadata={"stats": stats})
 
 if __name__ == "__main__":
     main()
