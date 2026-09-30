@@ -447,6 +447,21 @@ class MemoryStore:
             rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
+    def semantic_memory(self, memory_id: int) -> dict[str, Any] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT id, subject, predicate, object, subject_entity_id, object_entity_id,
+                       memory_type, scope, confidence, source_event_id, embedding, embedding_updated_at,
+                       created_at, updated_at, expires_at, superseded_by, archived_at, archive_reason
+                FROM semantic_memories
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (memory_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def archived_semantic_memories(self) -> list[dict[str, Any]]:
         with closing(self.connect()) as connection:
             rows = connection.execute(

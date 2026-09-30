@@ -113,6 +113,72 @@ class MemoryWorkerTests(unittest.TestCase):
         self.assertEqual(jobs[0]["id"], job_id)
         self.assertEqual(jobs[0]["status"], "completed")
 
+    def test_worker_processes_embedding_backfill_jobs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            worker = MemoryBackgroundWorker(
+                async_mode=False,
+                embedding_provider=StaticEmbeddingProvider(),
+                embedding_batch_size=5,
+            )
+
+            queued = worker.enqueue_embedding_backfills(store)
+            memory = store.semantic_memory(memory_id)
+            jobs = store.memory_jobs(limit=5)
+
+        self.assertEqual(queued, 1)
+        self.assertIn("1.0", memory["embedding"])
+        self.assertEqual(jobs[0]["job_type"], "embedding_backfill")
+        self.assertEqual(jobs[0]["status"], "completed")
+
+    def test_worker_defers_embedding_backfill_job_after_rate_limit(self):
+        now = [100.0]
+
+        def clock():
+            return now[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            worker = MemoryBackgroundWorker(
+                async_mode=False,
+                embedding_provider=RateLimitedEmbeddingProvider(),
+                embedding_batch_size=5,
+                cooldown=ProviderCooldown(now=clock, sleep=lambda _: None),
+            )
+
+            queued = worker.enqueue_embedding_backfills(store)
+            jobs = store.memory_jobs(limit=5)
+
+        self.assertEqual(queued, 1)
+        self.assertEqual(jobs[0]["job_type"], "embedding_backfill")
+        self.assertEqual(jobs[0]["status"], "pending")
+        self.assertEqual(jobs[0]["attempts"], 1)
+        self.assertIn("rate limited", jobs[0]["last_error"])
+
+    def test_worker_run_maintenance_enqueues_embedding_jobs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            worker = MemoryBackgroundWorker(
+                async_mode=False,
+                embedding_provider=StaticEmbeddingProvider(),
+                embedding_batch_size=5,
+            )
+
+            result = worker.run_maintenance(store)
+            jobs = store.memory_jobs(limit=5)
+
+        self.assertEqual(result["embedding_backfill"]["new_enqueued"], 1)
+        self.assertEqual(jobs[0]["status"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()

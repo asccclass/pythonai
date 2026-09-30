@@ -322,6 +322,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         embedding_provider=memory_searcher.embedding_provider,
     )
     worker.enqueue_pending_reviews(memory, memory_classifier_factory, semantic_extractor, procedure_matcher)
+    worker.enqueue_pending_embedding_backfills(memory)
     print("Mini agent ready. Type 'exit' to quit.")
 
     try:

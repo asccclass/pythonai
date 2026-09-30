@@ -235,6 +235,7 @@ class ObservabilityTests(unittest.TestCase):
                 metadata={"stats": {"skipped_missing_embedding_backfill_count": 2}},
             )
             store.add_memory_job("memory_review", episode_id=episode_id)
+            store.add_memory_job("embedding_backfill", payload={"semantic_memory_id": 1})
 
             result = memory_health(store, limit=10)
 
@@ -245,6 +246,7 @@ class ObservabilityTests(unittest.TestCase):
         self.assertEqual(result["skipped_missing_embedding_backfills"], 2)
         self.assertEqual(result["memory_review_queue_depth"], 1)
         self.assertEqual(result["embedding_backfill_queue_depth"], 1)
+        self.assertEqual(result["embedding_backfill_candidate_depth"], 1)
         self.assertEqual(result["budget_summary"]["foreground_retrieval"]["operations"]["memory_query_embedding"]["used"], 1)
 
     def test_semantic_conflicts_groups_different_objects(self):

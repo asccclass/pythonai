@@ -93,7 +93,7 @@ class MemoryBackgroundWorker:
         if memory is None or episode_id is None or not hasattr(memory, "episode_events"):
             return
         job_id = self._add_review_job(memory, episode_id)
-        item = (job_id, memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
+        item = ("memory_review", job_id, memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher)
         self._enqueue_item(item)
 
     def enqueue_pending_reviews(
@@ -111,8 +111,46 @@ class MemoryBackgroundWorker:
             episode_id = job.get("episode_id")
             if episode_id is None:
                 continue
-            item = (job["id"], memory, int(episode_id), memory_classifier, semantic_extractor, procedure_matcher)
+            item = ("memory_review", job["id"], memory, int(episode_id), memory_classifier, semantic_extractor, procedure_matcher)
             self._enqueue_item(item)
+        return len(jobs)
+
+    def enqueue_embedding_backfills(
+        self,
+        memory: MemoryStore | None,
+        limit: int | None = None,
+        episode_id: int | None = None,
+    ) -> int:
+        if memory is None or self.embedding_provider is None or not hasattr(memory, "semantic_memories_missing_embeddings"):
+            return 0
+        batch_limit = limit if limit is not None else self.embedding_batch_size
+        candidates = memory.semantic_memories_missing_embeddings(
+            limit=batch_limit,
+            stale_before=self.stale_embedding_before,
+        )
+        for semantic_memory in candidates:
+            job_id = safe_memory_call(
+                memory.add_memory_job,
+                "embedding_backfill",
+                episode_id=episode_id,
+                payload={"semantic_memory_id": semantic_memory["id"]},
+            )
+            self._enqueue_item(("embedding_backfill", job_id, memory, int(semantic_memory["id"]), episode_id))
+        return len(candidates)
+
+    def enqueue_pending_embedding_backfills(
+        self,
+        memory: MemoryStore | None,
+        limit: int = 25,
+    ) -> int:
+        if memory is None or self.embedding_provider is None or not hasattr(memory, "pending_memory_jobs"):
+            return 0
+        jobs = memory.pending_memory_jobs(job_type="embedding_backfill", limit=limit)
+        for job in jobs:
+            semantic_memory_id = job.get("payload", {}).get("semantic_memory_id")
+            if semantic_memory_id is None:
+                continue
+            self._enqueue_item(("embedding_backfill", job["id"], memory, int(semantic_memory_id), job.get("episode_id")))
         return len(jobs)
 
     def _enqueue_item(self, item: tuple[Any, ...]) -> None:
@@ -124,7 +162,14 @@ class MemoryBackgroundWorker:
     def run_maintenance(self, memory: MemoryStore | None) -> dict[str, Any]:
         if memory is None:
             return {"embedding_backfill": None}
-        return {"embedding_backfill": self._backfill_embeddings(memory)}
+        pending_count = self.enqueue_pending_embedding_backfills(memory)
+        queued_count = self.enqueue_embedding_backfills(memory)
+        return {
+            "embedding_backfill": {
+                "pending_enqueued": pending_count,
+                "new_enqueued": queued_count,
+            }
+        }
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -140,7 +185,14 @@ class MemoryBackgroundWorker:
                 self.queue.task_done()
 
     def _process_item(self, item: tuple[Any, ...]) -> None:
-        if len(item) == 6:
+        if item and item[0] == "embedding_backfill":
+            _, job_id, memory, semantic_memory_id, *rest = item
+            episode_id = rest[0] if rest else None
+            self._process_embedding_item(job_id, memory, semantic_memory_id, episode_id=episode_id)
+            return
+        if item and item[0] == "memory_review":
+            _, job_id, memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
+        elif len(item) == 6:
             job_id, memory, episode_id, memory_classifier, semantic_extractor, procedure_matcher = item
         else:
             job_id = None
@@ -172,7 +224,7 @@ class MemoryBackgroundWorker:
                 procedure_matcher=procedure_matcher,
             )
             safe_memory_call(run_forgetting_policy, memory)
-            self._backfill_embeddings(memory)
+            self.enqueue_embedding_backfills(memory, episode_id=episode_id)
             self.cooldown.record_success()
             self._complete_job(memory, job_id)
         except Exception as error:
@@ -198,6 +250,42 @@ class MemoryBackgroundWorker:
         finally:
             self._log_memory_budget(memory, episode_id, "background_review", review_budget)
             safe_memory_call(memory.finish_episode, episode_id)
+
+    def _process_embedding_item(
+        self,
+        job_id: int | None,
+        memory: MemoryStore,
+        semantic_memory_id: int,
+        episode_id: int | None = None,
+    ) -> None:
+        self.cooldown.wait_if_needed()
+        try:
+            self._claim_job(memory, job_id)
+            semantic_memory = safe_memory_call(memory.semantic_memory, semantic_memory_id)
+            if semantic_memory is None or semantic_memory.get("archived_at") or semantic_memory.get("superseded_by"):
+                self._complete_job(memory, job_id)
+                return
+            if self.embedding_provider is None:
+                self._fail_job(memory, job_id, "embedding provider unavailable")
+                return
+            embedding = self.embedding_provider.embed(format_memory_for_embedding(semantic_memory))
+            memory.update_semantic_embedding(int(semantic_memory["id"]), embedding)
+            self.cooldown.record_success()
+            self._complete_job(memory, job_id)
+        except Exception as error:
+            if is_rate_limit_error(error):
+                delay = self.cooldown.record_rate_limit(retry_after_seconds(error))
+                self._defer_job(memory, job_id, delay, str(error))
+                if episode_id is not None:
+                    self._log_event(
+                        memory,
+                        int(episode_id),
+                        "memory_background_cooldown",
+                        content=str(error),
+                        metadata={"retry_after_seconds": delay, "error_type": type(error).__name__},
+                    )
+            else:
+                self._fail_job(memory, job_id, str(error))
 
     def _backfill_embeddings(self, memory: MemoryStore) -> dict[str, Any] | None:
         if self.embedding_provider is None or self.embedding_batch_size <= 0:
