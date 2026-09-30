@@ -58,13 +58,13 @@ Implemented after this plan:
 - Semantic embeddings track `embedding_updated_at`; missing embedding backfill is available as a bounded maintenance command.
 - Memory observability includes `memory-health`, which summarizes request budgets, capped memory operations, 429 errors, and embedding backfill queue depth.
 
-Remaining work:
+Completed follow-up work:
 
-- Add a persistent background worker for embedding and review queues instead of only explicit maintenance commands.
-- Add provider-wide 429 cooldown/backoff state for memory background work, honoring `Retry-After` before the next remote attempt.
-- Extend embedding backfill to refresh stale embeddings, not only missing embeddings.
-- Add a small skipped-missing-embedding counter in retrieval if more detail is needed than the current budget and queue-depth summaries.
-- Full repository test discovery still requires optional dependencies (`openai`, `networkx`, `ckip_transformers`) to be installed.
+- Persistent background jobs now cover both `memory_review` and `embedding_backfill` queues through SQLite `memory_jobs`, so queued work can survive process restarts.
+- Provider-wide 429 cooldown/backoff state is stored in SQLite `memory_provider_state`; background work honors `Retry-After` before the next remote attempt.
+- Embedding backfill can refresh stale embeddings via `stale_before`, not only fill missing embeddings.
+- Retrieval records skipped missing-embedding backfill counts in `memory_retrieval_stats`, and `memory-health` summarizes those counters.
+- Full repository test discovery currently passes with the installed optional dependencies.
 
 ### Priority 1: Promote Compacted Working Memory Into Long-Term Review
 

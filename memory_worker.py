@@ -178,8 +178,6 @@ class MemoryBackgroundWorker:
             try:
                 item = self.queue.get(timeout=0.1)
             except queue.Empty:
-                if self.embedding_provider is not None:
-                    memory = None
                 continue
             try:
                 self._process_item(item)
@@ -288,21 +286,6 @@ class MemoryBackgroundWorker:
                     )
             else:
                 self._fail_job(memory, job_id, str(error))
-
-    def _backfill_embeddings(self, memory: MemoryStore) -> dict[str, Any] | None:
-        if self.embedding_provider is None or self.embedding_batch_size <= 0:
-            return None
-        self._wait_for_provider(memory)
-        candidates = memory.semantic_memories_missing_embeddings(
-            limit=self.embedding_batch_size,
-            stale_before=self.stale_embedding_before,
-        )
-        updated_ids = []
-        for semantic_memory in candidates:
-            embedding = self.embedding_provider.embed(format_memory_for_embedding(semantic_memory))
-            memory.update_semantic_embedding(int(semantic_memory["id"]), embedding)
-            updated_ids.append(int(semantic_memory["id"]))
-        return {"candidate_count": len(candidates), "updated_ids": updated_ids}
 
     def join(self) -> None:
         if self.async_mode and self._thread is not None and self._thread.is_alive():

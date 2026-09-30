@@ -55,6 +55,8 @@ The memory store also supports semantic memories as auditable subject-predicate-
 
 Procedural memories store reusable workflows with success and failure counts linked back to source episodes.
 
+Memory review and embedding backfill run as bounded background jobs. The job queue is stored in SQLite, so pending review and embedding work can resume after restarting the agent. Provider-wide 429 cooldown state is also stored in SQLite and honors `Retry-After` before retrying background memory work.
+
 Inspect memory from the command line:
 
 ```powershell
@@ -68,6 +70,11 @@ python .\observability.py procedures --name run_command
 python .\observability.py facts --memory-type user_profile
 python .\observability.py low-confidence --threshold 0.35
 python .\observability.py conflicts
+python .\observability.py memory-health
+python .\observability.py embedding-candidates --limit 20
+python .\observability.py embedding-candidates --stale-before "2026-02-01 00:00:00"
+python .\observability.py backfill-embeddings --limit 20
+python .\observability.py backfill-embeddings --stale-before "2026-02-01 00:00:00"
 python .\observability.py archive-fact --memory-id 1 --reason obsolete
 python .\observability.py confirm-fact --memory-id 1
 python .\observability.py contradict-fact --memory-id 1
@@ -75,6 +82,14 @@ python .\observability.py supersede-fact --memory-id 1 --subject user --predicat
 python .\observability.py export
 python .\observability.py import --path .\memory-export.json
 ```
+
+Useful health fields:
+
+- `memory_review_queue_depth`: pending persisted review jobs ready to run.
+- `embedding_backfill_queue_depth`: pending persisted embedding backfill jobs ready to run.
+- `embedding_backfill_candidate_depth`: active semantic memories missing embeddings.
+- `skipped_missing_embedding_backfills`: retrieval candidates that used local fallback embeddings because foreground remote backfill budget was capped.
+- `rate_limit_429_errors`: recent provider 429 errors observed by memory-related operations.
 
 ## Tools
 
