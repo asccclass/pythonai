@@ -412,6 +412,20 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(jobs[0]["last_error"], "rate limited")
         self.assertIsNotNone(jobs[0]["next_attempt_at"])
 
+    def test_store_persists_provider_cooldown_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+
+            initial = store.provider_cooldown_state("background")
+            store.save_provider_cooldown_state("background", cooldown_available_at=123.5, failures=2)
+            updated = store.provider_cooldown_state("background")
+
+        self.assertEqual(initial["provider_name"], "background")
+        self.assertEqual(initial["cooldown_available_at"], 0.0)
+        self.assertEqual(initial["failures"], 0)
+        self.assertEqual(updated["cooldown_available_at"], 123.5)
+        self.assertEqual(updated["failures"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

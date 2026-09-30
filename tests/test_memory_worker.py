@@ -87,6 +87,7 @@ class MemoryWorkerTests(unittest.TestCase):
             worker.enqueue(store, episode_id, NoopClassifier(), NoopExtractor(), NoopMatcher())
             events = store.recent_events(limit=10)
             jobs = store.memory_jobs(limit=5)
+            provider_state = store.provider_cooldown_state("default")
 
         cooldown_events = [event for event in events if event["event_type"] == "memory_background_cooldown"]
         self.assertEqual(len(cooldown_events), 1)
@@ -97,6 +98,8 @@ class MemoryWorkerTests(unittest.TestCase):
         self.assertEqual(jobs[0]["attempts"], 1)
         self.assertIn("rate limited", jobs[0]["last_error"])
         self.assertIsNotNone(jobs[0]["next_attempt_at"])
+        self.assertEqual(provider_state["cooldown_available_at"], 103.0)
+        self.assertEqual(provider_state["failures"], 1)
 
     def test_worker_enqueues_pending_review_jobs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -178,6 +181,32 @@ class MemoryWorkerTests(unittest.TestCase):
 
         self.assertEqual(result["embedding_backfill"]["new_enqueued"], 1)
         self.assertEqual(jobs[0]["status"], "completed")
+
+    def test_worker_respects_persisted_provider_cooldown(self):
+        slept = []
+        now = [100.0]
+
+        def clock():
+            return now[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            store.save_provider_cooldown_state("default", cooldown_available_at=105.0, failures=2)
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+            worker = MemoryBackgroundWorker(
+                async_mode=False,
+                embedding_provider=StaticEmbeddingProvider(),
+                embedding_batch_size=5,
+                cooldown=ProviderCooldown(now=clock, sleep=slept.append),
+            )
+
+            worker.enqueue_embedding_backfills(store)
+            provider_state = store.provider_cooldown_state("default")
+
+        self.assertEqual(slept, [5.0])
+        self.assertEqual(provider_state["failures"], 0)
 
 
 if __name__ == "__main__":

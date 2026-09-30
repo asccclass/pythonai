@@ -69,6 +69,7 @@ class MemoryBackgroundWorker:
         embedding_batch_size: int = 2,
         stale_embedding_before: str | None = None,
         cooldown: ProviderCooldown | None = None,
+        provider_name: str = "default",
     ) -> None:
         self.queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self.async_mode = async_mode
@@ -76,6 +77,7 @@ class MemoryBackgroundWorker:
         self.embedding_batch_size = embedding_batch_size
         self.stale_embedding_before = stale_embedding_before
         self.cooldown = cooldown or ProviderCooldown()
+        self.provider_name = provider_name
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         if self.async_mode:
@@ -204,7 +206,7 @@ class MemoryBackgroundWorker:
             semantic_extractor.allow_remote = review_budget.try_acquire
         if hasattr(procedure_matcher, "allow_remote"):
             procedure_matcher.allow_remote = review_budget.try_acquire
-        self.cooldown.wait_if_needed()
+        self._wait_for_provider(memory)
         try:
             self._claim_job(memory, job_id)
             episode_events = safe_memory_call(memory.episode_events, episode_id) or []
@@ -224,12 +226,12 @@ class MemoryBackgroundWorker:
                 procedure_matcher=procedure_matcher,
             )
             safe_memory_call(run_forgetting_policy, memory)
+            self._record_provider_success(memory)
             self.enqueue_embedding_backfills(memory, episode_id=episode_id)
-            self.cooldown.record_success()
             self._complete_job(memory, job_id)
         except Exception as error:
             if is_rate_limit_error(error):
-                delay = self.cooldown.record_rate_limit(retry_after_seconds(error))
+                delay = self._record_provider_rate_limit(memory, retry_after_seconds(error))
                 self._defer_job(memory, job_id, delay, str(error))
                 self._log_event(
                     memory,
@@ -258,7 +260,7 @@ class MemoryBackgroundWorker:
         semantic_memory_id: int,
         episode_id: int | None = None,
     ) -> None:
-        self.cooldown.wait_if_needed()
+        self._wait_for_provider(memory)
         try:
             self._claim_job(memory, job_id)
             semantic_memory = safe_memory_call(memory.semantic_memory, semantic_memory_id)
@@ -270,11 +272,11 @@ class MemoryBackgroundWorker:
                 return
             embedding = self.embedding_provider.embed(format_memory_for_embedding(semantic_memory))
             memory.update_semantic_embedding(int(semantic_memory["id"]), embedding)
-            self.cooldown.record_success()
+            self._record_provider_success(memory)
             self._complete_job(memory, job_id)
         except Exception as error:
             if is_rate_limit_error(error):
-                delay = self.cooldown.record_rate_limit(retry_after_seconds(error))
+                delay = self._record_provider_rate_limit(memory, retry_after_seconds(error))
                 self._defer_job(memory, job_id, delay, str(error))
                 if episode_id is not None:
                     self._log_event(
@@ -290,7 +292,7 @@ class MemoryBackgroundWorker:
     def _backfill_embeddings(self, memory: MemoryStore) -> dict[str, Any] | None:
         if self.embedding_provider is None or self.embedding_batch_size <= 0:
             return None
-        self.cooldown.wait_if_needed()
+        self._wait_for_provider(memory)
         candidates = memory.semantic_memories_missing_embeddings(
             limit=self.embedding_batch_size,
             stale_before=self.stale_embedding_before,
@@ -371,6 +373,37 @@ class MemoryBackgroundWorker:
     def _fail_job(self, memory: MemoryStore, job_id: int | None, error: str) -> None:
         if job_id is not None and hasattr(memory, "fail_memory_job"):
             safe_memory_call(memory.fail_memory_job, job_id, error)
+
+    def _wait_for_provider(self, memory: MemoryStore) -> float:
+        self._load_provider_cooldown(memory)
+        return self.cooldown.wait_if_needed()
+
+    def _load_provider_cooldown(self, memory: MemoryStore) -> None:
+        if not hasattr(memory, "provider_cooldown_state"):
+            return
+        state = safe_memory_call(memory.provider_cooldown_state, self.provider_name)
+        if not state:
+            return
+        self.cooldown.available_at = max(float(state.get("cooldown_available_at") or 0.0), self.cooldown.available_at)
+        self.cooldown.failures = max(int(state.get("failures") or 0), self.cooldown.failures)
+
+    def _save_provider_cooldown(self, memory: MemoryStore) -> None:
+        if hasattr(memory, "save_provider_cooldown_state"):
+            safe_memory_call(
+                memory.save_provider_cooldown_state,
+                self.provider_name,
+                self.cooldown.available_at,
+                self.cooldown.failures,
+            )
+
+    def _record_provider_success(self, memory: MemoryStore) -> None:
+        self.cooldown.record_success()
+        self._save_provider_cooldown(memory)
+
+    def _record_provider_rate_limit(self, memory: MemoryStore, retry_after: float) -> float:
+        delay = self.cooldown.record_rate_limit(retry_after)
+        self._save_provider_cooldown(memory)
+        return delay
 
 
 MemoryReviewWorker = MemoryBackgroundWorker

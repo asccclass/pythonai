@@ -171,6 +171,16 @@ class MemoryStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_provider_state (
+                    provider_name TEXT PRIMARY KEY,
+                    cooldown_available_at REAL NOT NULL DEFAULT 0,
+                    failures INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             connection.commit()
 
     def start_episode(self) -> int:
@@ -861,6 +871,45 @@ class MemoryStore:
                 WHERE id = ?
                 """,
                 (error, job_id),
+            )
+            connection.commit()
+
+    def provider_cooldown_state(self, provider_name: str) -> dict[str, Any]:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT provider_name, cooldown_available_at, failures, updated_at
+                FROM memory_provider_state
+                WHERE provider_name = ?
+                """,
+                (provider_name,),
+            ).fetchone()
+        if row is None:
+            return {
+                "provider_name": provider_name,
+                "cooldown_available_at": 0.0,
+                "failures": 0,
+                "updated_at": None,
+            }
+        return dict(row)
+
+    def save_provider_cooldown_state(
+        self,
+        provider_name: str,
+        cooldown_available_at: float,
+        failures: int,
+    ) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO memory_provider_state (provider_name, cooldown_available_at, failures)
+                VALUES (?, ?, ?)
+                ON CONFLICT(provider_name) DO UPDATE SET
+                    cooldown_available_at = excluded.cooldown_available_at,
+                    failures = excluded.failures,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (provider_name, float(cooldown_available_at), int(failures)),
             )
             connection.commit()
 
