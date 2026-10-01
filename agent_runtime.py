@@ -36,6 +36,7 @@ class AgentRuntime:
     semantic_extractor: Any
     procedure_matcher: Any
     run_agent: Callable[..., str]
+    run_skill: Callable[..., dict[str, Any]] | None = None
     async_memory_review: bool = True
 
 
@@ -93,6 +94,15 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
             "skill_candidates",
             metadata={"candidates": [match.to_dict() for match in skill_matches]},
         )
+    if len(skill_matches) == 1 and runtime.run_skill is not None and hasattr(skill_matches[0], "skill"):
+        selected = skill_matches[0].skill
+        inputs = {"question": user_input} if "question" in selected.inputs.get("properties", {}) else {}
+        result = runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id)
+        reply = format_skill_reply(result)
+        runtime.messages.append({"role": "assistant", "content": reply})
+        log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
+        finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn)
+        return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
 
     memory_context = (
         safe_memory_call(
@@ -150,6 +160,16 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
     runtime.messages.append({"role": "assistant", "content": reply})
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
 
+    finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn)
+
+    return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
+
+
+def finish_turn_memory_review(
+    runtime: AgentRuntime,
+    episode_id: int | None,
+    skip_laya_for_turn: bool,
+) -> None:
     if skip_laya_for_turn:
         finish_episode_safely(runtime.memory, episode_id)
     elif runtime.memory_worker is not None:
@@ -163,7 +183,24 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
         if not runtime.async_memory_review:
             runtime.memory_worker.join()
 
-    return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
+
+def format_skill_reply(result: dict[str, Any]) -> str:
+    if not result.get("success"):
+        return f"Skill {result.get('skill_name', '<unknown>')} failed: {result.get('error', '')}"
+
+    outputs = []
+    for step in result.get("steps", []):
+        output = step.get("output")
+        if isinstance(output, dict):
+            stdout = str(output.get("stdout", "")).strip()
+            stderr = str(output.get("stderr", "")).strip()
+            if stdout:
+                outputs.append(stdout)
+            elif stderr:
+                outputs.append(stderr)
+        elif output not in (None, ""):
+            outputs.append(str(output))
+    return "\n\n".join(outputs).strip() or f"Skill {result.get('skill_name', '<unknown>')} completed."
 
 
 def format_guard_notice(decision: Any) -> str:

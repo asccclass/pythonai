@@ -10,7 +10,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, Authenti
 from openai import OpenAI
 
 from agent_runtime import AgentRuntime, format_guard_notice, run_agent_turn, should_skip_laya_for_user_request
-from base import TOOLS_SCHEMAS, load_dotenv, run_tool_with_context
+from base import TOOLS_SCHEMAS, load_dotenv, run_skill, run_tool_with_context
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
@@ -280,6 +280,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         semantic_extractor=semantic_extractor,
         procedure_matcher=procedure_matcher,
         run_agent=run_agent,
+        run_skill=run_skill,
         async_memory_review=async_memory_review,
     )
     print("Mini agent ready. Type 'exit' to quit.")

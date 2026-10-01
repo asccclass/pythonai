@@ -110,6 +110,7 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
         semantic_extractor=semantic_extractor,
         procedure_matcher=procedure_matcher,
         run_agent=server.run_agent,
+        run_skill=server.run_skill,
         async_memory_review=async_memory_review,
     )
 

@@ -9,6 +9,7 @@ import httpx
 from openai import APIStatusError
 from openai import APITimeoutError
 from memory import MemoryStore
+from skills import Skill, SkillMatch
 import server
 
 
@@ -344,6 +345,75 @@ class ServerTests(unittest.TestCase):
 
         skill_events = [event for event in events if event["event_type"] == "skill_candidates"]
         self.assertEqual(skill_events[0]["metadata"]["candidates"][0]["name"], "read_note")
+
+    def test_single_skill_match_runs_skill_without_llm(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        skill = Skill(
+            name="mybrain_query_cli",
+            description="Query MyBrain.",
+            triggers=["本地資料"],
+            inputs={
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+                "required": ["question"],
+            },
+            allowed_tools=["run_command"],
+            execution={"mode": "tool_sequence", "steps": []},
+            path=Path("skills/mybrain_query_cli"),
+            instructions="",
+        )
+
+        class Matcher:
+            def match(self, text):
+                return [SkillMatch(skill, "trigger:本地資料")]
+
+        calls = []
+
+        def run_skill(name, inputs, memory=None, episode_id=None):
+            calls.append((name, inputs, episode_id))
+            return {
+                "skill_name": name,
+                "success": True,
+                "steps": [
+                    {
+                        "output": {
+                            "stdout": "正式區 IP 是 192.0.2.10\n",
+                            "stderr": "",
+                        }
+                    }
+                ],
+                "error": "",
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            runtime = server.AgentRuntime(
+                messages=[],
+                guard=Guard(),
+                memory=store,
+                memory_searcher=None,
+                skill_matcher=Matcher(),
+                memory_worker=None,
+                memory_classifier_factory=None,
+                semantic_extractor=None,
+                procedure_matcher=None,
+                run_agent=lambda *args, **kwargs: self.fail("LLM should not run for a single skill match"),
+                run_skill=run_skill,
+            )
+
+            result = server.run_agent_turn("幫我查本地資料中的學習時數正式區的IP", runtime)
+
+            events = store.recent_events(limit=10)
+
+        self.assertEqual(result.reply, "正式區 IP 是 192.0.2.10")
+        self.assertEqual(calls[0][0], "mybrain_query_cli")
+        self.assertEqual(calls[0][1], {"question": "幫我查本地資料中的學習時數正式區的IP"})
+        self.assertIn("skill_candidates", [event["event_type"] for event in events])
+        assistant = next(event for event in events if event["event_type"] == "message" and event["role"] == "assistant")
+        self.assertEqual(assistant["content"], "正式區 IP 是 192.0.2.10")
 
     def test_document_content_transform_skips_laya_guard_and_memory_review(self):
         class Guard:
