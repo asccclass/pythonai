@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterable
 
 from agent_runtime import AgentRuntime, run_agent_turn
 from communication_models import AgentCommand, CommunicationAdapter, OutboundMessage
@@ -63,12 +63,23 @@ def enqueue_adapter_events(
     headers: dict[str, str],
     body: bytes,
     query: dict[str, str] | None = None,
+    allowed_senders: Iterable[str] | None = None,
 ) -> list[AgentCommand]:
     if not adapter.verify_request(headers, body, query):
         raise PermissionError(f"{adapter.platform} request verification failed")
     commands = []
+    allowed = normalize_allowed_senders(allowed_senders)
     for inbound in adapter.parse_events(headers, body, query):
+        if allowed is not None and inbound.sender_key not in allowed:
+            raise PermissionError(f"{inbound.platform} sender is not allowed")
         command, inserted = store.ingest_inbound_message(inbound)
         if inserted:
             commands.append(command)
     return commands
+
+
+def normalize_allowed_senders(allowed_senders: Iterable[str] | None) -> set[str] | None:
+    if allowed_senders is None:
+        return None
+    normalized = {sender.strip() for sender in allowed_senders if sender and sender.strip()}
+    return normalized or None

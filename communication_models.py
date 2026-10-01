@@ -18,6 +18,10 @@ class InboundMessage:
     def idempotency_key(self) -> str:
         return f"{self.platform}:{self.platform_message_id}"
 
+    @property
+    def sender_key(self) -> str:
+        return f"{self.platform}:{self.sender_id}"
+
 
 @dataclass(frozen=True)
 class AgentCommand:

@@ -26,7 +26,7 @@ def telegram_update(text="hello", update_id=100, message_id=7):
 
 class CommunicationTests(unittest.TestCase):
     def test_telegram_adapter_parses_text_message(self):
-        adapter = TelegramAdapter(bot_token="token")
+        adapter = TelegramAdapter(bot_token="token", webhook_secret="")
         body = json.dumps(telegram_update("run status")).encode("utf-8")
 
         events = adapter.parse_events({}, body)
@@ -39,7 +39,7 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(events[0].text, "run status")
 
     def test_telegram_adapter_ignores_non_text_updates(self):
-        adapter = TelegramAdapter(bot_token="token")
+        adapter = TelegramAdapter(bot_token="token", webhook_secret="")
         payload = telegram_update()
         del payload["message"]["text"]
 
@@ -53,9 +53,19 @@ class CommunicationTests(unittest.TestCase):
         self.assertTrue(adapter.verify_request({"X-Telegram-Bot-Api-Secret-Token": "secret"}, b"{}"))
         self.assertFalse(adapter.verify_request({"X-Telegram-Bot-Api-Secret-Token": "wrong"}, b"{}"))
 
+    def test_telegram_adapter_allows_explicit_empty_secret_when_env_is_set(self):
+        with patch.dict("os.environ", {"TELEGRAM_WEBHOOK_SECRET": "env-secret"}):
+            adapter = TelegramAdapter(bot_token="token", webhook_secret="")
+
+        self.assertTrue(adapter.verify_request({}, b"{}"))
+
     def test_telegram_adapter_sends_split_messages(self):
         calls = []
-        adapter = TelegramAdapter(bot_token="token", http_post=lambda url, payload: calls.append((url, payload)))
+        adapter = TelegramAdapter(
+            bot_token="token",
+            webhook_secret="",
+            http_post=lambda url, payload: calls.append((url, payload)),
+        )
 
         adapter.send_message(OutboundMessage("telegram", "456", "a" * 4100))
 
@@ -68,7 +78,7 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(split_telegram_message("hello", limit=10), ["hello"])
 
     def test_store_ingests_inbound_message_once(self):
-        adapter = TelegramAdapter(bot_token="token")
+        adapter = TelegramAdapter(bot_token="token", webhook_secret="")
         body = json.dumps(telegram_update("hello")).encode("utf-8")
         with tempfile.TemporaryDirectory() as temp_dir:
             store = CommunicationStore(Path(temp_dir) / "communication.db")
@@ -84,9 +94,24 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].text, "hello")
 
+    def test_enqueue_adapter_events_enforces_allowed_senders(self):
+        adapter = TelegramAdapter(bot_token="token", webhook_secret="")
+        body = json.dumps(telegram_update("hello")).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            commands = enqueue_adapter_events(store, adapter, {}, body, allowed_senders={"telegram:123"})
+
+        self.assertEqual(len(commands), 1)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            with self.assertRaises(PermissionError):
+                enqueue_adapter_events(store, adapter, {}, body, allowed_senders={"telegram:999"})
+
     def test_worker_runs_command_and_sends_reply(self):
         sent = []
-        adapter = TelegramAdapter(bot_token="token", http_post=lambda url, payload: sent.append(payload))
+        adapter = TelegramAdapter(bot_token="token", webhook_secret="", http_post=lambda url, payload: sent.append(payload))
         body = json.dumps(telegram_update("hello")).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as temp_dir:

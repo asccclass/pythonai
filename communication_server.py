@@ -24,6 +24,7 @@ class TelegramWebhookService:
     adapter: TelegramAdapter
     worker: CommunicationWorker
     runtime: AgentRuntime | None = None
+    allowed_senders: set[str] | None = None
     worker_interval_seconds: float = 0.2
 
     def __post_init__(self) -> None:
@@ -31,7 +32,13 @@ class TelegramWebhookService:
         self._thread: threading.Thread | None = None
 
     def handle_webhook(self, headers: dict[str, str], body: bytes) -> dict[str, Any]:
-        commands = enqueue_adapter_events(self.store, self.adapter, headers, body)
+        commands = enqueue_adapter_events(
+            self.store,
+            self.adapter,
+            headers,
+            body,
+            allowed_senders=self.allowed_senders,
+        )
         return {"ok": True, "queued": len(commands)}
 
     def process_pending_once(self) -> int:
@@ -99,7 +106,18 @@ def create_telegram_service(runtime: AgentRuntime | None = None) -> TelegramWebh
     store = CommunicationStore()
     adapter = TelegramAdapter()
     worker = CommunicationWorker(store, {"telegram": adapter}, agent_runtime_command_runner(runtime))
-    return TelegramWebhookService(store=store, adapter=adapter, worker=worker, runtime=runtime)
+    return TelegramWebhookService(
+        store=store,
+        adapter=adapter,
+        worker=worker,
+        runtime=runtime,
+        allowed_senders=parse_allowed_senders(os.environ.get("COMM_ALLOWED_SENDERS", "")),
+    )
+
+
+def parse_allowed_senders(value: str) -> set[str] | None:
+    senders = {item.strip() for item in value.split(",") if item.strip()}
+    return senders or None
 
 
 def create_request_handler(service: TelegramWebhookService) -> type[BaseHTTPRequestHandler]:

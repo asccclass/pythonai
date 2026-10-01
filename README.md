@@ -47,6 +47,49 @@ python .\server.py
 
 Type a message at the `You:` prompt. Type `exit` or `quit` to stop.
 
+## Telegram Webhook
+
+Create a Telegram bot with `@BotFather`, then put the bot token and webhook secret in `.env`:
+
+```env
+COMMUNICATION_DB_PATH=communication/communication.db
+COMMUNICATION_HOST=127.0.0.1
+COMMUNICATION_PORT=8000
+TELEGRAM_BOT_TOKEN=123456789:your-bot-token
+TELEGRAM_WEBHOOK_SECRET=your-random-secret
+COMM_ALLOWED_SENDERS=telegram:123456789
+```
+
+`COMM_ALLOWED_SENDERS` is optional for local testing, but should be set before exposing the webhook. Use Telegram's numeric user id, formatted as `telegram:<sender_id>`.
+
+Start the communication server:
+
+```powershell
+python .\communication_server.py
+```
+
+Expose it with a tunnel such as ngrok:
+
+```powershell
+ngrok http 8000
+```
+
+Register the Telegram webhook with the public HTTPS URL:
+
+```powershell
+curl.exe -X POST "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/setWebhook" `
+  -H "Content-Type: application/json" `
+  -d "{\"url\":\"https://your-tunnel.example/webhooks/telegram\",\"secret_token\":\"$env:TELEGRAM_WEBHOOK_SECRET\"}"
+```
+
+Check webhook status:
+
+```powershell
+curl.exe "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/getWebhookInfo"
+```
+
+If you need your Telegram sender id before enabling `COMM_ALLOWED_SENDERS`, temporarily leave it empty, send a message to the bot, then inspect the communication database or recent inbound rows. After confirming the id, set `COMM_ALLOWED_SENDERS` and restart the server.
+
 ## Memory
 
 The agent records episodic memory in a local SQLite database at `memory\memory.db`. This file is ignored by Git. Set `MEMORY_DB_PATH` to use a different database location.

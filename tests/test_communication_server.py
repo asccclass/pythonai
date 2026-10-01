@@ -4,9 +4,10 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from communication_adapters.telegram_adapter import TelegramAdapter
-from communication_server import TelegramWebhookService, create_request_handler
+from communication_server import TelegramWebhookService, create_request_handler, create_telegram_service, parse_allowed_senders
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker
 from http.server import ThreadingHTTPServer
@@ -75,6 +76,34 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(payload["ok"], False)
 
+    def test_telegram_webhook_rejects_unallowed_sender(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir, allowed_senders={"telegram:999"})
+            body = json.dumps(telegram_update("hello")).encode("utf-8")
+
+            with self._running_server(service) as address:
+                status, payload = self._request(address, "POST", "/webhooks/telegram", body=body)
+
+            pending = service.store.pending_commands()
+
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["ok"], False)
+        self.assertEqual(pending, [])
+
+    def test_parse_allowed_senders_returns_none_for_empty_value(self):
+        self.assertIsNone(parse_allowed_senders(""))
+        self.assertEqual(parse_allowed_senders("telegram:123, line:U1 "), {"telegram:123", "line:U1"})
+
+    def test_create_telegram_service_reads_allowed_senders_from_env(self):
+        with (
+            patch.dict("os.environ", {"COMM_ALLOWED_SENDERS": "telegram:123"}, clear=False),
+            patch("communication_server.create_agent_runtime", return_value=object()),
+            patch("communication_server.CommunicationStore"),
+        ):
+            service = create_telegram_service()
+
+        self.assertEqual(service.allowed_senders, {"telegram:123"})
+
     def test_worker_loop_processes_pending_command(self):
         sent = []
 
@@ -82,6 +111,7 @@ class CommunicationServerTests(unittest.TestCase):
             store = CommunicationStore(Path(temp_dir) / "communication.db")
             adapter = TelegramAdapter(
                 bot_token="token",
+                webhook_secret="",
                 http_post=lambda url, payload: sent.append(payload),
             )
 
@@ -109,12 +139,17 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(sent[0]["text"], "reply to hello")
         self.assertIn("outbound", {message["direction"] for message in messages})
 
-    def _service(self, temp_dir, secret=""):
+    def _service(self, temp_dir, secret="", allowed_senders=None):
         db_path = Path(temp_dir) / "communication.db"
         store = CommunicationStore(db_path)
         adapter = TelegramAdapter(bot_token="token", webhook_secret=secret, http_post=lambda url, payload: None)
         worker = CommunicationWorker(store, {"telegram": adapter}, lambda command: "ok")
-        return TelegramWebhookService(store=store, adapter=adapter, worker=worker)
+        return TelegramWebhookService(
+            store=store,
+            adapter=adapter,
+            worker=worker,
+            allowed_senders=allowed_senders,
+        )
 
     def _running_server(self, service):
         test_case = self

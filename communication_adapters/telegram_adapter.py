@@ -20,8 +20,8 @@ class TelegramAdapter:
         webhook_secret: str | None = None,
         http_post: Callable[[str, dict[str, Any]], Any] | None = None,
     ) -> None:
-        self.bot_token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        self.webhook_secret = webhook_secret or os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+        self.bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "") if bot_token is None else bot_token
+        self.webhook_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "") if webhook_secret is None else webhook_secret
         self.http_post = http_post or _json_post
 
     def verify_request(self, headers: dict[str, str], body: bytes, query: dict[str, str] | None = None) -> bool:
