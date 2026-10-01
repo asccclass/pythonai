@@ -49,7 +49,27 @@ Type a message at the `You:` prompt. Type `exit` or `quit` to stop.
 
 ## Telegram Webhook
 
-Create a Telegram bot with `@BotFather`, then put the bot token and webhook secret in `.env`:
+Create a Telegram bot with `@BotFather`, then put the bot token in `.env`. For local testing without a public URL, use long polling:
+
+```env
+COMMUNICATION_DB_PATH=communication/communication.db
+TELEGRAM_BOT_TOKEN=123456789:your-bot-token
+TELEGRAM_POLL_TIMEOUT=30
+TELEGRAM_POLL_IDLE_SLEEP=0.2
+COMM_ALLOWED_SENDERS=telegram:123456789
+```
+
+`COMM_ALLOWED_SENDERS` is optional for local testing, but should be set before regular use. Use Telegram's numeric user id, formatted as `telegram:<sender_id>`.
+
+Start the long polling worker:
+
+```powershell
+python .\telegram_polling_worker.py
+```
+
+This mode does not require ngrok, a public IP, or webhook registration because the worker calls Telegram `getUpdates` from your machine.
+
+If you prefer webhook mode, also set a webhook secret and host/port:
 
 ```env
 COMMUNICATION_DB_PATH=communication/communication.db
@@ -59,8 +79,6 @@ TELEGRAM_BOT_TOKEN=123456789:your-bot-token
 TELEGRAM_WEBHOOK_SECRET=your-random-secret
 COMM_ALLOWED_SENDERS=telegram:123456789
 ```
-
-`COMM_ALLOWED_SENDERS` is optional for local testing, but should be set before exposing the webhook. Use Telegram's numeric user id, formatted as `telegram:<sender_id>`.
 
 Start the communication server:
 

@@ -19,10 +19,12 @@ class TelegramAdapter:
         bot_token: str | None = None,
         webhook_secret: str | None = None,
         http_post: Callable[[str, dict[str, Any]], Any] | None = None,
+        http_get: Callable[[str, dict[str, Any]], Any] | None = None,
     ) -> None:
         self.bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "") if bot_token is None else bot_token
         self.webhook_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "") if webhook_secret is None else webhook_secret
         self.http_post = http_post or _json_post
+        self.http_get = http_get or _json_get
 
     def verify_request(self, headers: dict[str, str], body: bytes, query: dict[str, str] | None = None) -> bool:
         if not self.webhook_secret:
@@ -75,6 +77,29 @@ class TelegramAdapter:
                 },
             )
 
+    def get_updates(
+        self,
+        offset: int | None = None,
+        timeout: int = 30,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if not self.bot_token:
+            raise ValueError("TELEGRAM_BOT_TOKEN is required to poll updates")
+        params: dict[str, Any] = {
+            "timeout": timeout,
+            "limit": limit,
+            "allowed_updates": json.dumps(["message", "edited_message"]),
+        }
+        if offset is not None:
+            params["offset"] = offset
+        payload = self.http_get(f"https://api.telegram.org/bot{self.bot_token}/getUpdates", params)
+        if isinstance(payload, bytes):
+            payload = json.loads(payload.decode("utf-8"))
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            raise RuntimeError(f"Telegram getUpdates failed: {payload}")
+        result = payload.get("result", [])
+        return result if isinstance(result, list) else []
+
 
 def split_telegram_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
     if len(text) <= limit:
@@ -97,3 +122,13 @@ def _json_post(url: str, payload: dict[str, Any]) -> Any:
     )
     with request.urlopen(req, timeout=20) as response:
         return response.read()
+
+
+def _json_get(url: str, params: dict[str, Any]) -> Any:
+    from urllib.parse import urlencode
+
+    query = urlencode(params)
+    target = f"{url}?{query}" if query else url
+    req = request.Request(target, method="GET")
+    with request.urlopen(req, timeout=int(params.get("timeout", 30)) + 10) as response:
+        return json.loads(response.read().decode("utf-8"))
