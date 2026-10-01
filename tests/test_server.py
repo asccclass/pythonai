@@ -344,6 +344,51 @@ class ServerTests(unittest.TestCase):
         skill_events = [event for event in events if event["event_type"] == "skill_candidates"]
         self.assertEqual(skill_events[0]["metadata"]["candidates"][0]["name"], "read_note")
 
+    def test_document_content_transform_skips_laya_guard_and_memory_review(self):
+        class Guard:
+            calls = 0
+            _agent = object()
+
+            def assess(self, user_input):
+                self.calls += 1
+                return server.GuardDecision(intent="write_file", risk=1.0, needs_confirmation=True)
+
+        class Classifier:
+            calls = 0
+
+            def assess_episode(self, events):
+                self.calls += 1
+                return server.MemoryCandidateDecision(should_extract=True)
+
+        guard = Guard()
+        classifier = Classifier()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=guard),
+                patch("server.LayaMemoryClassifier", return_value=classifier),
+                patch("server.MemoryStore", return_value=store),
+                patch(
+                    "server.read_user_input",
+                    side_effect=["讀取 papers/memory_plan.md，翻譯成繁體中文後，寫入 memoryx.md", "exit"],
+                ),
+                patch("server.run_agent", return_value="done"),
+                patch("server.compact_messages", wraps=server.compact_messages) as compact_mock,
+                patch("builtins.print"),
+            ):
+                server.main(async_memory_review=False)
+
+            events = store.recent_events(limit=20)
+
+        self.assertEqual(guard.calls, 0)
+        self.assertEqual(classifier.calls, 0)
+        guard_event = next(event for event in events if event["event_type"] == "guard_decision")
+        self.assertTrue(guard_event["metadata"]["skipped"])
+        self.assertEqual(guard_event["metadata"]["reason"], "document_content_transform")
+        self.assertNotIn("memory_candidate_decision", [event["event_type"] for event in events])
+        self.assertIsNone(compact_mock.call_args.kwargs["preservation_classifier"])
+
     def test_read_user_input_treats_ctrl_c_as_exit(self):
         with patch("builtins.input", side_effect=KeyboardInterrupt):
             self.assertEqual(server.read_user_input(), "exit")
@@ -577,6 +622,15 @@ class ServerTests(unittest.TestCase):
         decision = server.GuardDecision(intent="chat", risk=0.2, needs_confirmation=False)
 
         self.assertEqual(server.format_guard_notice(decision), "")
+
+    def test_should_skip_laya_for_document_content_transform(self):
+        self.assertTrue(
+            server.should_skip_laya_for_user_request(
+                "讀取 papers/memory_plan.md，將裡面的內容翻譯成繁體中文後，寫入 memoryx.md"
+            )
+        )
+        self.assertFalse(server.should_skip_laya_for_user_request("delete memoryx.md"))
+        self.assertFalse(server.should_skip_laya_for_user_request("run command to translate notes.md"))
 
 
 if __name__ == "__main__":

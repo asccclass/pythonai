@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Callable
 
@@ -106,6 +107,30 @@ def format_guard_notice(decision: GuardDecision) -> str:
             f"needs_confirmation={decision.needs_confirmation}"
         )
     return ""
+
+
+DOCUMENT_CONTENT_ACTION_RE = re.compile(
+    r"(翻譯|翻译|摘要|總結|总结|summari[sz]e|translate|轉成|转换|convert)",
+    re.IGNORECASE,
+)
+DOCUMENT_FILE_OPERATION_RE = re.compile(
+    r"(讀取|读取|寫入|写入|存成|保存|read|write|save).{0,80}(\.md|\.txt|\.json|\.csv|\.html|\.docx?|\.pdf|\bfile\b)",
+    re.IGNORECASE,
+)
+DANGEROUS_LOCAL_ACTION_RE = re.compile(
+    r"(刪除|删除|delete|remove|rm\s+-|執行|执行|run\s+command|shell|powershell|cmd\.exe)",
+    re.IGNORECASE,
+)
+
+
+def should_skip_laya_for_user_request(user_input: str) -> bool:
+    normalized = " ".join(user_input.split())
+    if DANGEROUS_LOCAL_ACTION_RE.search(normalized):
+        return False
+    return bool(
+        DOCUMENT_CONTENT_ACTION_RE.search(normalized)
+        and DOCUMENT_FILE_OPERATION_RE.search(normalized)
+    )
 
 
 def safe_memory_call(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -335,16 +360,28 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
             episode_id = safe_memory_call(memory.start_episode) if memory is not None else None
             log_episode_event(memory, episode_id, "message", role="user", content=user_input)
 
-            guard_decision = guard.assess(user_input)
-            guard_notice = format_guard_notice(guard_decision)
-            log_episode_event(
-                memory,
-                episode_id,
-                "guard_decision",
-                metadata={"guard": guard_decision},
-            )
-            if guard_notice:
-                print(f"\n{guard_notice}")
+            skip_laya_for_turn = should_skip_laya_for_user_request(user_input)
+            if skip_laya_for_turn:
+                log_episode_event(
+                    memory,
+                    episode_id,
+                    "guard_decision",
+                    metadata={
+                        "skipped": True,
+                        "reason": "document_content_transform",
+                    },
+                )
+            else:
+                guard_decision = guard.assess(user_input)
+                guard_notice = format_guard_notice(guard_decision)
+                log_episode_event(
+                    memory,
+                    episode_id,
+                    "guard_decision",
+                    metadata={"guard": guard_decision},
+                )
+                if guard_notice:
+                    print(f"\n{guard_notice}")
 
             messages.append({"role": "user", "content": user_input})
             skill_matches = safe_memory_call(skill_matcher.match, user_input) or []
@@ -381,7 +418,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
             agent_messages = inject_memory_context(messages, memory_context)
             compacted_messages, working_summary, preservation_decision = compact_messages(
                 agent_messages,
-                preservation_classifier=getattr(guard, "_agent", None),
+                preservation_classifier=None if skip_laya_for_turn else getattr(guard, "_agent", None),
             )
             if working_summary is not None:
                 agent_messages = compacted_messages
@@ -425,8 +462,11 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
             messages.append({"role": "assistant", "content": reply})
             log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
             print(f"\nMiniAgent: {reply}")
-            worker.enqueue(memory, episode_id, memory_classifier_factory, semantic_extractor, procedure_matcher)
-            if not async_memory_review:
+            if skip_laya_for_turn:
+                finish_episode_safely(memory, episode_id)
+            else:
+                worker.enqueue(memory, episode_id, memory_classifier_factory, semantic_extractor, procedure_matcher)
+            if not async_memory_review and not skip_laya_for_turn:
                 worker.join()
     finally:
         if drain_memory_on_exit:
