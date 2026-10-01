@@ -1,0 +1,49 @@
+{
+  "name": "mybrain_query_cli",
+  "description": "Query the local MyBrain knowledge base through the bundled CLI wrapper.",
+  "triggers": [
+    "mybrain",
+    "my brain",
+    "local knowledge base",
+    "knowledge base",
+    "我的筆記",
+    "知識庫",
+    "wiki",
+    "過往筆記"
+  ],
+  "inputs": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string",
+        "description": "The question to ask MyBrain."
+      }
+    },
+    "required": [
+      "question"
+    ]
+  },
+  "allowed_tools": [
+    "run_command"
+  ],
+  "execution": {
+    "mode": "tool_sequence",
+    "steps": [
+      {
+        "tool": "run_command",
+        "args": {
+          "command": [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "skills\\mybrain_query_cli\\scripts\\invoke-mybrain-query.ps1",
+            "-Question",
+            "{{question}}"
+          ]
+        }
+      }
+    ]
+  }
+}
