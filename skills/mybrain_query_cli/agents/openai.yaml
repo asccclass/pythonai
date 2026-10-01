@@ -1,0 +1,4 @@
+interface:
+  display_name: "MyBrain CLI Query"
+  short_description: "Query MyBrain through mybrain.exe"
+  default_prompt: "Use $mybrain_query_cli to answer from my local MyBrain knowledge base."

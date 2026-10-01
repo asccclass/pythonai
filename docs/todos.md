@@ -1,0 +1,1 @@
+現在要為本專案加入cronjob 定時執行程式或指令、腳本的能力，其時間設計要如Linux系統上的cronjob一樣，請仔細規畫後在papers目錄下增加cronjob.md的規劃內容
