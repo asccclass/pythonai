@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from memory import MemoryStore
 from skills import SkillExecutor, SkillMatcher, SkillRegistry, SkillValidationError, load_skill
@@ -102,6 +103,24 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(calls, ["note.txt"])
         self.assertEqual(result.steps[0].output, "hello")
 
+    def test_executor_prints_skill_progress(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            skill = load_skill(write_skill(Path(temp_dir)))
+
+            with patch("builtins.print") as print_mock:
+                result = SkillExecutor({"read_file": lambda path: "hello"}).execute(skill, {"path": "note.txt"})
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [call.args[0] for call in print_mock.call_args_list],
+            [
+                "[skill] Running skill read_note",
+                "[skill] Skill read_note step 1: read_file",
+                "[skill] Skill read_note step 1 completed",
+                "[skill] Skill read_note completed with 1 step(s)",
+            ],
+        )
+
     def test_executor_rejects_missing_required_input(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             skill = load_skill(write_skill(Path(temp_dir)))
@@ -110,6 +129,19 @@ class SkillTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("Missing required input", result.error)
+
+    def test_executor_prints_validation_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            skill = load_skill(write_skill(Path(temp_dir)))
+
+            with patch("builtins.print") as print_mock:
+                result = SkillExecutor({"read_file": lambda path: ""}).execute(skill, {})
+
+        self.assertFalse(result.success)
+        self.assertEqual(
+            print_mock.call_args.args[0],
+            "[skill] Skill read_note failed validation: Missing required input for read_note: path",
+        )
 
     def test_executor_logs_memory_events(self):
         with tempfile.TemporaryDirectory() as temp_dir:

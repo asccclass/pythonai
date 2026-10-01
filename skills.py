@@ -155,9 +155,11 @@ class SkillExecutor:
         try:
             validate_inputs(skill, inputs)
         except SkillValidationError as error:
+            self._print_status(f"Skill {skill.name} failed validation: {error}")
             self._log("skill_result", metadata={"skill": skill.name, "success": False, "error": str(error)})
             return SkillResult(skill.name, False, [], str(error))
 
+        self._print_status(f"Running skill {skill.name}")
         self._log("skill_selected", metadata={"skill": skill.name, "inputs": inputs})
         steps: list[SkillStepResult] = []
         for index, step in enumerate(skill.execution.get("steps", []), start=1):
@@ -168,18 +170,22 @@ class SkillExecutor:
                 if tool_name not in self.tools:
                     raise SkillExecutionError(f"Tool is not registered: {tool_name}")
                 args = render_args(step.get("args", {}), inputs)
+                self._print_status(f"Skill {skill.name} step {index}: {tool_name}")
                 self._log("skill_step", metadata={"skill": skill.name, "index": index, "tool": tool_name, "args": args})
                 output = self.tools[tool_name](**args)
                 result = SkillStepResult(index, tool_name, args, True, output=output)
                 steps.append(result)
+                self._print_status(f"Skill {skill.name} step {index} completed")
                 self._log("skill_step_result", metadata={"skill": skill.name, "result": result.to_log_dict()})
             except Exception as error:
                 result = SkillStepResult(index, tool_name, {}, False, error=str(error))
                 steps.append(result)
+                self._print_status(f"Skill {skill.name} step {index} failed: {error}")
                 self._log("skill_step_result", metadata={"skill": skill.name, "result": result.to_log_dict()})
                 self._log("skill_result", metadata={"skill": skill.name, "success": False, "error": str(error)})
                 return SkillResult(skill.name, False, steps, str(error))
 
+        self._print_status(f"Skill {skill.name} completed with {len(steps)} step(s)")
         self._log("skill_result", metadata={"skill": skill.name, "success": True, "step_count": len(steps)})
         return SkillResult(skill.name, True, steps)
 
@@ -187,6 +193,9 @@ class SkillExecutor:
         if self.memory is None or self.episode_id is None:
             return
         self.memory.add_event(self.episode_id, event_type, metadata=metadata)
+
+    def _print_status(self, message: str) -> None:
+        print(f"[skill] {message}")
 
 
 def load_skill(path: str | Path) -> Skill:
