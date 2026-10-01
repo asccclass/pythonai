@@ -1,4 +1,5 @@
 import json
+import base
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -190,6 +191,27 @@ class CommunicationTests(unittest.TestCase):
 
         self.assertEqual(reply, "agent reply")
         run_agent_turn.assert_called_once_with("hello agent", runtime)
+
+    def test_agent_runtime_command_runner_auto_approves_command_runs(self):
+        runtime = object()
+        command = AgentCommand(
+            command_id="1",
+            platform="telegram",
+            conversation_id="456",
+            sender_id="123",
+            text="hello agent",
+            status="pending",
+            source_message_id=7,
+        )
+
+        def run_turn(text, runtime):
+            return SimpleNamespace(reply=str(base._auto_approve_commands.get()))
+
+        with patch("communication_worker.run_agent_turn", side_effect=run_turn):
+            runner = agent_runtime_command_runner(runtime)
+            reply = runner(command)
+
+        self.assertEqual(reply, "True")
 
     def test_enqueue_adapter_events_rejects_failed_verification(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="secret")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable, Iterable
 
 from agent_runtime import AgentRuntime, run_agent_turn
+from base import auto_approve_command_runs
 from communication_models import AgentCommand, CommunicationAdapter, OutboundMessage
 from communication_store import CommunicationStore
 
@@ -12,7 +13,8 @@ CommandRunner = Callable[[AgentCommand], str]
 
 def agent_runtime_command_runner(runtime: AgentRuntime) -> CommandRunner:
     def run(command: AgentCommand) -> str:
-        return run_agent_turn(command.text, runtime).reply
+        with auto_approve_command_runs():
+            return run_agent_turn(command.text, runtime).reply
 
     return run
 

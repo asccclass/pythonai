@@ -13,6 +13,7 @@ from base import (
     list_files,
     load_dotenv,
     read_file,
+    auto_approve_command_runs,
     run_command,
     run_skill,
     subprocess_text_options,
@@ -195,6 +196,26 @@ class BaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stderr, "User cancelled")
         run.assert_not_called()
+
+    def test_run_command_auto_approval_context_skips_prompt_and_guard(self):
+        completed = subprocess.CompletedProcess(args=["echo", "hello"], returncode=0, stdout="hello", stderr="")
+
+        with (
+            patch("base.get_command_guard") as guard,
+            patch("builtins.input") as user_input,
+            patch("base.subprocess.run", return_value=completed) as run,
+            auto_approve_command_runs(),
+        ):
+            result = run_command(["echo", "hello"])
+
+        self.assertIs(result, completed)
+        guard.assert_not_called()
+        user_input.assert_not_called()
+        run.assert_called_once_with(
+            ["echo", "hello"],
+            cwd=None,
+            **subprocess_text_options(),
+        )
 
     def test_load_dotenv_sets_missing_values(self):
         with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as env_file:

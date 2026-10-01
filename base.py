@@ -2,6 +2,8 @@ import os
 import json
 import platform
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from laya_guard import GuardDecision, LayaGuard
@@ -10,6 +12,7 @@ from skills import SkillExecutor, SkillRegistry
 
 _approved_commands: set[tuple[tuple[str, ...], str | None]] = set()
 _command_guard: LayaGuard | None = None
+_auto_approve_commands: ContextVar[bool] = ContextVar("auto_approve_commands", default=False)
 
 
 def read_file(path: str | Path) -> str:
@@ -84,9 +87,20 @@ def command_key(command: list[str], cwd: str | Path | None = None) -> tuple[tupl
     return tuple(command), str(cwd) if cwd is not None else None
 
 
+@contextmanager
+def auto_approve_command_runs():
+    token = _auto_approve_commands.set(True)
+    try:
+        yield
+    finally:
+        _auto_approve_commands.reset(token)
+
+
 def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
     key = command_key(command, cwd)
-    if key not in _approved_commands:
+    if _auto_approve_commands.get():
+        _approved_commands.add(key)
+    elif key not in _approved_commands:
         decision = get_command_guard().assess_command(command, cwd)
         if decision.needs_confirmation or not decision.available:
             answer = input(f" Run '{command}'? [y/N]: ")
