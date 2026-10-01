@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import subprocess
 from typing import Any, Callable
 
 from memory import MemoryStore
@@ -191,7 +192,14 @@ def format_skill_reply(result: dict[str, Any]) -> str:
     outputs = []
     for step in result.get("steps", []):
         output = step.get("output")
-        if isinstance(output, dict):
+        if isinstance(output, subprocess.CompletedProcess):
+            stdout = str(output.stdout or "").strip()
+            stderr = str(output.stderr or "").strip()
+            if stdout:
+                outputs.append(stdout)
+            elif stderr:
+                outputs.append(stderr)
+        elif isinstance(output, dict):
             stdout = str(output.get("stdout", "")).strip()
             stderr = str(output.get("stderr", "")).strip()
             if stdout:

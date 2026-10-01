@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 import tempfile
+import subprocess
 from pathlib import Path
 
 import base
@@ -414,6 +415,27 @@ class ServerTests(unittest.TestCase):
         self.assertIn("skill_candidates", [event["event_type"] for event in events])
         assistant = next(event for event in events if event["event_type"] == "message" and event["role"] == "assistant")
         self.assertEqual(assistant["content"], "正式區 IP 是 192.0.2.10")
+
+    def test_format_skill_reply_extracts_completed_process_stdout(self):
+        reply = agent_runtime.format_skill_reply(
+            {
+                "skill_name": "mybrain_query_cli",
+                "success": True,
+                "steps": [
+                    {
+                        "output": subprocess.CompletedProcess(
+                            args=["mybrain.exe"],
+                            returncode=0,
+                            stdout="MyBrain answer\n",
+                            stderr="",
+                        )
+                    }
+                ],
+                "error": "",
+            }
+        )
+
+        self.assertEqual(reply, "MyBrain answer")
 
     def test_document_content_transform_skips_laya_guard_and_memory_review(self):
         class Guard:

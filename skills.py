@@ -66,7 +66,9 @@ class SkillStepResult:
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["output"] = loggable_value(self.output)
+        return payload
 
     def to_log_dict(self) -> dict[str, Any]:
         payload = asdict(self)

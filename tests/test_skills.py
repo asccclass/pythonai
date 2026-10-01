@@ -196,6 +196,34 @@ class SkillTests(unittest.TestCase):
 
         self.assertEqual(event["metadata"]["result"]["output"]["returncode"], 0)
 
+    def test_executor_dict_serializes_completed_process_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metadata = {
+                "name": "run_echo",
+                "description": "Run echo.",
+                "triggers": ["echo"],
+                "inputs": {"type": "object", "properties": {}},
+                "allowed_tools": ["run_command"],
+                "execution": {
+                    "mode": "tool_sequence",
+                    "steps": [{"tool": "run_command", "args": {"command": ["echo", "hello"]}}],
+                },
+            }
+            skill = load_skill(write_skill(Path(temp_dir), "run_echo", metadata))
+
+            result = SkillExecutor(
+                {
+                    "run_command": lambda command: subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout="hello\n",
+                        stderr="",
+                    )
+                },
+            ).execute(skill, {})
+
+        self.assertEqual(result.to_dict()["steps"][0]["output"]["stdout"], "hello\n")
+
 
 if __name__ == "__main__":
     unittest.main()
