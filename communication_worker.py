@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from typing import Callable
 
+from agent_runtime import AgentRuntime, run_agent_turn
 from communication_models import AgentCommand, CommunicationAdapter, OutboundMessage
 from communication_store import CommunicationStore
 
 
 CommandRunner = Callable[[AgentCommand], str]
+
+
+def agent_runtime_command_runner(runtime: AgentRuntime) -> CommandRunner:
+    def run(command: AgentCommand) -> str:
+        return run_agent_turn(command.text, runtime).reply
+
+    return run
 
 
 class CommunicationWorker:

@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import base
+import agent_runtime
 import httpx
 from openai import APIStatusError
 from openai import APITimeoutError
@@ -374,7 +375,7 @@ class ServerTests(unittest.TestCase):
                     side_effect=["讀取 papers/memory_plan.md，翻譯成繁體中文後，寫入 memoryx.md", "exit"],
                 ),
                 patch("server.run_agent", return_value="done"),
-                patch("server.compact_messages", wraps=server.compact_messages) as compact_mock,
+                patch("agent_runtime.compact_messages", wraps=agent_runtime.compact_messages) as compact_mock,
                 patch("builtins.print"),
             ):
                 server.main(async_memory_review=False)
@@ -476,7 +477,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.LayaGuard", return_value=Guard()),
                 patch("server.MemoryStore", return_value=store),
                 patch("server.read_user_input", side_effect=["hello", "exit"]),
-                patch("server.compact_messages", return_value=(compacted, "old context", None)),
+                patch("agent_runtime.compact_messages", return_value=(compacted, "old context", None)),
                 patch("server.run_agent", return_value="hi"),
                 patch("builtins.print"),
             ):
@@ -505,9 +506,9 @@ class ServerTests(unittest.TestCase):
                 patch("server.LayaGuard", return_value=Guard()),
                 patch("server.MemoryStore", return_value=store),
                 patch("server.read_user_input", side_effect=["hello", "exit"]),
-                patch("server.build_memory_context", return_value="Relevant long-term memory:\n- user prefers Python"),
+                patch("agent_runtime.build_memory_context", return_value="Relevant long-term memory:\n- user prefers Python"),
                 patch(
-                    "server.build_combined_memory_context",
+                    "agent_runtime.build_combined_memory_context",
                     return_value="Relevant long-term memory:\n- user prefers Python\n\nRelevant reusable workflows:\n- run_command [python tests]",
                 ),
                 patch("server.run_agent", side_effect=run_agent),

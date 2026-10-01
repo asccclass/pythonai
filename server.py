@@ -3,25 +3,22 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from typing import Any, Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
 from openai import OpenAI
 
+from agent_runtime import AgentRuntime, format_guard_notice, run_agent_turn, should_skip_laya_for_user_request
 from base import TOOLS_SCHEMAS, load_dotenv, run_tool_with_context
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
-from request_budget import foreground_memory_budget
 from semantic_extractor import LLMSemanticExtractor
 from memory import MemoryStore
 from memory_worker import MemoryReviewWorker
-from retrieval import build_combined_memory_context, build_memory_context, inject_memory_context
 from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
-from working_memory import compact_messages
 
 
 load_dotenv()
@@ -97,42 +94,6 @@ message = [
 ]
 
 
-def format_guard_notice(decision: GuardDecision) -> str:
-    if not decision.available:
-        return f"Laya guard unavailable; continuing without guard. {decision.reason}"
-    if decision.needs_confirmation or decision.risk >= 1.5:
-        return (
-            "Laya guard: "
-            f"intent={decision.intent}, risk={decision.risk:.2f}, "
-            f"needs_confirmation={decision.needs_confirmation}"
-        )
-    return ""
-
-
-DOCUMENT_CONTENT_ACTION_RE = re.compile(
-    r"(翻譯|翻译|摘要|總結|总结|summari[sz]e|translate|轉成|转换|convert)",
-    re.IGNORECASE,
-)
-DOCUMENT_FILE_OPERATION_RE = re.compile(
-    r"(讀取|读取|寫入|写入|存成|保存|read|write|save).{0,80}(\.md|\.txt|\.json|\.csv|\.html|\.docx?|\.pdf|\bfile\b)",
-    re.IGNORECASE,
-)
-DANGEROUS_LOCAL_ACTION_RE = re.compile(
-    r"(刪除|删除|delete|remove|rm\s+-|執行|执行|run\s+command|shell|powershell|cmd\.exe)",
-    re.IGNORECASE,
-)
-
-
-def should_skip_laya_for_user_request(user_input: str) -> bool:
-    normalized = " ".join(user_input.split())
-    if DANGEROUS_LOCAL_ACTION_RE.search(normalized):
-        return False
-    return bool(
-        DOCUMENT_CONTENT_ACTION_RE.search(normalized)
-        and DOCUMENT_FILE_OPERATION_RE.search(normalized)
-    )
-
-
 def safe_memory_call(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return operation(*args, **kwargs)
@@ -158,52 +119,6 @@ def log_episode_event(
         role=role,
         content=content,
         metadata=metadata,
-    )
-
-
-def finish_episode_safely(
-    memory: MemoryStore | None,
-    episode_id: int | None,
-    status: str = "completed",
-    summary: str | None = None,
-) -> None:
-    if memory is None or episode_id is None:
-        return
-    safe_memory_call(memory.finish_episode, episode_id, status=status, summary=summary)
-
-
-def episode_events_safely(memory: MemoryStore | None, episode_id: int | None) -> list[dict[str, Any]]:
-    if memory is None or episode_id is None or not hasattr(memory, "episode_events"):
-        return []
-    return safe_memory_call(memory.episode_events, episode_id) or []
-
-
-def classify_memory_safely(
-    memory_classifier: LayaMemoryClassifier,
-    events: list[dict[str, Any]],
-) -> MemoryCandidateDecision:
-    result = safe_memory_call(memory_classifier.assess_episode, events)
-    if isinstance(result, MemoryCandidateDecision):
-        return result
-    return MemoryCandidateDecision(available=False, reason="Memory classifier failed")
-
-
-def queue_memory_review_candidate(
-    memory: MemoryStore | None,
-    episode_id: int | None,
-    candidate: MemoryCandidateDecision,
-) -> None:
-    if not candidate.should_extract:
-        return
-    log_episode_event(
-        memory,
-        episode_id,
-        "memory_review_candidate",
-        metadata={
-            "memory_kind": candidate.memory_kind,
-            "confidence": candidate.confidence,
-            "reason": candidate.reason,
-        },
     )
 
 
@@ -348,6 +263,19 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     )
     worker.enqueue_pending_reviews(memory, memory_classifier_factory, semantic_extractor, procedure_matcher)
     worker.enqueue_pending_embedding_backfills(memory)
+    runtime = AgentRuntime(
+        messages=messages,
+        guard=guard,
+        memory=memory,
+        memory_searcher=memory_searcher,
+        skill_matcher=skill_matcher,
+        memory_worker=worker,
+        memory_classifier_factory=memory_classifier_factory,
+        semantic_extractor=semantic_extractor,
+        procedure_matcher=procedure_matcher,
+        run_agent=run_agent,
+        async_memory_review=async_memory_review,
+    )
     print("Mini agent ready. Type 'exit' to quit.")
 
     try:
@@ -356,143 +284,32 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
             if user_input.lower() in ("exit", "quit"):
                 break
 
-            turn_budget = foreground_memory_budget()
-            episode_id = safe_memory_call(memory.start_episode) if memory is not None else None
-            log_episode_event(memory, episode_id, "message", role="user", content=user_input)
-
-            skip_laya_for_turn = should_skip_laya_for_user_request(user_input)
-            if skip_laya_for_turn:
-                log_episode_event(
-                    memory,
-                    episode_id,
-                    "guard_decision",
-                    metadata={
-                        "skipped": True,
-                        "reason": "document_content_transform",
-                    },
-                )
-            else:
-                guard_decision = guard.assess(user_input)
-                guard_notice = format_guard_notice(guard_decision)
-                log_episode_event(
-                    memory,
-                    episode_id,
-                    "guard_decision",
-                    metadata={"guard": guard_decision},
-                )
-                if guard_notice:
-                    print(f"\n{guard_notice}")
-
-            messages.append({"role": "user", "content": user_input})
-            skill_matches = safe_memory_call(skill_matcher.match, user_input) or []
-            if skill_matches:
-                log_episode_event(
-                    memory,
-                    episode_id,
-                    "skill_candidates",
-                    metadata={"candidates": [match.to_dict() for match in skill_matches]},
-                )
-            memory_context = (
-                safe_memory_call(
-                    build_memory_context,
-                    memory,
-                    query=user_input,
-                    vector_searcher=memory_searcher,
-                    allow_query_embedding=turn_budget.try_acquire("memory_query_embedding"),
-                    max_missing_embeddings=turn_budget.remaining("memory_embedding_backfill") or 0,
-                )
-                if memory is not None
-                else ""
-            )
-            if memory is not None:
-                memory_context = safe_memory_call(
-                    build_combined_memory_context,
-                    memory,
-                    query=user_input,
-                    semantic_context=memory_context,
-                ) or memory_context
-            log_retrieval_stats(memory, episode_id, memory_searcher)
-            log_memory_budget(memory, episode_id, "foreground_retrieval", turn_budget)
-            if memory_context:
-                log_episode_event(memory, episode_id, "retrieval_context", content=memory_context)
-            agent_messages = inject_memory_context(messages, memory_context)
-            compacted_messages, working_summary, preservation_decision = compact_messages(
-                agent_messages,
-                preservation_classifier=None if skip_laya_for_turn else getattr(guard, "_agent", None),
-            )
-            if working_summary is not None:
-                agent_messages = compacted_messages
-                log_episode_event(memory, episode_id, "working_memory_summary", content=working_summary)
-                if preservation_decision is not None and preservation_decision.should_preserve:
-                    log_episode_event(
-                        memory,
-                        episode_id,
-                        "working_memory_preservation_candidate",
-                        metadata={"preservation": preservation_decision},
-                    )
             try:
-                reply = run_agent(agent_messages, memory=memory, episode_id=episode_id)
+                result = run_agent_turn(user_input, runtime)
             except ValueError as e:
-                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "ValueError"})
-                finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\nConfiguration error: {e}")
                 break
             except AuthenticationError as e:
-                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "AuthenticationError"})
-                finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_authentication_error(e)}")
                 break
             except APIStatusError as e:
-                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIStatusError"})
-                finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_api_status_error(e)}")
                 if e.status_code in (401, 403):
                     break
                 continue
             except APITimeoutError as e:
-                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APITimeoutError"})
-                finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_api_connection_error(e)}")
                 continue
             except APIConnectionError as e:
-                log_episode_event(memory, episode_id, "error", content=str(e), metadata={"error_type": "APIConnectionError"})
-                finish_episode_safely(memory, episode_id, status="failed")
                 print(f"\n{format_api_connection_error(e)}")
                 continue
-            messages.append({"role": "assistant", "content": reply})
-            log_episode_event(memory, episode_id, "message", role="assistant", content=reply)
-            print(f"\nMiniAgent: {reply}")
-            if skip_laya_for_turn:
-                finish_episode_safely(memory, episode_id)
-            else:
-                worker.enqueue(memory, episode_id, memory_classifier_factory, semantic_extractor, procedure_matcher)
-            if not async_memory_review and not skip_laya_for_turn:
-                worker.join()
+            if result.guard_notice:
+                print(f"\n{result.guard_notice}")
+            print(f"\nMiniAgent: {result.reply}")
     finally:
         if drain_memory_on_exit:
             worker.join()
         worker.stop()
-
-
-def log_memory_budget(
-    memory: MemoryStore | None,
-    episode_id: int | None,
-    phase: str,
-    budget: Any,
-) -> None:
-    snapshot = budget.snapshot() if hasattr(budget, "snapshot") else {}
-    log_episode_event(memory, episode_id, "memory_budget", metadata={"phase": phase, "budget": snapshot})
-
-
-def log_retrieval_stats(
-    memory: MemoryStore | None,
-    episode_id: int | None,
-    searcher: Any,
-) -> None:
-    stats = getattr(searcher, "last_stats", None)
-    if not stats:
-        return
-    log_episode_event(memory, episode_id, "memory_retrieval_stats", metadata={"stats": stats})
 
 if __name__ == "__main__":
     main()

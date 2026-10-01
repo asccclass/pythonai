@@ -1,12 +1,14 @@
 import json
+from types import SimpleNamespace
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from communication_adapters.telegram_adapter import TelegramAdapter, split_telegram_message
 from communication_models import AgentCommand, OutboundMessage
 from communication_store import CommunicationStore
-from communication_worker import CommunicationWorker, enqueue_adapter_events
+from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
 
 
 def telegram_update(text="hello", update_id=100, message_id=7):
@@ -101,6 +103,28 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(command.status, "completed")
         self.assertEqual(sent[0]["text"], "reply to hello")
         self.assertIn("outbound", {message["direction"] for message in messages})
+
+    def test_agent_runtime_command_runner_uses_shared_turn_flow(self):
+        runtime = object()
+        command = AgentCommand(
+            command_id="1",
+            platform="telegram",
+            conversation_id="456",
+            sender_id="123",
+            text="hello agent",
+            status="pending",
+            source_message_id=7,
+        )
+
+        with patch(
+            "communication_worker.run_agent_turn",
+            return_value=SimpleNamespace(reply="agent reply"),
+        ) as run_agent_turn:
+            runner = agent_runtime_command_runner(runtime)
+            reply = runner(command)
+
+        self.assertEqual(reply, "agent reply")
+        run_agent_turn.assert_called_once_with("hello agent", runtime)
 
     def test_enqueue_adapter_events_rejects_failed_verification(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="secret")
