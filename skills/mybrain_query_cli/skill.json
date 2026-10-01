@@ -1,15 +1,16 @@
 {
   "name": "mybrain_query_cli",
-  "description": "Query the local MyBrain knowledge base through the bundled CLI wrapper.",
+  "description": "Query the local MyBrain knowledge base by running the bundled mybrain.exe CLI directly.",
   "triggers": [
     "mybrain",
     "my brain",
     "local knowledge base",
-    "knowledge base",
+    "my local knowledge base",
     "我的筆記",
     "知識庫",
     "wiki",
-    "過往筆記"
+    "過往筆記",
+    "command-line access to MyBrain"
   ],
   "inputs": {
     "type": "object",
@@ -35,11 +36,8 @@
           "command": [
             "powershell",
             "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            "skills\\mybrain_query_cli\\scripts\\invoke-mybrain-query.ps1",
-            "-Question",
+            "-Command",
+            "Set-Location -LiteralPath 'skills\\mybrain_query_cli'; .\\scripts\\mybrain.exe --query $args[0]",
             "{{question}}"
           ]
         }
