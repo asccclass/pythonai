@@ -317,6 +317,26 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(server.tool_result_succeeded("ok"))
         self.assertFalse(server.tool_result_succeeded("Error: failed"))
 
+    def test_build_system_prompt_includes_non_empty_agents_md(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agents_path = Path(temp_dir) / "AGENTS.md"
+            agents_path.write_text("Use project rules.", encoding="utf-8")
+
+            prompt = server.build_system_prompt("Base prompt.", agents_path)
+
+        self.assertIn("Base prompt.", prompt)
+        self.assertIn("AGENTS.md instructions:", prompt)
+        self.assertIn("Use project rules.", prompt)
+
+    def test_build_system_prompt_ignores_empty_agents_md(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agents_path = Path(temp_dir) / "AGENTS.md"
+            agents_path.write_text("  \n", encoding="utf-8")
+
+            prompt = server.build_system_prompt("Base prompt.", agents_path)
+
+        self.assertEqual(prompt, "Base prompt.")
+
     def test_main_logs_skill_candidates(self):
         class Guard:
             def assess(self, user_input):
@@ -622,6 +642,31 @@ class ServerTests(unittest.TestCase):
         budget_events = [event for event in events if event["event_type"] == "memory_budget"]
         foreground_budget = next(event for event in budget_events if event["metadata"]["phase"] == "foreground_retrieval")
         self.assertIn("memory_query_embedding", foreground_budget["metadata"]["budget"])
+
+    def test_main_uses_built_system_prompt(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        captured_messages = []
+
+        def run_agent(messages, memory=None, episode_id=None):
+            captured_messages.extend(messages)
+            return "hi"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            with (
+                patch("server.LayaGuard", return_value=Guard()),
+                patch("server.MemoryStore", return_value=store),
+                patch("server.read_user_input", side_effect=["hello", "exit"]),
+                patch("server.build_system_prompt", return_value="system with agents"),
+                patch("server.run_agent", side_effect=run_agent),
+                patch("builtins.print"),
+            ):
+                server.main()
+
+        self.assertEqual(captured_messages[0], {"role": "system", "content": "system with agents"})
 
     def test_main_continues_when_memory_store_cannot_initialize(self):
         class Guard:

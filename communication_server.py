@@ -74,7 +74,7 @@ class TelegramWebhookService:
 def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
     import server
 
-    messages = [{"role": "system", "content": server.SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": server.build_system_prompt()}]
     guard = server.LayaGuard()
     memory_classifier_factory = server.LayaMemoryClassifier
     memory = server.safe_memory_call(server.MemoryStore)

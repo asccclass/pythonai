@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
@@ -87,7 +88,24 @@ def retry_delay_seconds(error: APIStatusError, default: float = 5.0) -> float:
         return default
 
 
-SYSTEM_PROMPT = ""    
+SYSTEM_PROMPT = ""
+AGENTS_INSTRUCTIONS_PATH = Path("AGENTS.md")
+
+
+def load_agents_instructions(path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str:
+    agents_path = Path(path)
+    if not agents_path.exists():
+        return ""
+    content = agents_path.read_text(encoding="utf-8").strip()
+    return content
+
+
+def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str:
+    agents_instructions = load_agents_instructions(agents_path)
+    if not agents_instructions:
+        return base_prompt
+    parts = [part for part in [base_prompt.strip(), f"AGENTS.md instructions:\n{agents_instructions}"] if part]
+    return "\n\n".join(parts)
 
 message = [
     {"role": "user", "content": "You are a helpful assistant."}
@@ -249,7 +267,7 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
 
 
 def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": build_system_prompt()}]
     guard = LayaGuard()
     memory_classifier_factory = LayaMemoryClassifier
     memory = safe_memory_call(MemoryStore)

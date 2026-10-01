@@ -9,6 +9,7 @@ from unittest.mock import patch
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_server import (
     TelegramWebhookService,
+    create_agent_runtime,
     create_request_handler,
     create_telegram_service,
     parse_allowed_senders,
@@ -165,6 +166,25 @@ class CommunicationServerTests(unittest.TestCase):
             service = create_telegram_service()
 
         self.assertEqual(service.allowed_senders, {"telegram:123"})
+
+    def test_create_agent_runtime_uses_built_system_prompt(self):
+        with (
+            patch("server.build_system_prompt", return_value="system with agents"),
+            patch("server.LayaGuard", return_value=object()),
+            patch("server.LayaMemoryClassifier", return_value=object()),
+            patch("server.safe_memory_call", return_value=None),
+            patch("server.VectorMemorySearcher", return_value=object()),
+            patch("server.SkillRegistry"),
+            patch("server.SkillMatcher", return_value=object()),
+            patch("server.LLMSemanticExtractor", return_value=object()),
+            patch("server.LLMProcedureSimilarityMatcher", return_value=object()),
+            patch("server.BackgroundWorkerLease.acquire", return_value=type("Lease", (), {"acquired": False})()),
+            patch("server.QueueOnlyMemoryWorker", return_value=object()),
+            patch("builtins.print"),
+        ):
+            runtime = create_agent_runtime()
+
+        self.assertEqual(runtime.messages[0], {"role": "system", "content": "system with agents"})
 
     def test_run_http_server_treats_ctrl_c_as_shutdown(self):
         class Httpd:
