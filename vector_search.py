@@ -86,6 +86,14 @@ class VectorMemorySearcher:
         allow_query_embedding: bool = True,
         max_missing_embeddings: int | None = None,
     ) -> list[dict[str, Any]]:
+        if not memories:
+            self.last_stats = {
+                "candidate_count": 0,
+                "missing_embedding_count": 0,
+                "remote_missing_embedding_backfill_count": 0,
+                "skipped_missing_embedding_backfill_count": 0,
+            }
+            return []
         if not query:
             self.last_stats = {
                 "candidate_count": len(memories),

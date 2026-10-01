@@ -16,7 +16,7 @@ from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
 from semantic_extractor import LLMSemanticExtractor
 from memory import MemoryStore
-from memory_worker import MemoryReviewWorker
+from memory_worker import BackgroundWorkerLease, MemoryReviewWorker, QueueOnlyMemoryWorker
 from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
 
@@ -257,12 +257,18 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     skill_matcher = SkillMatcher(SkillRegistry())
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     procedure_matcher = LLMProcedureSimilarityMatcher(get_client, OLLAMA_MODEL)
-    worker = MemoryReviewWorker(
-        async_mode=async_memory_review,
-        embedding_provider=memory_searcher.embedding_provider,
-    )
-    worker.enqueue_pending_reviews(memory, memory_classifier_factory, semantic_extractor, procedure_matcher)
-    worker.enqueue_pending_embedding_backfills(memory)
+    worker_lease = BackgroundWorkerLease.acquire(memory)
+    if worker_lease.acquired:
+        worker = MemoryReviewWorker(
+            async_mode=async_memory_review,
+            embedding_provider=memory_searcher.embedding_provider,
+            lease=worker_lease,
+        )
+        worker.enqueue_pending_reviews(memory, memory_classifier_factory, semantic_extractor, procedure_matcher)
+        worker.enqueue_pending_embedding_backfills(memory)
+    else:
+        worker = QueueOnlyMemoryWorker()
+        print("Memory background worker already active in another process; this process will only enqueue review jobs.")
     runtime = AgentRuntime(
         messages=messages,
         guard=guard,

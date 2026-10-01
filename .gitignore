@@ -10,3 +10,7 @@ memory.db
 memory.db-*
 memory/*.db
 memory/*.db-*
+background_worker.lock
+memory/*.lock
+communication/*.db
+communication/*.db-*

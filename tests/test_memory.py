@@ -384,12 +384,15 @@ class MemoryStoreTests(unittest.TestCase):
 
             job_id = store.add_memory_job("memory_review", episode_id=episode_id, payload={"source": "test"})
             pending = store.pending_memory_jobs(job_type="memory_review")
-            store.claim_memory_job(job_id)
+            claimed = store.claim_memory_job(job_id)
+            claimed_again = store.claim_memory_job(job_id)
             processing = store.memory_jobs(limit=5)[0]
             store.complete_memory_job(job_id)
             completed = store.memory_jobs(limit=5)[0]
 
         self.assertEqual([job["id"] for job in pending], [job_id])
+        self.assertTrue(claimed)
+        self.assertFalse(claimed_again)
         self.assertEqual(pending[0]["payload"]["source"], "test")
         self.assertEqual(processing["status"], "processing")
         self.assertEqual(processing["attempts"], 1)

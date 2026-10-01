@@ -49,6 +49,16 @@ class _Client:
 
 
 class VectorSearchTests(unittest.TestCase):
+    def test_search_with_budget_returns_empty_without_embedding_when_no_candidates(self):
+        class FailingProvider:
+            def embed(self, text, allow_remote=True):
+                raise AssertionError("should not embed empty candidate set")
+
+        searcher = VectorMemorySearcher(FailingProvider())
+
+        self.assertEqual(searcher.search_with_budget("hello", [], limit=5), [])
+        self.assertEqual(searcher.last_stats["candidate_count"], 0)
+
     def test_cosine_similarity_scores_identical_vectors_highest(self):
         self.assertEqual(cosine_similarity([1.0, 0.0], [1.0, 0.0]), 1.0)
         self.assertEqual(cosine_similarity([1.0, 0.0], [0.0, 1.0]), 0.0)

@@ -815,19 +815,22 @@ class MemoryStore:
             ).fetchall()
         return [_memory_job_from_row(row) for row in rows]
 
-    def claim_memory_job(self, job_id: int) -> None:
+    def claim_memory_job(self, job_id: int) -> bool:
         with closing(self.connect()) as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE memory_jobs
                 SET status = 'processing',
                     attempts = attempts + 1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
+                  AND status = 'pending'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                 """,
                 (job_id,),
             )
             connection.commit()
+            return cursor.rowcount > 0
 
     def complete_memory_job(self, job_id: int) -> None:
         with closing(self.connect()) as connection:

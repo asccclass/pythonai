@@ -7,7 +7,7 @@ from openai import APIStatusError
 
 from memory import MemoryStore
 from memory_classifier import MemoryCandidateDecision
-from memory_worker import MemoryBackgroundWorker, ProviderCooldown
+from memory_worker import BackgroundWorkerLease, MemoryBackgroundWorker, ProviderCooldown, QueueOnlyMemoryWorker
 
 
 class NoopClassifier:
@@ -42,6 +42,46 @@ class RateLimitedEmbeddingProvider:
 
 
 class MemoryWorkerTests(unittest.TestCase):
+    def test_background_worker_lease_allows_single_owner(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            first = BackgroundWorkerLease.acquire(store)
+            second = BackgroundWorkerLease.acquire(store)
+
+            first_acquired = first.acquired
+            second_acquired = second.acquired
+            first.release()
+            third = BackgroundWorkerLease.acquire(store)
+            third_acquired = third.acquired
+            third.release()
+
+        self.assertTrue(first_acquired)
+        self.assertFalse(second_acquired)
+        self.assertTrue(third_acquired)
+
+    def test_background_worker_lease_requires_real_memory_store_path(self):
+        class BrokenMemory:
+            pass
+
+        lease = BackgroundWorkerLease.acquire(BrokenMemory())
+
+        self.assertFalse(lease.acquired)
+
+    def test_queue_only_worker_enqueues_review_without_processing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(episode_id, "message", role="user", content="hello")
+            worker = QueueOnlyMemoryWorker()
+
+            worker.enqueue(store, episode_id, NoopClassifier(), NoopExtractor(), NoopMatcher())
+            jobs = store.memory_jobs(limit=5)
+            events = store.recent_events(limit=10)
+
+        self.assertEqual(jobs[0]["job_type"], "memory_review")
+        self.assertEqual(jobs[0]["status"], "pending")
+        self.assertNotIn("memory_candidate_decision", [event["event_type"] for event in events])
+
     def test_worker_backfills_missing_embeddings_after_review(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

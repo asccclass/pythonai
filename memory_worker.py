@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 import queue
 import threading
 import time
@@ -61,6 +63,95 @@ class ProviderCooldown:
         return delay
 
 
+class BackgroundWorkerLease:
+    def __init__(self, lock_path: Path, fd: int | None = None) -> None:
+        self.lock_path = lock_path
+        self.fd = fd
+
+    @property
+    def acquired(self) -> bool:
+        return self.fd is not None
+
+    @classmethod
+    def acquire(cls, memory: MemoryStore | None, lock_name: str = "background_worker.lock") -> "BackgroundWorkerLease":
+        if memory is None or not hasattr(memory, "db_path"):
+            return cls(Path(lock_name), fd=None)
+        db_path = Path(getattr(memory, "db_path", "memory.db"))
+        lock_path = db_path.parent / lock_name
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if cls._is_stale(lock_path):
+                try:
+                    lock_path.unlink()
+                    fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                except OSError:
+                    return cls(lock_path, fd=None)
+            else:
+                return cls(lock_path, fd=None)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        return cls(lock_path, fd=fd)
+
+    def release(self) -> None:
+        if self.fd is None:
+            return
+        os.close(self.fd)
+        self.fd = None
+        try:
+            self.lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    @staticmethod
+    def _is_stale(lock_path: Path) -> bool:
+        try:
+            pid_text = lock_path.read_text(encoding="ascii").strip()
+            pid = int(pid_text)
+        except (OSError, ValueError):
+            return True
+        if pid <= 0:
+            return True
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        except OSError:
+            return False
+        return False
+
+
+class QueueOnlyMemoryWorker:
+    def enqueue(
+        self,
+        memory: MemoryStore | None,
+        episode_id: int | None,
+        memory_classifier: Any,
+        semantic_extractor: Any,
+        procedure_matcher: Any,
+    ) -> None:
+        if memory is None or episode_id is None or not hasattr(memory, "add_memory_job"):
+            return
+        safe_memory_call(memory.add_memory_job, "memory_review", episode_id=episode_id)
+
+    def enqueue_pending_reviews(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    def enqueue_embedding_backfills(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    def enqueue_pending_embedding_backfills(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    def join(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+
 class MemoryBackgroundWorker:
     def __init__(
         self,
@@ -70,6 +161,7 @@ class MemoryBackgroundWorker:
         stale_embedding_before: str | None = None,
         cooldown: ProviderCooldown | None = None,
         provider_name: str = "default",
+        lease: BackgroundWorkerLease | None = None,
     ) -> None:
         self.queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self.async_mode = async_mode
@@ -78,11 +170,17 @@ class MemoryBackgroundWorker:
         self.stale_embedding_before = stale_embedding_before
         self.cooldown = cooldown or ProviderCooldown()
         self.provider_name = provider_name
+        self.lease = lease
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         if self.async_mode:
             self._thread = threading.Thread(target=self._worker_loop, daemon=True)
-            self._thread.start()
+            try:
+                self._thread.start()
+            except BaseException:
+                if self.lease is not None:
+                    self.lease.release()
+                raise
 
     def enqueue(
         self,
@@ -205,8 +303,11 @@ class MemoryBackgroundWorker:
         if hasattr(procedure_matcher, "allow_remote"):
             procedure_matcher.allow_remote = review_budget.try_acquire
         self._wait_for_provider(memory)
+        claimed = False
         try:
-            self._claim_job(memory, job_id)
+            claimed = self._claim_job(memory, job_id)
+            if job_id is not None and not claimed:
+                return
             episode_events = safe_memory_call(memory.episode_events, episode_id) or []
             memory_candidate = self._classify_memory(memory_classifier, episode_events)
             self._log_event(
@@ -248,8 +349,9 @@ class MemoryBackgroundWorker:
                     metadata={"error_type": type(error).__name__, "phase": "background_memory"},
                 )
         finally:
-            self._log_memory_budget(memory, episode_id, "background_review", review_budget)
-            safe_memory_call(memory.finish_episode, episode_id)
+            if job_id is None or claimed:
+                self._log_memory_budget(memory, episode_id, "background_review", review_budget)
+                safe_memory_call(memory.finish_episode, episode_id)
 
     def _process_embedding_item(
         self,
@@ -259,8 +361,11 @@ class MemoryBackgroundWorker:
         episode_id: int | None = None,
     ) -> None:
         self._wait_for_provider(memory)
+        claimed = False
         try:
-            self._claim_job(memory, job_id)
+            claimed = self._claim_job(memory, job_id)
+            if job_id is not None and not claimed:
+                return
             semantic_memory = safe_memory_call(memory.semantic_memory, semantic_memory_id)
             if semantic_memory is None or semantic_memory.get("archived_at") or semantic_memory.get("superseded_by"):
                 self._complete_job(memory, job_id)
@@ -295,6 +400,8 @@ class MemoryBackgroundWorker:
         self._stop_event.set()
         if self.async_mode and self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=1.0)
+        if self.lease is not None:
+            self.lease.release()
 
     def _classify_memory(self, memory_classifier: Any, events: list[dict[str, Any]]) -> MemoryCandidateDecision:
         result = safe_memory_call(memory_classifier.assess_episode, events)
@@ -341,9 +448,10 @@ class MemoryBackgroundWorker:
             return None
         return safe_memory_call(memory.add_memory_job, "memory_review", episode_id=episode_id)
 
-    def _claim_job(self, memory: MemoryStore, job_id: int | None) -> None:
-        if job_id is not None and hasattr(memory, "claim_memory_job"):
-            safe_memory_call(memory.claim_memory_job, job_id)
+    def _claim_job(self, memory: MemoryStore, job_id: int | None) -> bool:
+        if job_id is None or not hasattr(memory, "claim_memory_job"):
+            return True
+        return bool(safe_memory_call(memory.claim_memory_job, job_id))
 
     def _complete_job(self, memory: MemoryStore, job_id: int | None) -> None:
         if job_id is not None and hasattr(memory, "complete_memory_job"):

@@ -80,12 +80,18 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
     skill_matcher = server.SkillMatcher(server.SkillRegistry())
     semantic_extractor = server.LLMSemanticExtractor(server.get_client, server.OLLAMA_MODEL)
     procedure_matcher = server.LLMProcedureSimilarityMatcher(server.get_client, server.OLLAMA_MODEL)
-    memory_worker = server.MemoryReviewWorker(
-        async_mode=async_memory_review,
-        embedding_provider=memory_searcher.embedding_provider,
-    )
-    memory_worker.enqueue_pending_reviews(memory, memory_classifier_factory, semantic_extractor, procedure_matcher)
-    memory_worker.enqueue_pending_embedding_backfills(memory)
+    worker_lease = server.BackgroundWorkerLease.acquire(memory)
+    if worker_lease.acquired:
+        memory_worker = server.MemoryReviewWorker(
+            async_mode=async_memory_review,
+            embedding_provider=memory_searcher.embedding_provider,
+            lease=worker_lease,
+        )
+        memory_worker.enqueue_pending_reviews(memory, memory_classifier_factory, semantic_extractor, procedure_matcher)
+        memory_worker.enqueue_pending_embedding_backfills(memory)
+    else:
+        memory_worker = server.QueueOnlyMemoryWorker()
+        print("Memory background worker already active in another process; this process will only enqueue review jobs.")
     return AgentRuntime(
         messages=messages,
         guard=guard,
