@@ -9,6 +9,7 @@ from communication_adapters.telegram_adapter import TelegramAdapter, split_teleg
 from communication_models import AgentCommand, OutboundMessage
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
+from skills import SkillMatcher, SkillRegistry
 
 
 def telegram_update(text="hello", update_id=100, message_id=7):
@@ -128,6 +129,34 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(command.status, "completed")
         self.assertEqual(sent[0]["text"], "reply to hello")
         self.assertIn("outbound", {message["direction"] for message in messages})
+
+    def test_worker_sends_error_reply_when_command_fails(self):
+        sent = []
+        adapter = TelegramAdapter(bot_token="token", webhook_secret="", http_post=lambda url, payload: sent.append(payload))
+        body = json.dumps(telegram_update("hello")).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            enqueue_adapter_events(store, adapter, {}, body)
+
+            def runner(command: AgentCommand):
+                raise RuntimeError("model unavailable")
+
+            worker = CommunicationWorker(store, {"telegram": adapter}, runner)
+            command = worker.process_next()
+            messages = store.recent_messages(limit=10)
+
+        self.assertEqual(command.status, "failed")
+        self.assertEqual(sent[0]["text"], "Command failed: model unavailable")
+        outbound = [message for message in messages if message["direction"] == "outbound"]
+        self.assertEqual(outbound[0]["text"], "Command failed: model unavailable")
+
+    def test_mybrain_skill_matches_local_data_trigger(self):
+        matcher = SkillMatcher(SkillRegistry())
+
+        matches = matcher.match("幫我查本地資料中的學習時數正式區的IP")
+
+        self.assertEqual(matches[0].skill.name, "mybrain_query_cli")
 
     def test_agent_runtime_command_runner_uses_shared_turn_flow(self):
         runtime = object()

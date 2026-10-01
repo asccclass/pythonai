@@ -53,7 +53,23 @@ class CommunicationWorker:
                 platform_message_id=f"{command.command_id}:outbound",
             )
         except Exception as error:
+            error_text = f"Command failed: {error}"
             self.store.fail_command(command.command_id, str(error))
+            adapter = self.adapters[command.platform]
+            adapter.send_message(
+                OutboundMessage(
+                    platform=command.platform,
+                    conversation_id=command.conversation_id,
+                    text=error_text,
+                    reply_to_message_id=str(command.source_message_id) if command.source_message_id is not None else None,
+                )
+            )
+            self.store.record_outbound_message(
+                command.platform,
+                command.conversation_id,
+                error_text,
+                platform_message_id=f"{command.command_id}:error",
+            )
         return self.store.command_by_id(command.command_id)
 
 
