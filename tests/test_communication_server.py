@@ -13,6 +13,7 @@ from communication_server import (
     create_telegram_service,
     parse_allowed_senders,
     print_loaded_skills,
+    print_telegram_connection_status,
     run_http_server,
 )
 from communication_store import CommunicationStore
@@ -115,6 +116,32 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(loaded, ["read_note"])
         self.assertEqual(print_mock.call_args.args[0], "Loaded operational skills: read_note")
 
+    def test_print_telegram_connection_status_outputs_bot_info(self):
+        adapter = TelegramAdapter(
+            bot_token="token",
+            webhook_secret="",
+            http_get=lambda url, params: {"ok": True, "result": {"id": 123, "username": "agent_bot"}},
+        )
+
+        with patch("builtins.print") as print_mock:
+            bot = print_telegram_connection_status(adapter)
+
+        self.assertEqual(bot["username"], "agent_bot")
+        self.assertEqual(print_mock.call_args.args[0], "Telegram connected: @agent_bot (id=123)")
+
+    def test_print_telegram_connection_status_outputs_failure(self):
+        adapter = TelegramAdapter(
+            bot_token="token",
+            webhook_secret="",
+            http_get=lambda url, params: {"ok": False, "description": "Unauthorized"},
+        )
+
+        with patch("builtins.print") as print_mock:
+            bot = print_telegram_connection_status(adapter)
+
+        self.assertIsNone(bot)
+        self.assertIn("Telegram connection check failed:", print_mock.call_args.args[0])
+
     def test_create_telegram_service_reads_allowed_senders_from_env(self):
         with (
             patch.dict("os.environ", {"COMM_ALLOWED_SENDERS": "telegram:123"}, clear=False),
@@ -144,10 +171,12 @@ class CommunicationServerTests(unittest.TestCase):
                 patch("communication_server.ThreadingHTTPServer", Httpd),
                 patch.object(service, "start_worker_loop") as start_mock,
                 patch.object(service, "stop_worker_loop") as stop_mock,
+                patch("communication_server.print_telegram_connection_status") as telegram_status_mock,
                 patch("builtins.print"),
             ):
                 run_http_server(service, host="127.0.0.1", port=0)
 
+        telegram_status_mock.assert_called_once_with(service.adapter)
         start_mock.assert_called_once()
         stop_mock.assert_called_once()
 

@@ -100,6 +100,19 @@ class TelegramAdapter:
         result = payload.get("result", [])
         return result if isinstance(result, list) else []
 
+    def get_me(self) -> dict[str, Any]:
+        if not self.bot_token:
+            raise ValueError("TELEGRAM_BOT_TOKEN is required to check bot connection")
+        payload = self.http_get(f"https://api.telegram.org/bot{self.bot_token}/getMe", {})
+        if isinstance(payload, bytes):
+            payload = json.loads(payload.decode("utf-8"))
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            raise RuntimeError(f"Telegram getMe failed: {payload}")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Telegram getMe returned invalid result: {payload}")
+        return result
+
 
 def split_telegram_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
     if len(text) <= limit:

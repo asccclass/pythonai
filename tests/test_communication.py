@@ -75,6 +75,17 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(calls[0][1]["chat_id"], "456")
         self.assertEqual(len(calls[0][1]["text"]), 4096)
 
+    def test_telegram_adapter_get_me_returns_bot_info(self):
+        adapter = TelegramAdapter(
+            bot_token="token",
+            webhook_secret="",
+            http_get=lambda url, params: {"ok": True, "result": {"id": 123, "username": "agent_bot"}},
+        )
+
+        bot = adapter.get_me()
+
+        self.assertEqual(bot["username"], "agent_bot")
+
     def test_split_telegram_message_keeps_short_text_single_chunk(self):
         self.assertEqual(split_telegram_message("hello", limit=10), ["hello"])
 

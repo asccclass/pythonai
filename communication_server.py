@@ -118,6 +118,19 @@ def print_loaded_skills(registry: Any) -> list[str]:
     return loaded
 
 
+def print_telegram_connection_status(adapter: TelegramAdapter) -> dict[str, Any] | None:
+    try:
+        bot = adapter.get_me()
+    except Exception as error:
+        print(f"Telegram connection check failed: {error}")
+        return None
+
+    username = bot.get("username") or "<unknown>"
+    bot_id = bot.get("id") or "<unknown>"
+    print(f"Telegram connected: @{username} (id={bot_id})")
+    return bot
+
+
 def create_telegram_service(runtime: AgentRuntime | None = None) -> TelegramWebhookService:
     runtime = runtime or create_agent_runtime()
     store = CommunicationStore()
@@ -188,6 +201,7 @@ def create_request_handler(service: TelegramWebhookService) -> type[BaseHTTPRequ
 
 
 def run_http_server(service: TelegramWebhookService, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    print_telegram_connection_status(service.adapter)
     service.start_worker_loop()
     httpd = ThreadingHTTPServer((host, port), create_request_handler(service))
     try:
