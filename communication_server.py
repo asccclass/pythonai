@@ -32,6 +32,11 @@ class TelegramWebhookService:
         self._thread: threading.Thread | None = None
 
     def handle_webhook(self, headers: dict[str, str], body: bytes) -> dict[str, Any]:
+        for message in self.adapter.parse_events(headers, body):
+            print(
+                "Telegram message received: "
+                f"conversation={message.conversation_id} sender={message.sender_id} text={message.text}"
+            )
         commands = enqueue_adapter_events(
             self.store,
             self.adapter,

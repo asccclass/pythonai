@@ -67,6 +67,20 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].text, "hello")
 
+    def test_telegram_webhook_prints_received_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir)
+            body = json.dumps(telegram_update("hello")).encode("utf-8")
+
+            with patch("builtins.print") as print_mock:
+                result = service.handle_webhook({}, body)
+
+        self.assertEqual(result, {"ok": True, "queued": 1})
+        self.assertEqual(
+            print_mock.call_args.args[0],
+            "Telegram message received: conversation=456 sender=123 text=hello",
+        )
+
     def test_telegram_webhook_rejects_invalid_secret(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             service = self._service(temp_dir=temp_dir, secret="secret")
