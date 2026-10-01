@@ -1,7 +1,0 @@
-SystemName=MyBrainWiki
-OLLAMA_URL=http://10.109.190.13:8003/v1
-OLLAMA_MODEL=gemma-4-31b-it-fp8
-OLLAMA_TOKEN=
-WIKI_PATH=D:\myprograms\mybraindata\wiki
-RAW_PATH=D:\myprograms\mybraindata\raw
-INGEST_MAX_CHUNK_RUNES=8000
