@@ -7,7 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from communication_adapters.telegram_adapter import TelegramAdapter
-from communication_server import TelegramWebhookService, create_request_handler, create_telegram_service, parse_allowed_senders
+from communication_server import (
+    TelegramWebhookService,
+    create_request_handler,
+    create_telegram_service,
+    parse_allowed_senders,
+    print_loaded_skills,
+    run_http_server,
+)
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker
 from http.server import ThreadingHTTPServer
@@ -94,6 +101,20 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertIsNone(parse_allowed_senders(""))
         self.assertEqual(parse_allowed_senders("telegram:123, line:U1 "), {"telegram:123", "line:U1"})
 
+    def test_print_loaded_skills_outputs_operational_skill_names(self):
+        class Skill:
+            name = "read_note"
+
+        class Registry:
+            def load_results(self):
+                return [(Skill(), None), (None, "Missing skill.json")]
+
+        with patch("builtins.print") as print_mock:
+            loaded = print_loaded_skills(Registry())
+
+        self.assertEqual(loaded, ["read_note"])
+        self.assertEqual(print_mock.call_args.args[0], "Loaded operational skills: read_note")
+
     def test_create_telegram_service_reads_allowed_senders_from_env(self):
         with (
             patch.dict("os.environ", {"COMM_ALLOWED_SENDERS": "telegram:123"}, clear=False),
@@ -103,6 +124,32 @@ class CommunicationServerTests(unittest.TestCase):
             service = create_telegram_service()
 
         self.assertEqual(service.allowed_senders, {"telegram:123"})
+
+    def test_run_http_server_treats_ctrl_c_as_shutdown(self):
+        class Httpd:
+            def __init__(self, address, handler):
+                self.address = address
+                self.handler = handler
+                self.closed = False
+
+            def serve_forever(self):
+                raise KeyboardInterrupt
+
+            def server_close(self):
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir)
+            with (
+                patch("communication_server.ThreadingHTTPServer", Httpd),
+                patch.object(service, "start_worker_loop") as start_mock,
+                patch.object(service, "stop_worker_loop") as stop_mock,
+                patch("builtins.print"),
+            ):
+                run_http_server(service, host="127.0.0.1", port=0)
+
+        start_mock.assert_called_once()
+        stop_mock.assert_called_once()
 
     def test_worker_loop_processes_pending_command(self):
         sent = []

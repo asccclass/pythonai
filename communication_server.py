@@ -77,7 +77,9 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
         server.OpenAICompatibleEmbeddingProvider(server.get_client, server.OLLAMA_EMBEDDING_MODEL),
         store=memory,
     )
-    skill_matcher = server.SkillMatcher(server.SkillRegistry())
+    skill_registry = server.SkillRegistry()
+    print_loaded_skills(skill_registry)
+    skill_matcher = server.SkillMatcher(skill_registry)
     semantic_extractor = server.LLMSemanticExtractor(server.get_client, server.OLLAMA_MODEL)
     procedure_matcher = server.LLMProcedureSimilarityMatcher(server.get_client, server.OLLAMA_MODEL)
     worker_lease = server.BackgroundWorkerLease.acquire(memory)
@@ -105,6 +107,15 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
         run_agent=server.run_agent,
         async_memory_review=async_memory_review,
     )
+
+
+def print_loaded_skills(registry: Any) -> list[str]:
+    loaded = [skill.name for skill, error in registry.load_results() if skill is not None and error is None]
+    if loaded:
+        print(f"Loaded operational skills: {', '.join(loaded)}")
+    else:
+        print("Loaded operational skills: none")
+    return loaded
 
 
 def create_telegram_service(runtime: AgentRuntime | None = None) -> TelegramWebhookService:
@@ -181,7 +192,10 @@ def run_http_server(service: TelegramWebhookService, host: str = DEFAULT_HOST, p
     httpd = ThreadingHTTPServer((host, port), create_request_handler(service))
     try:
         print(f"Communication server ready on http://{host}:{port}")
-        httpd.serve_forever()
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nCommunication server shutting down.")
     finally:
         service.stop_worker_loop()
         httpd.server_close()

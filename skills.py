@@ -95,17 +95,25 @@ class SkillRegistry:
         self.root = Path(root) if root is not None else DEFAULT_SKILLS_DIR
 
     def list(self) -> list[Skill]:
+        return [skill for skill, _error in self.load_results() if skill is not None]
+
+    def load_results(self) -> list[tuple[Skill | None, str | None]]:
         if not self.root.exists():
             return []
-        skills = []
+        results: list[tuple[Skill | None, str | None]] = []
         seen_names: set[str] = set()
         for path in sorted(item for item in self.root.iterdir() if item.is_dir()):
-            skill = load_skill(path)
+            try:
+                skill = load_skill(path)
+            except SkillValidationError as error:
+                results.append((None, str(error)))
+                continue
             if skill.name in seen_names:
-                raise SkillValidationError(f"Duplicate skill name: {skill.name}")
+                results.append((None, f"Duplicate skill name: {skill.name}"))
+                continue
             seen_names.add(skill.name)
-            skills.append(skill)
-        return skills
+            results.append((skill, None))
+        return results
 
     def get(self, name: str) -> Skill:
         for skill in self.list():

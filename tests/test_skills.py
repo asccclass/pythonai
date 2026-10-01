@@ -65,6 +65,16 @@ class SkillTests(unittest.TestCase):
 
         self.assertEqual([skill.name for skill in skills], ["a_skill", "z_skill"])
 
+    def test_registry_skips_invalid_skill_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_skill(root, "read_note")
+            (root / "draft_skill").mkdir()
+
+            skills = SkillRegistry(root).list()
+
+        self.assertEqual([skill.name for skill in skills], ["read_note"])
+
     def test_matcher_uses_triggers_and_names(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
