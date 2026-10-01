@@ -17,6 +17,7 @@ from base import (
     run_command,
     run_skill,
     subprocess_text_options,
+    resolve_workspace_path,
     write_file,
 )
 
@@ -25,6 +26,13 @@ class BaseTests(unittest.TestCase):
     def setUp(self):
         base._approved_commands.clear()
         base._command_guard = None
+        self._old_workspace_root = os.environ.pop("AGENT_WORKSPACE_ROOT", None)
+
+    def tearDown(self):
+        if self._old_workspace_root is not None:
+            os.environ["AGENT_WORKSPACE_ROOT"] = self._old_workspace_root
+        else:
+            os.environ.pop("AGENT_WORKSPACE_ROOT", None)
 
     def test_read_file_returns_text(self):
         with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as temp_file:
@@ -216,6 +224,44 @@ class BaseTests(unittest.TestCase):
             cwd=None,
             **subprocess_text_options(),
         )
+
+    def test_workspace_root_allows_paths_inside_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "note.txt"
+            target.write_text("hello", encoding="utf-8")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
+                self.assertEqual(read_file("note.txt"), "hello")
+                self.assertEqual(resolve_workspace_path("note.txt"), target.resolve())
+
+    def test_workspace_root_rejects_paths_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            outside = Path(temp_dir) / "outside.txt"
+            root.mkdir()
+            outside.write_text("secret", encoding="utf-8")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
+                self.assertEqual(read_file(outside), "")
+                result = run_command(["echo", "hello"], cwd=outside.parent)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("outside AGENT_WORKSPACE_ROOT", result.stderr)
+
+    def test_workspace_root_rejects_command_path_arguments_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            outside = Path(temp_dir) / "outside.txt"
+            root.mkdir()
+            outside.write_text("secret", encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run") as run,
+            ):
+                result = run_command(["type", str(outside)])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("outside AGENT_WORKSPACE_ROOT", result.stderr)
+        run.assert_not_called()
 
     def test_load_dotenv_sets_missing_values(self):
         with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as env_file:

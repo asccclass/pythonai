@@ -15,9 +15,47 @@ _command_guard: LayaGuard | None = None
 _auto_approve_commands: ContextVar[bool] = ContextVar("auto_approve_commands", default=False)
 
 
+def workspace_root() -> Path | None:
+    configured = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip()
+    if not configured:
+        return None
+    return Path(configured).expanduser().resolve()
+
+
+def workspace_error(path: str | Path, root: Path) -> str:
+    return f"Path is outside AGENT_WORKSPACE_ROOT ({root}): {path}"
+
+
+def resolve_workspace_path(path: str | Path) -> Path:
+    root = workspace_root()
+    target = Path(path).expanduser()
+    if root is None:
+        return target
+    resolved = (root / target).resolve() if not target.is_absolute() else target.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise PermissionError(workspace_error(path, root))
+    return resolved
+
+
+def validate_command_paths(command: list[str]) -> None:
+    if workspace_root() is None:
+        return
+    for item in command:
+        if not isinstance(item, str) or not looks_like_path_argument(item):
+            continue
+        resolve_workspace_path(item)
+
+
+def looks_like_path_argument(value: str) -> bool:
+    if "://" in value:
+        return False
+    path = Path(value)
+    return path.is_absolute() or value.startswith(("..", ".", "~")) or "/" in value or "\\" in value
+
+
 def read_file(path: str | Path) -> str:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(resolve_workspace_path(path), "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
         print(f"File not found: {path}")
@@ -27,11 +65,11 @@ def read_file(path: str | Path) -> str:
 
 
 def list_files(path: str | Path = ".") -> list[str]:
-    return [item.name for item in Path(path).iterdir()]
+    return [item.name for item in resolve_workspace_path(path).iterdir()]
 
 
 def write_file(path: str | Path, content: str) -> None:
-    Path(path).write_text(content, encoding="utf-8")
+    resolve_workspace_path(path).write_text(content, encoding="utf-8")
 
 
 def subprocess_text_options() -> dict:
@@ -45,7 +83,10 @@ def subprocess_text_options() -> dict:
 
 
 def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
-    target = Path(path)
+    try:
+        target = resolve_workspace_path(path)
+    except PermissionError as error:
+        return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=str(error))
     if target.is_dir():
         return subprocess.CompletedProcess(
             args=[],
@@ -97,11 +138,16 @@ def auto_approve_command_runs():
 
 
 def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
-    key = command_key(command, cwd)
+    try:
+        resolved_cwd = resolve_command_cwd(cwd)
+        validate_command_paths(command)
+    except PermissionError as error:
+        return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr=str(error))
+    key = command_key(command, resolved_cwd)
     if _auto_approve_commands.get():
         _approved_commands.add(key)
     elif key not in _approved_commands:
-        decision = get_command_guard().assess_command(command, cwd)
+        decision = get_command_guard().assess_command(command, resolved_cwd)
         if decision.needs_confirmation or not decision.available:
             answer = input(f" Run '{command}'? [y/N]: ")
             if answer.lower() != "y":
@@ -112,7 +158,16 @@ def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess
                     stderr="User cancelled",
                 )
         _approved_commands.add(key)
-    return subprocess.run(command, cwd=cwd, **subprocess_text_options())
+    return subprocess.run(command, cwd=resolved_cwd, **subprocess_text_options())
+
+
+def resolve_command_cwd(cwd: str | Path | None = None) -> Path | str | None:
+    root = workspace_root()
+    if root is None:
+        return cwd
+    if cwd is None:
+        return root
+    return resolve_workspace_path(cwd)
 
 
 def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None) -> dict:
