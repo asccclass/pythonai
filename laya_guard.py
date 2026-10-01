@@ -32,6 +32,7 @@ GUARD_QUESTIONS = {
 }
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "laya-multilingual"
+DEFAULT_MAX_LAYA_STATE_CHARS = 6000
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ class LayaGuard:
             )
 
         try:
-            result = self._agent.predict({"message": user_input}, GUARD_QUESTIONS)
+            result = self._agent.predict(prepare_laya_state({"message": user_input}), GUARD_QUESTIONS)
         except Exception as error:
             return GuardDecision(available=False, reason=f"Laya prediction failed: {error}")
 
@@ -88,3 +89,36 @@ class LayaGuard:
         command_text = " ".join(shlex.quote(part) for part in command)
         cwd_text = str(cwd) if cwd is not None else "."
         return self.assess(f"Run local command: {command_text}\nWorking directory: {cwd_text}")
+
+
+def max_laya_state_chars() -> int:
+    raw_value = os.environ.get("LAYA_MAX_STATE_CHARS")
+    if raw_value is None:
+        return DEFAULT_MAX_LAYA_STATE_CHARS
+    try:
+        return max(1000, int(raw_value))
+    except ValueError:
+        return DEFAULT_MAX_LAYA_STATE_CHARS
+
+
+def prepare_laya_state(state: dict[str, Any], max_chars: int | None = None) -> dict[str, Any]:
+    budget = max_chars if max_chars is not None else max_laya_state_chars()
+    prepared: dict[str, Any] = {}
+    for key, value in state.items():
+        if isinstance(value, str):
+            prepared[key] = truncate_laya_text(value, budget)
+        else:
+            prepared[key] = value
+    return prepared
+
+
+def truncate_laya_text(text: str, max_chars: int | None = None) -> str:
+    budget = max_chars if max_chars is not None else max_laya_state_chars()
+    if len(text) <= budget:
+        return text
+    marker = "\n[...truncated for Laya context limit...]\n"
+    if budget <= len(marker) + 20:
+        return text[:budget]
+    head_size = max(1, (budget - len(marker)) // 3)
+    tail_size = max(1, budget - len(marker) - head_size)
+    return text[:head_size].rstrip() + marker + text[-tail_size:].lstrip()

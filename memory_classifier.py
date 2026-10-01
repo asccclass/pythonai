@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from laya_guard import DEFAULT_MODEL_DIR
+from laya_guard import DEFAULT_MODEL_DIR, max_laya_state_chars, prepare_laya_state, truncate_laya_text
 
 
 MEMORY_QUESTIONS = {
@@ -68,7 +68,10 @@ class LayaMemoryClassifier:
             )
 
         try:
-            result = self._agent.predict({"episode": format_episode_for_laya(events)}, MEMORY_QUESTIONS)
+            result = self._agent.predict(
+                prepare_laya_state({"episode": format_episode_for_laya(events)}),
+                MEMORY_QUESTIONS,
+            )
         except Exception as error:
             return MemoryCandidateDecision(available=False, reason=f"Laya memory classifier failed: {error}")
 
@@ -83,13 +86,21 @@ class LayaMemoryClassifier:
         )
 
 
-def format_episode_for_laya(events: list[dict[str, Any]]) -> str:
-    lines = []
-    for event in events:
+def format_episode_for_laya(events: list[dict[str, Any]], max_chars: int | None = None) -> str:
+    budget = max_chars if max_chars is not None else max_laya_state_chars()
+    lines: list[str] = []
+    remaining = budget
+    for event in reversed(events):
         event_type = event.get("event_type", "unknown")
         role = event.get("role") or "-"
         content = str(event.get("content") or "").replace("\r", " ").replace("\n", " ").strip()
         metadata = event.get("metadata") or {}
         metadata_text = f" metadata={metadata}" if metadata else ""
-        lines.append(f"{event_type} role={role}: {content}{metadata_text}")
-    return "\n".join(lines)
+        line = f"{event_type} role={role}: {content}{metadata_text}"
+        if len(line) > remaining:
+            line = truncate_laya_text(line, remaining)
+        lines.append(line)
+        remaining -= len(line) + 1
+        if remaining <= 0:
+            break
+    return "\n".join(reversed(lines))

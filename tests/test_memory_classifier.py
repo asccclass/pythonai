@@ -55,6 +55,18 @@ class MemoryClassifierTests(unittest.TestCase):
         self.assertIn("tool_call", text)
         self.assertIn("run_command", text)
 
+    def test_format_episode_for_laya_limits_length_and_keeps_recent_events(self):
+        text = format_episode_for_laya(
+            [
+                {"event_type": "message", "role": "user", "content": "old " + ("x" * 500)},
+                {"event_type": "message", "role": "assistant", "content": "new important fact"},
+            ],
+            max_chars=120,
+        )
+
+        self.assertLessEqual(len(text), 120)
+        self.assertIn("new important fact", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from laya_guard import LayaGuard
+from laya_guard import LayaGuard, prepare_laya_state, truncate_laya_text
 
 
 class LayaGuardTests(unittest.TestCase):
@@ -121,6 +121,21 @@ class LayaGuardTests(unittest.TestCase):
 
         self.assertFalse(decision.available)
         self.assertIn("model directory not found", decision.reason)
+
+    def test_prepare_laya_state_truncates_long_text_fields(self):
+        state = prepare_laya_state({"message": "a" * 200}, max_chars=80)
+
+        self.assertLessEqual(len(state["message"]), 80)
+        self.assertIn("truncated", state["message"])
+
+    def test_truncate_laya_text_preserves_head_and_tail(self):
+        text = "start-" + ("x" * 200) + "-end"
+
+        truncated = truncate_laya_text(text, max_chars=80)
+
+        self.assertTrue(truncated.startswith("start"))
+        self.assertTrue(truncated.endswith("-end"))
+        self.assertLessEqual(len(truncated), 80)
 
 
 if __name__ == "__main__":

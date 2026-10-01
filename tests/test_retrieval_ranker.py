@@ -10,7 +10,10 @@ from retrieval_ranker import LayaMemoryRanker, format_memory_for_laya
 class RetrievalRankerTests(unittest.TestCase):
     def test_ranker_orders_memories_by_laya_relevance(self):
         class Agent:
+            received_states = []
+
             def predict(self, state, questions):
+                self.received_states.append(state)
                 score = 0.9 if "Python" in state["memory"] else 0.2
                 return {"answers": {"relevance": {"score": score}}}
 
@@ -20,13 +23,16 @@ class RetrievalRankerTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as model_dir:
-            fake_laya = types.SimpleNamespace(load=lambda path: Agent())
+            agent = Agent()
+            fake_laya = types.SimpleNamespace(load=lambda path: agent)
             with patch.dict(sys.modules, {"laya": fake_laya}):
                 ranker = LayaMemoryRanker(model_dir=model_dir)
 
-        ranked = ranker.rank("Python help", memories)
+        with patch.dict("os.environ", {"LAYA_MAX_STATE_CHARS": "1000"}):
+            ranked = ranker.rank("Python help" + ("x" * 2000), memories)
 
         self.assertEqual([memory["id"] for memory in ranked], [2, 1])
+        self.assertLessEqual(len(agent.received_states[0]["query"]), 1000)
 
     def test_ranker_returns_original_order_when_laya_is_unavailable(self):
         memories = [{"id": 1, "subject": "user", "predicate": "likes", "object": "Python", "confidence": 1.0}]

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from laya_guard import DEFAULT_MODEL_DIR
+from laya_guard import DEFAULT_MODEL_DIR, prepare_laya_state
 
 
 RELEVANCE_QUESTIONS = {
@@ -42,10 +42,10 @@ class LayaMemoryRanker:
         try:
             for memory in memories:
                 result = self._agent.predict(
-                    {
+                    prepare_laya_state({
                         "query": query,
                         "memory": format_memory_for_laya(memory),
-                    },
+                    }),
                     RELEVANCE_QUESTIONS,
                 )
                 score = float(result.get("answers", {}).get("relevance", {}).get("score", 0.0))
