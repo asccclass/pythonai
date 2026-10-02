@@ -5,6 +5,7 @@ import json
 import os
 import time
 from typing import Callable
+from urllib.error import HTTPError, URLError
 
 from agent_runtime import AgentRuntime
 from communication_adapters.telegram_adapter import TelegramAdapter
@@ -22,6 +23,7 @@ class TelegramPollingWorker:
     allowed_senders: set[str] | None = None
     poll_timeout_seconds: int = 30
     idle_sleep_seconds: float = 0.2
+    error_sleep_seconds: float = 5.0
     offset: int | None = None
     sleep: Callable[[float], None] = time.sleep
 
@@ -52,7 +54,12 @@ class TelegramPollingWorker:
 
     def run_forever(self) -> None:
         while True:
-            result = self.poll_once()
+            try:
+                result = self.poll_once()
+            except (HTTPError, URLError, TimeoutError, ConnectionError) as error:
+                print(f"Telegram polling warning: {error}; retrying in {self.error_sleep_seconds:g} seconds.")
+                self.sleep(self.error_sleep_seconds)
+                continue
             if result["updates"] == 0 and result["processed"] == 0:
                 self.sleep(self.idle_sleep_seconds)
 
@@ -70,6 +77,7 @@ def create_telegram_polling_worker(runtime: AgentRuntime | None = None) -> Teleg
         allowed_senders=parse_allowed_senders(os.environ.get("COMM_ALLOWED_SENDERS", "")),
         poll_timeout_seconds=int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "30")),
         idle_sleep_seconds=float(os.environ.get("TELEGRAM_POLL_IDLE_SLEEP", "0.2")),
+        error_sleep_seconds=float(os.environ.get("TELEGRAM_POLL_ERROR_SLEEP", "5")),
     )
 
 

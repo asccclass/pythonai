@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_store import CommunicationStore
@@ -99,6 +100,7 @@ class TelegramPollingWorkerTests(unittest.TestCase):
                     "COMM_ALLOWED_SENDERS": "telegram:123",
                     "TELEGRAM_POLL_TIMEOUT": "3",
                     "TELEGRAM_POLL_IDLE_SLEEP": "0.05",
+                    "TELEGRAM_POLL_ERROR_SLEEP": "0.5",
                 },
                 clear=False,
             ),
@@ -110,6 +112,37 @@ class TelegramPollingWorkerTests(unittest.TestCase):
         self.assertEqual(worker.allowed_senders, {"telegram:123"})
         self.assertEqual(worker.poll_timeout_seconds, 3)
         self.assertEqual(worker.idle_sleep_seconds, 0.05)
+        self.assertEqual(worker.error_sleep_seconds, 0.5)
+
+    def test_run_forever_retries_transient_polling_http_errors(self):
+        calls = []
+        sleeps = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            adapter = TelegramAdapter(bot_token="token", webhook_secret="")
+            worker = TelegramPollingWorker(
+                store=store,
+                adapter=adapter,
+                worker=CommunicationWorker(store, {"telegram": adapter}, lambda command: "ok"),
+                error_sleep_seconds=0.25,
+                sleep=lambda seconds: sleeps.append(seconds),
+            )
+
+            def poll_once():
+                calls.append("poll")
+                if len(calls) == 1:
+                    raise HTTPError("https://api.telegram.org", 502, "Bad Gateway", hdrs=None, fp=None)
+                raise KeyboardInterrupt
+
+            worker.poll_once = poll_once
+            with patch("builtins.print") as print_mock:
+                with self.assertRaises(KeyboardInterrupt):
+                    worker.run_forever()
+
+        self.assertEqual(calls, ["poll", "poll"])
+        self.assertEqual(sleeps, [0.25])
+        self.assertIn("Telegram polling warning:", print_mock.call_args.args[0])
 
 
 if __name__ == "__main__":
