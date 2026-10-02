@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import inspect
 import json
 import re
 import subprocess
@@ -172,6 +173,7 @@ class SkillExecutor:
                 if tool_name not in self.tools:
                     raise SkillExecutionError(f"Tool is not registered: {tool_name}")
                 args = render_args(step.get("args", {}), inputs)
+                args = self._with_trusted_skill_assets(tool_name, args, skill)
                 self._print_status(f"Skill {skill.name} step {index}: {tool_name}")
                 self._log("skill_step", metadata={"skill": skill.name, "index": index, "tool": tool_name, "args": args})
                 output = self.tools[tool_name](**args)
@@ -198,6 +200,13 @@ class SkillExecutor:
 
     def _print_status(self, message: str) -> None:
         print(f"[skill] {message}")
+
+    def _with_trusted_skill_assets(self, tool_name: str, args: dict[str, Any], skill: Skill) -> dict[str, Any]:
+        if tool_name != "run_command" or "trusted_asset_roots" in args:
+            return args
+        if not callable_accepts_keyword(self.tools[tool_name], "trusted_asset_roots"):
+            return args
+        return {**args, "trusted_asset_roots": [str(skill.path)]}
 
 
 def load_skill(path: str | Path) -> Skill:
@@ -303,3 +312,16 @@ def loggable_value(value: Any) -> Any:
         return value
     except TypeError:
         return str(value)
+
+
+def callable_accepts_keyword(function: Callable[..., Any], keyword: str) -> bool:
+    signature = inspect.signature(function)
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name == keyword and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False

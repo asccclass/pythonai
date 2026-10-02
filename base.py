@@ -15,35 +15,68 @@ _command_guard: LayaGuard | None = None
 _auto_approve_commands: ContextVar[bool] = ContextVar("auto_approve_commands", default=False)
 
 
-def workspace_root() -> Path | None:
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_WORKSPACE_DIR = PROJECT_ROOT / "workspace"
+
+
+def workspace_root() -> Path:
     configured = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip()
-    if not configured:
-        return None
-    return Path(configured).expanduser().resolve()
+    root = Path(configured).expanduser() if configured else DEFAULT_WORKSPACE_DIR
+    resolved = root.resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
 
 
 def workspace_error(path: str | Path, root: Path) -> str:
-    return f"Path is outside AGENT_WORKSPACE_ROOT ({root}): {path}"
+    return f"Path is outside Agent workspace ({root}): {path}"
+
+
+def path_is_inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
 
 
 def resolve_workspace_path(path: str | Path) -> Path:
     root = workspace_root()
     target = Path(path).expanduser()
-    if root is None:
-        return target
     resolved = (root / target).resolve() if not target.is_absolute() else target.resolve()
-    if resolved != root and root not in resolved.parents:
+    if not path_is_inside(resolved, root):
         raise PermissionError(workspace_error(path, root))
     return resolved
 
 
-def validate_command_paths(command: list[str]) -> None:
-    if workspace_root() is None:
-        return
+def trusted_roots(paths: list[str | Path] | None = None) -> list[Path]:
+    return [Path(path).expanduser().resolve() for path in paths or []]
+
+
+def resolve_trusted_asset_path(path: str | Path, trusted_asset_roots: list[str | Path] | None = None) -> Path:
+    target = Path(path).expanduser()
+    resolved = target.resolve()
+    for root in trusted_roots(trusted_asset_roots):
+        if path_is_inside(resolved, root):
+            return resolved
+    raise PermissionError(workspace_error(path, workspace_root()))
+
+
+def resolve_workspace_or_trusted_path(
+    path: str | Path,
+    trusted_asset_roots: list[str | Path] | None = None,
+) -> Path:
+    if trusted_asset_roots:
+        try:
+            return resolve_trusted_asset_path(path, trusted_asset_roots)
+        except PermissionError:
+            pass
+    try:
+        return resolve_workspace_path(path)
+    except PermissionError:
+        return resolve_trusted_asset_path(path, trusted_asset_roots)
+
+
+def validate_command_paths(command: list[str], trusted_asset_roots: list[str | Path] | None = None) -> None:
     for item in command:
         if not isinstance(item, str) or not looks_like_path_argument(item):
             continue
-        resolve_workspace_path(item)
+        resolve_workspace_or_trusted_path(item, trusted_asset_roots)
 
 
 def looks_like_path_argument(value: str) -> bool:
@@ -69,7 +102,9 @@ def list_files(path: str | Path = ".") -> list[str]:
 
 
 def write_file(path: str | Path, content: str) -> None:
-    resolve_workspace_path(path).write_text(content, encoding="utf-8")
+    target = resolve_workspace_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
 
 
 def subprocess_text_options() -> dict:
@@ -145,12 +180,15 @@ def run_command(
     command: list[str],
     cwd: str | Path | None = None,
     env_file: str | Path | None = None,
+    trusted_asset_roots: list[str | Path] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        resolved_cwd = resolve_command_cwd(cwd)
-        resolved_env_file = resolve_workspace_path(env_file) if env_file is not None else None
-        validate_command_paths(command)
-        resolved_command = resolve_command_executable(command, resolved_cwd)
+        resolved_cwd = resolve_command_cwd(cwd, trusted_asset_roots)
+        resolved_env_file = (
+            resolve_workspace_or_trusted_path(env_file, trusted_asset_roots) if env_file is not None else None
+        )
+        validate_command_paths(command, trusted_asset_roots)
+        resolved_command = resolve_command_executable(command, resolved_cwd, trusted_asset_roots)
     except PermissionError as error:
         return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr=str(error))
     key = command_key(resolved_command, resolved_cwd, resolved_env_file)
@@ -178,16 +216,20 @@ def run_command(
     return subprocess.run(resolved_command, cwd=resolved_cwd, **run_options)
 
 
-def resolve_command_cwd(cwd: str | Path | None = None) -> Path | str | None:
-    root = workspace_root()
-    if root is None:
-        return cwd
+def resolve_command_cwd(
+    cwd: str | Path | None = None,
+    trusted_asset_roots: list[str | Path] | None = None,
+) -> Path:
     if cwd is None:
-        return root
-    return resolve_workspace_path(cwd)
+        return workspace_root()
+    return resolve_workspace_or_trusted_path(cwd, trusted_asset_roots)
 
 
-def resolve_command_executable(command: list[str], cwd: str | Path | None = None) -> list[str]:
+def resolve_command_executable(
+    command: list[str],
+    cwd: str | Path | None = None,
+    trusted_asset_roots: list[str | Path] | None = None,
+) -> list[str]:
     if not command:
         return command
     executable = command[0]
@@ -198,6 +240,7 @@ def resolve_command_executable(command: list[str], cwd: str | Path | None = None
         return command
     base = Path(cwd) if cwd is not None else Path.cwd()
     resolved = (base / executable_path).resolve()
+    resolve_workspace_or_trusted_path(resolved, trusted_asset_roots)
     return [str(resolved), *command[1:]]
 
 
@@ -214,7 +257,7 @@ def load_dotenv(path: str | Path = ".env") -> None:
     if not env_path.exists():
         return
 
-    for key, value in parse_env_lines(read_file(env_path).splitlines()).items():
+    for key, value in parse_env_lines(env_path.read_text(encoding="utf-8").splitlines()).items():
         if key and key not in os.environ:
             os.environ[key] = value
 
@@ -257,6 +300,8 @@ TOOLS = {
 def run_tool(tool_call):
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments)
+    if name == "run_command":
+        args.pop("trusted_asset_roots", None)
     if name not in TOOLS:
         return f"Error: Tool '{name}' not found"
     try:
@@ -269,6 +314,8 @@ def run_tool(tool_call):
 def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None):
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments)
+    if name == "run_command":
+        args.pop("trusted_asset_roots", None)
     if name == "run_skill":
         args["memory"] = memory
         args["episode_id"] = episode_id
@@ -284,13 +331,13 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "read_file",
-                "description": "Read a text file and return its contents.",
+                "description": "Read a text file inside the Agent workspace and return its contents.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The path to the file to read"
+                            "description": "The workspace-relative path to the file to read"
                         }
                     },
                     "required": ["path"]
@@ -302,13 +349,13 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "list_files",
-                "description": "List files and directories inside a path.",
+                "description": "List files and directories inside the Agent workspace.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The directory path to list"
+                            "description": "The workspace-relative directory path to list"
                         }
                     }
                 }
@@ -318,13 +365,13 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "write_file",
-                "description": "Write text content to a file.",
+                "description": "Write text content to a file inside the Agent workspace.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The path to the file to write"
+                            "description": "The workspace-relative path to the file to write"
                         },
                         "content": {
                             "type": "string",
@@ -339,13 +386,13 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "delete_file",
-                "description": "Delete a single file using the appropriate operating system command.",
+                "description": "Delete a single file inside the Agent workspace using the appropriate operating system command.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "The path to the file to delete"
+                            "description": "The workspace-relative path to the file to delete"
                         }
                     },
                     "required": ["path"]
@@ -381,18 +428,18 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "run_command",
-                "description": "Run a command and return its completed process result.",
+                "description": "Run a command inside the Agent workspace and return its completed process result. cwd is workspace-relative; paths outside the workspace are rejected.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "The command and arguments to run"
+                            "description": "The command and arguments to run. Path arguments must stay inside the Agent workspace."
                         },
                         "cwd": {
                             "type": "string",
-                            "description": "Optional working directory"
+                            "description": "Optional workspace-relative working directory"
                         }
                     },
                     "required": ["command"]

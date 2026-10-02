@@ -103,6 +103,57 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(calls, ["note.txt"])
         self.assertEqual(result.steps[0].output, "hello")
 
+    def test_executor_injects_trusted_asset_root_for_run_command_tools(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metadata = {
+                "name": "run_echo",
+                "description": "Run echo.",
+                "triggers": ["echo"],
+                "inputs": {"type": "object", "properties": {}},
+                "allowed_tools": ["run_command"],
+                "execution": {
+                    "mode": "tool_sequence",
+                    "steps": [{"tool": "run_command", "args": {"command": ["echo", "hello"]}}],
+                },
+            }
+            skill_dir = write_skill(Path(temp_dir), "run_echo", metadata)
+            skill = load_skill(skill_dir)
+            calls = []
+
+            def run_command(command, trusted_asset_roots=None):
+                calls.append((command, trusted_asset_roots))
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="hello", stderr="")
+
+            result = SkillExecutor({"run_command": run_command}).execute(skill, {})
+
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [(["echo", "hello"], [str(skill_dir)])])
+
+    def test_executor_does_not_inject_trusted_asset_root_into_tools_without_keyword(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metadata = {
+                "name": "run_echo",
+                "description": "Run echo.",
+                "triggers": ["echo"],
+                "inputs": {"type": "object", "properties": {}},
+                "allowed_tools": ["run_command"],
+                "execution": {
+                    "mode": "tool_sequence",
+                    "steps": [{"tool": "run_command", "args": {"command": ["echo", "hello"]}}],
+                },
+            }
+            skill = load_skill(write_skill(Path(temp_dir), "run_echo", metadata))
+            calls = []
+
+            def run_command(command):
+                calls.append(command)
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="hello", stderr="")
+
+            result = SkillExecutor({"run_command": run_command}).execute(skill, {})
+
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [["echo", "hello"]])
+
     def test_executor_prints_skill_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             skill = load_skill(write_skill(Path(temp_dir)))

@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import base
@@ -16,6 +17,8 @@ from base import (
     auto_approve_command_runs,
     run_command,
     run_skill,
+    run_tool,
+    run_tool_with_context,
     subprocess_text_options,
     resolve_workspace_path,
     write_file,
@@ -35,29 +38,37 @@ class BaseTests(unittest.TestCase):
             os.environ.pop("AGENT_WORKSPACE_ROOT", None)
 
     def test_read_file_returns_text(self):
-        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as temp_file:
-            temp_file.write("hello")
-            path = Path(temp_file.name)
-
-        try:
-            self.assertEqual(read_file(path), "hello")
-        finally:
-            path.unlink()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "sample.txt").write_text("hello", encoding="utf-8")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
+                self.assertEqual(read_file("sample.txt"), "hello")
 
     def test_list_files_returns_names(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir)
             (path / "sample.txt").write_text("hello", encoding="utf-8")
 
-            self.assertIn("sample.txt", list_files(path))
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(path)}):
+                self.assertIn("sample.txt", list_files("."))
 
     def test_write_file_writes_text(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "sample.txt"
+            root = Path(temp_dir)
+            path = root / "sample.txt"
 
-            write_file(path, "hello")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
+                write_file("sample.txt", "hello")
 
             self.assertEqual(path.read_text(encoding="utf-8"), "hello")
+
+    def test_write_file_creates_parent_directories_inside_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
+                write_file("notes/sample.txt", "hello")
+
+            self.assertEqual((root / "notes" / "sample.txt").read_text(encoding="utf-8"), "hello")
 
     def test_delete_file_uses_windows_command_on_windows(self):
         completed = object()
@@ -66,11 +77,12 @@ class BaseTests(unittest.TestCase):
             patch("base.platform.system", return_value="Windows"),
             patch("base.subprocess.run", return_value=completed) as run,
         ):
-            result = delete_file("sample.txt")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}):
+                result = delete_file("sample.txt")
 
         self.assertIs(result, completed)
         run.assert_called_once_with(
-            ["cmd", "/c", "del", "/f", "/q", "sample.txt"],
+            ["cmd", "/c", "del", "/f", "/q", str((Path.cwd() / "sample.txt").resolve())],
             **subprocess_text_options(),
         )
 
@@ -81,17 +93,21 @@ class BaseTests(unittest.TestCase):
             patch("base.platform.system", return_value="Linux"),
             patch("base.subprocess.run", return_value=completed) as run,
         ):
-            result = delete_file("sample.txt")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}):
+                result = delete_file("sample.txt")
 
         self.assertIs(result, completed)
         run.assert_called_once_with(
-            ["rm", "-f", "sample.txt"],
+            ["rm", "-f", str((Path.cwd() / "sample.txt").resolve())],
             **subprocess_text_options(),
         )
 
     def test_delete_file_refuses_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = delete_file(temp_dir)
+            root = Path(temp_dir)
+            (root / "dir").mkdir()
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
+                result = delete_file("dir")
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("Refusing to delete directory", result.stderr)
@@ -141,6 +157,7 @@ class BaseTests(unittest.TestCase):
         with (
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input", return_value="y"),
+            patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             result = run_command(["python", "-c", "print('hello')"])
 
@@ -158,6 +175,7 @@ class BaseTests(unittest.TestCase):
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input") as user_input,
             patch("base.subprocess.run", return_value=completed) as run,
+            patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             result = run_command(["echo", "hello"])
 
@@ -165,7 +183,7 @@ class BaseTests(unittest.TestCase):
         user_input.assert_not_called()
         run.assert_called_once_with(
             ["echo", "hello"],
-            cwd=None,
+            cwd=Path.cwd().resolve(),
             **subprocess_text_options(),
         )
 
@@ -180,6 +198,7 @@ class BaseTests(unittest.TestCase):
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input", return_value="y") as user_input,
             patch("base.subprocess.run", return_value=completed) as run,
+            patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             first_result = run_command(["echo", "hello"])
             second_result = run_command(["echo", "hello"])
@@ -198,6 +217,7 @@ class BaseTests(unittest.TestCase):
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input", return_value="n"),
             patch("base.subprocess.run") as run,
+            patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             result = run_command(["echo", "hello"])
 
@@ -213,6 +233,7 @@ class BaseTests(unittest.TestCase):
             patch("builtins.input") as user_input,
             patch("base.subprocess.run", return_value=completed) as run,
             auto_approve_command_runs(),
+            patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             result = run_command(["echo", "hello"])
 
@@ -221,21 +242,23 @@ class BaseTests(unittest.TestCase):
         user_input.assert_not_called()
         run.assert_called_once_with(
             ["echo", "hello"],
-            cwd=None,
+            cwd=Path.cwd().resolve(),
             **subprocess_text_options(),
         )
 
     def test_run_command_env_file_overrides_inherited_environment(self):
         completed = subprocess.CompletedProcess(args=["echo", "hello"], returncode=0, stdout="hello", stderr="")
         with tempfile.TemporaryDirectory() as temp_dir:
-            env_path = Path(temp_dir) / "envfile"
+            root = Path(temp_dir)
+            env_path = root / "envfile"
             env_path.write_text("OLLAMA_MODEL=from-envfile\nEMPTY_ALLOWED=\n", encoding="utf-8")
             with (
                 patch.dict("os.environ", {"OLLAMA_MODEL": "from-parent"}, clear=False),
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}, clear=False),
                 patch("base.subprocess.run", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
-                result = run_command(["echo", "hello"], env_file=env_path)
+                result = run_command(["echo", "hello"], env_file="envfile")
 
         self.assertIs(result, completed)
         env = run.call_args.kwargs["env"]
@@ -247,10 +270,11 @@ class BaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             cwd = Path(temp_dir)
             with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(cwd)}),
                 patch("base.subprocess.run", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
-                result = run_command([".\\tool.exe", "--version"], cwd=cwd)
+                result = run_command([".\\tool.exe", "--version"])
 
         self.assertIs(result, completed)
         command = run.call_args.args[0]
@@ -277,7 +301,7 @@ class BaseTests(unittest.TestCase):
                 result = run_command(["echo", "hello"], cwd=outside.parent)
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("outside AGENT_WORKSPACE_ROOT", result.stderr)
+        self.assertIn("outside Agent workspace", result.stderr)
 
     def test_workspace_root_rejects_command_path_arguments_outside_workspace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -292,8 +316,178 @@ class BaseTests(unittest.TestCase):
                 result = run_command(["type", str(outside)])
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("outside AGENT_WORKSPACE_ROOT", result.stderr)
+        self.assertIn("outside Agent workspace", result.stderr)
         run.assert_not_called()
+
+    def test_default_workspace_root_is_project_workspace(self):
+        root = base.workspace_root()
+
+        self.assertEqual(root, (base.PROJECT_ROOT / "workspace").resolve())
+        self.assertTrue(root.exists())
+
+    def test_run_command_defaults_to_workspace_cwd(self):
+        completed = subprocess.CompletedProcess(args=["echo"], returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(["echo"])
+
+        self.assertIs(result, completed)
+        self.assertEqual(run.call_args.kwargs["cwd"], root.resolve())
+
+    def test_run_command_allows_workspace_subdirectory_cwd(self):
+        completed = subprocess.CompletedProcess(args=["echo"], returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "subdir").mkdir()
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(["echo"], cwd="subdir")
+
+        self.assertIs(result, completed)
+        self.assertEqual(run.call_args.kwargs["cwd"], (root / "subdir").resolve())
+
+    def test_run_command_rejects_external_env_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            outside = Path(temp_dir) / "envfile"
+            root.mkdir()
+            outside.write_text("SECRET=value\n", encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run") as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(["echo"], env_file=outside)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("outside Agent workspace", result.stderr)
+        run.assert_not_called()
+
+    def test_run_command_does_not_treat_urls_as_paths(self):
+        completed = subprocess.CompletedProcess(args=["echo"], returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(["echo", "https://example.test/a/b"])
+
+        self.assertIs(result, completed)
+        run.assert_called_once()
+
+    def test_run_command_allows_trusted_skill_assets(self):
+        completed = subprocess.CompletedProcess(args=["tool"], returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            skill_root = Path(temp_dir) / "skills" / "trusted"
+            scripts = skill_root / "scripts"
+            root.mkdir()
+            scripts.mkdir(parents=True)
+            (scripts / "envfile").write_text("KEY=value\n", encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(
+                    [".\\tool.exe"],
+                    cwd=scripts,
+                    env_file=scripts / "envfile",
+                    trusted_asset_roots=[skill_root],
+                )
+
+        self.assertIs(result, completed)
+        self.assertEqual(run.call_args.kwargs["cwd"], scripts.resolve())
+        self.assertEqual(run.call_args.args[0][0], str((scripts / "tool.exe").resolve()))
+
+    def test_run_command_prefers_project_relative_trusted_skill_assets(self):
+        completed = subprocess.CompletedProcess(args=["tool"], returncode=0, stdout="", stderr="")
+        skill_root = Path("skills") / "mybrain_query_cli"
+        scripts = skill_root / "scripts"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(
+                    [".\\mybrain.exe", "--query", "hello"],
+                    cwd=scripts,
+                    env_file=scripts / "envfile",
+                    trusted_asset_roots=[skill_root],
+                )
+
+        self.assertIs(result, completed)
+        self.assertEqual(run.call_args.kwargs["cwd"], scripts.resolve())
+        self.assertEqual(run.call_args.args[0][0], str((scripts / "mybrain.exe").resolve()))
+
+    def test_run_command_trusted_assets_do_not_allow_other_project_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            skill_root = Path(temp_dir) / "skills" / "trusted"
+            other_skill = Path(temp_dir) / "skills" / "other"
+            root.mkdir()
+            skill_root.mkdir(parents=True)
+            other_skill.mkdir(parents=True)
+            with (
+                patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
+                patch("base.subprocess.run") as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(["echo"], cwd=other_skill, trusted_asset_roots=[skill_root])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("outside Agent workspace", result.stderr)
+        run.assert_not_called()
+
+    def test_run_tool_strips_internal_trusted_asset_roots_from_model_args(self):
+        calls = []
+        tool_call = SimpleNamespace(
+            function=SimpleNamespace(
+                name="run_command",
+                arguments='{"command": ["echo"], "trusted_asset_roots": ["skills"]}',
+            )
+        )
+
+        def run_command(**kwargs):
+            calls.append(kwargs)
+            return "ok"
+
+        with patch.dict(base.TOOLS, {"run_command": run_command}):
+            result = run_tool(tool_call)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls, [{"command": ["echo"]}])
+
+    def test_run_tool_with_context_strips_internal_trusted_asset_roots_from_model_args(self):
+        calls = []
+        tool_call = SimpleNamespace(
+            function=SimpleNamespace(
+                name="run_command",
+                arguments='{"command": ["echo"], "trusted_asset_roots": ["skills"]}',
+            )
+        )
+
+        def run_command(**kwargs):
+            calls.append(kwargs)
+            return "ok"
+
+        with patch.dict(base.TOOLS, {"run_command": run_command}):
+            result = run_tool_with_context(tool_call)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls, [{"command": ["echo"]}])
 
     def test_load_dotenv_sets_missing_values(self):
         with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as env_file:
