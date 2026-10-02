@@ -150,18 +150,19 @@ def run_command(
         resolved_cwd = resolve_command_cwd(cwd)
         resolved_env_file = resolve_workspace_path(env_file) if env_file is not None else None
         validate_command_paths(command)
+        resolved_command = resolve_command_executable(command, resolved_cwd)
     except PermissionError as error:
         return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr=str(error))
-    key = command_key(command, resolved_cwd, resolved_env_file)
+    key = command_key(resolved_command, resolved_cwd, resolved_env_file)
     if _auto_approve_commands.get():
         _approved_commands.add(key)
     elif key not in _approved_commands:
-        decision = get_command_guard().assess_command(command, resolved_cwd)
+        decision = get_command_guard().assess_command(resolved_command, resolved_cwd)
         if decision.needs_confirmation or not decision.available:
-            answer = input(f" Run '{command}'? [y/N]: ")
+            answer = input(f" Run '{resolved_command}'? [y/N]: ")
             if answer.lower() != "y":
                 return subprocess.CompletedProcess(
-                    args=command,
+                    args=resolved_command,
                     returncode=1,
                     stdout="",
                     stderr="User cancelled",
@@ -170,11 +171,11 @@ def run_command(
     try:
         env = command_environment(resolved_env_file)
     except Exception as error:
-        return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr=str(error))
+        return subprocess.CompletedProcess(args=resolved_command, returncode=1, stdout="", stderr=str(error))
     run_options = subprocess_text_options()
     if env is not None:
         run_options["env"] = env
-    return subprocess.run(command, cwd=resolved_cwd, **run_options)
+    return subprocess.run(resolved_command, cwd=resolved_cwd, **run_options)
 
 
 def resolve_command_cwd(cwd: str | Path | None = None) -> Path | str | None:
@@ -184,6 +185,20 @@ def resolve_command_cwd(cwd: str | Path | None = None) -> Path | str | None:
     if cwd is None:
         return root
     return resolve_workspace_path(cwd)
+
+
+def resolve_command_executable(command: list[str], cwd: str | Path | None = None) -> list[str]:
+    if not command:
+        return command
+    executable = command[0]
+    if not isinstance(executable, str) or not looks_like_path_argument(executable):
+        return command
+    executable_path = Path(executable)
+    if executable_path.is_absolute():
+        return command
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    resolved = (base / executable_path).resolve()
+    return [str(resolved), *command[1:]]
 
 
 def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None) -> dict:

@@ -242,6 +242,21 @@ class BaseTests(unittest.TestCase):
         self.assertEqual(env["OLLAMA_MODEL"], "from-envfile")
         self.assertEqual(env["EMPTY_ALLOWED"], "")
 
+    def test_run_command_resolves_relative_executable_against_cwd(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cwd = Path(temp_dir)
+            with (
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command([".\\tool.exe", "--version"], cwd=cwd)
+
+        self.assertIs(result, completed)
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], str((cwd / "tool.exe").resolve()))
+        self.assertEqual(command[1], "--version")
+
     def test_workspace_root_allows_paths_inside_workspace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
