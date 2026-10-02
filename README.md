@@ -51,20 +51,20 @@ Type a message at the `You:` prompt. Type `exit` or `quit` to stop.
 
 Use `server.py` when you want to chat with the agent directly from the local command line. It starts the interactive `You:` prompt, builds the shared agent runtime, loads Skills and memory, and runs the background memory review worker when this process can acquire the worker lease.
 
-Use `communication_server.py` when an external messaging platform needs to call the agent through HTTP webhooks. It starts a small HTTP server with these endpoints:
+Use `telegram_polling_worker.py` when you want Telegram integration during local development or on a machine without a public HTTPS URL. It calls Telegram `getUpdates` from your machine, queues incoming text messages, runs them through the shared agent runtime, and sends replies back to the Telegram chat. This mode does not require ngrok, a public IP, or webhook registration.
+
+Use `communication_server.py` when Telegram should deliver messages to the agent through HTTP webhooks. It starts a small HTTP server with these endpoints:
 
 - `POST /webhooks/telegram`: verifies and queues Telegram webhook updates, then lets the communication worker process pending commands.
 - `GET /health`: returns a lightweight health response for local checks or tunnel monitoring.
 
-`communication_server.py` also creates the same agent runtime used by `server.py`, starts a communication worker loop in the background, and should be used together with a public tunnel or public host when Telegram webhook mode is enabled.
-
-`communication_worker.py` is a reusable library module, not a script you normally run directly. It is enabled by `communication_server.py` in webhook mode and by `telegram_polling_worker.py` in polling mode. The worker reads pending commands from `CommunicationStore`, runs each command through the shared agent runtime, sends the reply through the matching communication adapter, and records outbound messages or failures.
+`communication_server.py` creates the same agent runtime used by `server.py`, starts background processing for queued Telegram messages, and should be used together with a public tunnel or public host when Telegram webhook mode is enabled.
 
 In short:
 
 - Local terminal chat: run `python .\server.py`.
-- Telegram long polling without a public URL: run `python .\telegram_polling_worker.py`; it uses `communication_worker.py` internally.
-- Telegram webhook with a public URL or tunnel: run `python .\communication_server.py`; it hosts the webhook endpoint and uses `communication_worker.py` internally.
+- Telegram long polling without a public URL: run `python .\telegram_polling_worker.py`.
+- Telegram webhook with a public URL or tunnel: run `python .\communication_server.py`.
 
 ## Telegram Webhook
 
