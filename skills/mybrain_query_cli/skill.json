@@ -40,7 +40,7 @@
             "powershell",
             "-NoProfile",
             "-Command",
-            "Set-Location -LiteralPath 'skills\\mybrain_query_cli'; .\\scripts\\mybrain.exe --query $args[0]",
+            "Set-Location -LiteralPath 'skills\\mybrain_query_cli\\scripts'; .\\mybrain.exe --query $args[0]",
             "{{question}}"
           ]
         }

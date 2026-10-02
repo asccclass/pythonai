@@ -224,6 +224,16 @@ class SkillTests(unittest.TestCase):
 
         self.assertEqual(result.to_dict()["steps"][0]["output"]["stdout"], "hello\n")
 
+    def test_mybrain_skill_runs_from_scripts_directory_for_envfile(self):
+        skill = load_skill(Path("skills") / "mybrain_query_cli")
+
+        command = skill.execution["steps"][0]["args"]["command"]
+        script = command[3]
+
+        self.assertIn("Set-Location -LiteralPath 'skills\\mybrain_query_cli\\scripts'", script)
+        self.assertIn(".\\mybrain.exe --query $args[0]", script)
+        self.assertNotIn(".\\scripts\\mybrain.exe", script)
+
 
 if __name__ == "__main__":
     unittest.main()

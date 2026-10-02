@@ -9,16 +9,17 @@ Use the bundled `scripts/mybrain.exe` directly as a command-line knowledge query
 
 ## Query Workflow
 
-1. Change to this Skill directory, then run the bundled `scripts/mybrain.exe` directly:
+1. Change to this Skill's `scripts` directory, then run the bundled `mybrain.exe` directly so the executable can read the adjacent `envfile`:
 
    ```shell
-   ./scripts/mybrain.exe --query "問題"
+   ./mybrain.exe --query "問題"
    ```
 
    On Windows PowerShell, use:
 
    ```powershell
-   .\scripts\mybrain.exe --query "問題"
+   Set-Location -LiteralPath .\scripts
+   .\mybrain.exe --query "問題"
    ```
 
 2. Read the command output as the answer. The binary prints progress logs to stderr and the final answer to stdout.
@@ -30,10 +31,10 @@ Use the bundled `scripts/mybrain.exe` directly as a command-line knowledge query
 The required command form is:
 
 ```shell
-./scripts/mybrain.exe --query "問題"
+./mybrain.exe --query "問題"
 ```
 
-Do not route queries through any helper script, wrapper, package script, or other program. Invoke the bundled `scripts/mybrain.exe` itself.
+Do not route queries through any helper script, wrapper, package script, or other program. Invoke the bundled `scripts/mybrain.exe` itself from the `scripts` directory.
 
 ## Expected Deployment Files
 
