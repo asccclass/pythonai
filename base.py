@@ -301,6 +301,20 @@ TOOLS = {
 
 def run_tool(tool_call):
     name = tool_call.function.name
+    try:
+        from permissions import check_tool_permission, current_role
+        if not check_tool_permission(name):
+            error_msg = f"Error: Permission denied. Role '{current_role()}' cannot execute {name}."
+            print(f"AUDIT: {error_msg}")
+            if memory and episode_id:
+                try:
+                    from agent_runtime import log_episode_event
+                    log_episode_event(memory, episode_id, "permission_denied", content=error_msg, metadata={"tool": name, "role": current_role()})
+                except Exception:
+                    pass
+            return error_msg
+    except ImportError:
+        pass
     args = json.loads(tool_call.function.arguments)
     if name == "run_command":
         args.pop("trusted_asset_roots", None)
@@ -315,6 +329,20 @@ def run_tool(tool_call):
 
 def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None):
     name = tool_call.function.name
+    try:
+        from permissions import check_tool_permission, current_role
+        if not check_tool_permission(name):
+            error_msg = f"Error: Permission denied. Role '{current_role()}' cannot execute {name}."
+            print(f"AUDIT: {error_msg}")
+            if memory and episode_id:
+                try:
+                    from agent_runtime import log_episode_event
+                    log_episode_event(memory, episode_id, "permission_denied", content=error_msg, metadata={"tool": name, "role": current_role()})
+                except Exception:
+                    pass
+            return error_msg
+    except ImportError:
+        pass
     args = json.loads(tool_call.function.arguments)
     if name == "run_command":
         args.pop("trusted_asset_roots", None)

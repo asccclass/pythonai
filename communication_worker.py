@@ -13,7 +13,9 @@ CommandRunner = Callable[[AgentCommand], str]
 
 def agent_runtime_command_runner(runtime: AgentRuntime) -> CommandRunner:
     def run(command: AgentCommand) -> str:
-        with auto_approve_command_runs():
+        from permissions import get_user_role, set_current_role
+        role = get_user_role(f"{command.platform}:{command.sender_id}")
+        with auto_approve_command_runs(), set_current_role(role):
             return run_agent_turn(command.text, runtime).reply
 
     return run
