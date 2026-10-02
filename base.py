@@ -124,8 +124,12 @@ def get_command_guard() -> LayaGuard:
     return _command_guard
 
 
-def command_key(command: list[str], cwd: str | Path | None = None) -> tuple[tuple[str, ...], str | None]:
-    return tuple(command), str(cwd) if cwd is not None else None
+def command_key(
+    command: list[str],
+    cwd: str | Path | None = None,
+    env_file: str | Path | None = None,
+) -> tuple[tuple[str, ...], str | None, str | None]:
+    return tuple(command), str(cwd) if cwd is not None else None, str(env_file) if env_file is not None else None
 
 
 @contextmanager
@@ -137,13 +141,18 @@ def auto_approve_command_runs():
         _auto_approve_commands.reset(token)
 
 
-def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_command(
+    command: list[str],
+    cwd: str | Path | None = None,
+    env_file: str | Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     try:
         resolved_cwd = resolve_command_cwd(cwd)
+        resolved_env_file = resolve_workspace_path(env_file) if env_file is not None else None
         validate_command_paths(command)
     except PermissionError as error:
         return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr=str(error))
-    key = command_key(command, resolved_cwd)
+    key = command_key(command, resolved_cwd, resolved_env_file)
     if _auto_approve_commands.get():
         _approved_commands.add(key)
     elif key not in _approved_commands:
@@ -158,7 +167,14 @@ def run_command(command: list[str], cwd: str | Path | None = None) -> subprocess
                     stderr="User cancelled",
                 )
         _approved_commands.add(key)
-    return subprocess.run(command, cwd=resolved_cwd, **subprocess_text_options())
+    try:
+        env = command_environment(resolved_env_file)
+    except Exception as error:
+        return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr=str(error))
+    run_options = subprocess_text_options()
+    if env is not None:
+        run_options["env"] = env
+    return subprocess.run(command, cwd=resolved_cwd, **run_options)
 
 
 def resolve_command_cwd(cwd: str | Path | None = None) -> Path | str | None:
@@ -183,15 +199,33 @@ def load_dotenv(path: str | Path = ".env") -> None:
     if not env_path.exists():
         return
 
-    for raw_line in read_file(env_path).splitlines():
+    for key, value in parse_env_lines(read_file(env_path).splitlines()).items():
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def command_environment(env_file: str | Path | None = None) -> dict[str, str] | None:
+    if env_file is None:
+        return None
+    env_path = Path(env_file)
+    values = parse_env_lines(env_path.read_text(encoding="utf-8").splitlines())
+    env = os.environ.copy()
+    env.update(values)
+    return env
+
+
+def parse_env_lines(lines) -> dict[str, str]:
+    values = {}
+    for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
+        if key:
+            values[key] = value
+    return values
 
 
 TOOLS = {

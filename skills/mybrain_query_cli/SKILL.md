@@ -26,6 +26,8 @@ Use the bundled `scripts/mybrain.exe` directly as a command-line knowledge query
 
 3. If the command fails because paths are missing, inspect `scripts/envfile`. It must define working `WIKI_PATH`, `RAW_PATH`, `OLLAMA_URL`, and `OLLAMA_MODEL` values. Do not invent answers from model memory when MyBrain query fails.
 
+The Agent Skill runner passes `scripts/envfile` explicitly to the subprocess environment. Values in that file override any same-named variables inherited from the parent agent process, including the root `.env` used by `server.py` and Telegram entry points.
+
 ## Direct Command
 
 The required command form is:

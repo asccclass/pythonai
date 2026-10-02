@@ -225,6 +225,23 @@ class BaseTests(unittest.TestCase):
             **subprocess_text_options(),
         )
 
+    def test_run_command_env_file_overrides_inherited_environment(self):
+        completed = subprocess.CompletedProcess(args=["echo", "hello"], returncode=0, stdout="hello", stderr="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / "envfile"
+            env_path.write_text("OLLAMA_MODEL=from-envfile\nEMPTY_ALLOWED=\n", encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"OLLAMA_MODEL": "from-parent"}, clear=False),
+                patch("base.subprocess.run", return_value=completed) as run,
+                auto_approve_command_runs(),
+            ):
+                result = run_command(["echo", "hello"], env_file=env_path)
+
+        self.assertIs(result, completed)
+        env = run.call_args.kwargs["env"]
+        self.assertEqual(env["OLLAMA_MODEL"], "from-envfile")
+        self.assertEqual(env["EMPTY_ALLOWED"], "")
+
     def test_workspace_root_allows_paths_inside_workspace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

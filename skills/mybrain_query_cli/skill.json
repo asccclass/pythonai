@@ -37,12 +37,12 @@
         "tool": "run_command",
         "args": {
           "command": [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "Set-Location -LiteralPath 'skills\\mybrain_query_cli\\scripts'; .\\mybrain.exe --query $args[0]",
+            ".\\mybrain.exe",
+            "--query",
             "{{question}}"
-          ]
+          ],
+          "cwd": "skills\\mybrain_query_cli\\scripts",
+          "env_file": "skills\\mybrain_query_cli\\scripts\\envfile"
         }
       }
     ]
