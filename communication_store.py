@@ -170,6 +170,45 @@ class CommunicationStore:
 
     def fail_command(self, command_id: str, error: str) -> None:
         self._update_command(command_id, "failed", last_error=error)
+        
+    def cancel_command(self, command_id: str) -> bool:
+        # returns True if it was cancelled/requested successfully
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT status FROM agent_command_jobs WHERE command_id = ?", (command_id,)).fetchone()
+            if not row:
+                return False
+            status = row["status"]
+            if status == "pending":
+                self._update_command(command_id, "cancelled")
+                return True
+            elif status == "running":
+                self._update_command(command_id, "cancel_requested")
+                return True
+            return False
+
+    def query_jobs_status(self, limit: int = 5) -> list[AgentCommand]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT command_id, platform, conversation_id, sender_id, text, status,
+                       requires_confirmation, source_message_id
+                FROM agent_command_jobs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_command_from_row(row) for row in rows]
+        
+    def is_cancel_requested(self, command_id: str) -> bool:
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT status FROM agent_command_jobs WHERE command_id = ?", (command_id,)).fetchone()
+            return row is not None and row["status"] == "cancel_requested"
+            
+    def resolve_command_id(self, prefix: str) -> str | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT command_id FROM agent_command_jobs WHERE command_id LIKE ?", (f"{prefix}%",)).fetchone()
+            return row["command_id"] if row else None
 
     def record_outbound_message(
         self,
