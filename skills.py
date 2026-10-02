@@ -106,6 +106,9 @@ class SkillRegistry:
         results: list[tuple[Skill | None, str | None]] = []
         seen_names: set[str] = set()
         for path in sorted(item for item in self.root.iterdir() if item.is_dir()):
+            if (path / ".disabled").exists():
+                results.append((None, f"Skill disabled: {path.name}"))
+                continue
             try:
                 skill = load_skill(path)
             except SkillValidationError as error:
