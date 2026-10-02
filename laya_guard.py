@@ -18,6 +18,7 @@ GUARD_QUESTIONS = {
             "delete_file": "delete local file",
             "list_files": "list files in a directory",
             "run_command": "run terminal, shell, package manager, or system commands",
+            "memory_management": "request to list, update, forget, archive, contradict or correct long-term memories",
         },
     },
     "risk": {

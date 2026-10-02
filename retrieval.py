@@ -61,7 +61,7 @@ def build_memory_context(
             scope = memory.get("scope", "global")
             lines.append(
                 "- "
-                f"{memory['subject']} {memory['predicate']} {memory['object']} "
+                f"[{memory['id']}] {memory['subject']} {memory['predicate']} {memory['object']} "
                 f"(type={memory.get('memory_type', 'fact')}, scope={scope}, "
                 f"confidence={memory['confidence']:.2f}, source_event_id={memory['source_event_id']})"
             )

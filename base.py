@@ -1,3 +1,4 @@
+from memory_tools import manage_memory
 import os
 import json
 import platform
@@ -294,6 +295,7 @@ TOOLS = {
     "fetch_url": fetch_url,
     "run_command": run_command,
     "run_skill": run_skill,
+    "manage_memory": manage_memory,
 }
 
 
@@ -316,7 +318,7 @@ def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None)
     args = json.loads(tool_call.function.arguments)
     if name == "run_command":
         args.pop("trusted_asset_roots", None)
-    if name == "run_skill":
+    if name in ("run_skill", "manage_memory"):
         args["memory"] = memory
         args["episode_id"] = episode_id
     if name not in TOOLS:
@@ -465,6 +467,48 @@ TOOLS_SCHEMAS = [
                     },
                     "required": ["name"]
                 }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_memory",
+            "description": "Manage long-term semantic memories. Use this to correct, archive, supersede, or confirm memories when asked by the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "The action to perform: 'confirm', 'archive', 'contradict', or 'supersede'",
+                        "enum": [
+                            "confirm",
+                            "archive",
+                            "contradict",
+                            "supersede"
+                        ]
+                    },
+                    "memory_id": {
+                        "type": "integer",
+                        "description": "The ID of the memory to modify (e.g., 123)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Set to true only if the user has explicitly confirmed this high-risk action in the chat."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for the modification."
+                    },
+                    "superseded_by": {
+                        "type": "integer",
+                        "description": "ID of the new memory that supersedes this one (required for 'supersede' action)."
+                    }
+                },
+                "required": [
+                    "action",
+                    "memory_id"
+                ]
+            }
         }
     }
 ]
