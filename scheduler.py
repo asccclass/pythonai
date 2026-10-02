@@ -172,12 +172,13 @@ def execute_job(job: dict) -> tuple[str, str, str]:
                 return "completed", result.stdout, ""
             else:
                 return "failed", result.stdout, result.stderr
-        elif job_type == "maintenance":
-            task = payload.get("task")
-            if task == "daily_summary":
-                return "completed", "Generated daily summary successfully.", ""
-            else:
-                return "failed", "", f"Unknown maintenance task: {task}"
+        elif job_type == "maintenance.summary":
+            from summary import generate_daily_summary
+            telegram_chat_id = payload.get("telegram_chat_id")
+            output, error = generate_daily_summary(telegram_chat_id=telegram_chat_id)
+            if error:
+                return "failed", output, error
+            return "completed", output, ""
         else:
             return "failed", "", f"Unsupported job_type: {job_type}"
     except Exception as e:
