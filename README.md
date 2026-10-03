@@ -184,6 +184,31 @@ Useful health fields:
 - `skipped_missing_embedding_backfills`: retrieval candidates that used local fallback embeddings because foreground remote backfill budget was capped.
 - `rate_limit_429_errors`: recent provider 429 errors observed by memory-related operations.
 
+## Cronjob Scheduling
+
+The system includes a cron-like scheduler backed by SQLite. You can manage jobs using the CLI and execute them with the background worker.
+
+To add a new scheduled job:
+```powershell
+python .\schedule_cli.py add --name "test_job" --cron "*/5 * * * *" --type "command" --payload '{"command": "echo Hello"}' --desc "Test command job"
+```
+
+To list all scheduled jobs:
+```powershell
+python .\schedule_cli.py list
+```
+
+To start the background worker that processes due jobs:
+```powershell
+python .\scheduler_worker.py
+```
+*Note: The worker must remain running in the background to execute jobs.*
+
+To set up the default daily summary job:
+```powershell
+python .\add_default_jobs.py
+```
+
 ## Tools
 
 The agent exposes these local tools to the model:
