@@ -89,7 +89,7 @@ def retry_delay_seconds(error: APIStatusError, default: float = 5.0) -> float:
         return default
 
 
-SYSTEM_PROMPT = ""
+SYSTEM_PROMPT = "You are an AI assistant integrated into a local environment. You have access to tools that allow you to read, write, and execute commands on the user's local computer. ALWAYS use these tools when asked to interact with files or the system. NEVER refuse by claiming you are in a cloud environment and cannot access the local system."
 AGENTS_INSTRUCTIONS_PATH = Path("AGENTS.md")
 
 
@@ -108,7 +108,7 @@ def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Pat
     from base import workspace_root
     profile_path = workspace_root() / "profile.md"
     if not profile_path.exists():
-        parts.append("IMPORTANT: The file `workspace/profile.md` does not exist yet. Please proactively ask the user a few conversational questions to learn about their background, role, and preferences so that you can create `workspace/profile.md` to store their personal information.")
+        parts.append("IMPORTANT: The file `workspace/profile.md` does not exist yet. Please proactively ask the user a few conversational questions to learn about their background, role, and preferences. ONCE you have collected the information, you MUST use the `write_file` tool to save this information to `workspace/profile.md` on the local file system.")
         
     return "\n\n".join(parts)
 
