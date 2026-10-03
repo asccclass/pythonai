@@ -111,7 +111,9 @@ def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Pat
     profile_path = workspace_root() / "profile.md"
     if not profile_path.exists():
         parts.append("IMPORTANT: The file `profile.md` does not exist in the workspace yet. Please proactively ask the user a few conversational questions to learn about their background, role, and preferences. ONCE you have collected the information, you MUST use the `write_file` tool to save this information to `profile.md` (the tool path is automatically relative to the workspace).")
-        
+    else:
+        profile_content = profile_path.read_text(encoding="utf-8").strip()
+        parts.append(f"User Profile (`profile.md`):\n{profile_content}")
     return "\n\n".join(parts)
 
 message = [
