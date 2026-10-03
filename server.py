@@ -18,6 +18,7 @@ from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedure
 from semantic_extractor import LLMSemanticExtractor
 from memory import MemoryStore
 from memory_worker import BackgroundWorkerLease, MemoryReviewWorker, QueueOnlyMemoryWorker
+from scheduler import SchedulerWorker
 from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
 
@@ -275,6 +276,9 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     skill_matcher = SkillMatcher(SkillRegistry())
     semantic_extractor = LLMSemanticExtractor(get_client, OLLAMA_MODEL)
     procedure_matcher = LLMProcedureSimilarityMatcher(get_client, OLLAMA_MODEL)
+    scheduler_worker = SchedulerWorker()
+    scheduler_worker.start()
+
     worker_lease = BackgroundWorkerLease.acquire(memory)
     if worker_lease.acquired:
         worker = MemoryReviewWorker(
@@ -335,6 +339,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         if drain_memory_on_exit:
             worker.join()
         worker.stop()
+        scheduler_worker.stop()
 
 if __name__ == "__main__":
     main()

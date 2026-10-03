@@ -12,6 +12,7 @@ from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_server import create_agent_runtime, parse_allowed_senders
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
+from scheduler import SchedulerWorker
 
 
 @dataclass
@@ -81,6 +82,8 @@ def create_telegram_polling_worker(runtime: AgentRuntime | None = None) -> Teleg
     )
 
 
+scheduler_worker = SchedulerWorker()
+
 def main() -> None:
     polling_worker = create_telegram_polling_worker()
     print("Telegram polling worker ready. Press Ctrl+C to stop.")
@@ -89,6 +92,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print()
     finally:
+        scheduler_worker.stop()
         memory_worker = getattr(polling_worker.runtime, "memory_worker", None)
         if memory_worker is not None:
             memory_worker.stop()

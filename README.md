@@ -198,11 +198,7 @@ To list all scheduled jobs:
 python .\schedule_cli.py list
 ```
 
-To start the background worker that processes due jobs:
-```powershell
-python .\scheduler_worker.py
-```
-*Note: The worker must remain running in the background to execute jobs.*
+*Note: The background scheduler worker runs automatically when you start `server.py`, `communication_server.py`, or `telegram_polling_worker.py`.*
 
 To set up the default daily summary job:
 ```powershell

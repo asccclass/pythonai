@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from agent_runtime import AgentRuntime
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_store import CommunicationStore
+from scheduler import SchedulerWorker
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
 
 
@@ -238,10 +239,13 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
     return CommunicationRequestHandler
 
 
+scheduler_worker = SchedulerWorker()
+
 def run_http_server(service: MultiWebhookService, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
     if "telegram" in service.adapters:
         print_telegram_connection_status(service.adapters["telegram"])
     service.start_worker_loop()
+    scheduler_worker.start()
     httpd = ThreadingHTTPServer((host, port), create_request_handler(service))
     try:
         print(f"Communication server ready on http://{host}:{port}")
@@ -250,6 +254,7 @@ def run_http_server(service: MultiWebhookService, host: str = DEFAULT_HOST, port
         except KeyboardInterrupt:
             print("\nCommunication server shutting down.")
     finally:
+        scheduler_worker.stop()
         service.stop_worker_loop()
         httpd.server_close()
         memory_worker = getattr(service.runtime, "memory_worker", None)

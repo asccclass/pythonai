@@ -199,3 +199,40 @@ def process_due_jobs():
             finally:
                 store.update_next_run(job_id, job["cron_expression"])
                 store.release_lock(job_id)
+import threading
+import time
+import traceback
+
+class SchedulerWorker:
+    def __init__(self, check_interval: int = 60):
+        self.check_interval = check_interval
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread is None:
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._run, daemon=True, name="SchedulerWorker")
+            self._thread.start()
+            print("Scheduler worker started.")
+
+    def stop(self):
+        if self._thread is not None:
+            self._stop_event.set()
+            self._thread.join()
+            self._thread = None
+            print("Scheduler worker stopped.")
+
+    def _run(self):
+        # We need to import process_due_jobs inside to avoid circular imports if any, 
+        # but process_due_jobs is in the same module so we can just call it
+        from scheduler import process_due_jobs
+        while not self._stop_event.is_set():
+            try:
+                process_due_jobs()
+            except Exception as e:
+                print(f"Error in scheduler worker loop: {e}")
+                traceback.print_exc()
+            
+            # Wait for check_interval but check stop_event periodically
+            self._stop_event.wait(self.check_interval)
