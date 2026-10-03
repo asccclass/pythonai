@@ -1,9 +1,9 @@
 # Agentic Agent - Future Features Todo List
 
 ## 1. 深度推理、規劃與自我修正 (Plan, Execute & Reflect)
-- [ ] 實作 ReAct (Reason + Act) 或 Plan-and-Solve 循環架構。
-- [ ] 使 Agent 能夠自動拆解任務（建立子任務清單）、依序執行。
-- [ ] 新增自我反思 (Self-Reflection) 與自動重試修正機制，遇到工具執行錯誤時能在背景重試，直到達成目標。
+- [x] 實作 ReAct (Reason + Act) 或 Plan-and-Solve 循環架構。
+- [x] 使 Agent 能夠自動拆解任務（建立子任務清單）、依序執行。
+- [x] 新增自我反思 (Self-Reflection) 與自動重試修正機制，遇到工具執行錯誤時能在背景重試，直到達成目標。
 
 ## 2. 沙盒程式碼執行環境 (Code Interpreter Sandbox)
 - [ ] 導入隔離的 Jupyter Kernel 或 Docker 沙盒環境。

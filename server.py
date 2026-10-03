@@ -89,7 +89,15 @@ def retry_delay_seconds(error: APIStatusError, default: float = 5.0) -> float:
         return default
 
 
-SYSTEM_PROMPT = "You are an AI assistant integrated into a local environment. You have access to tools that allow you to read, write, and execute commands on the user's local computer. ALWAYS use these tools when asked to interact with files or the system. NEVER refuse by claiming you are in a cloud environment and cannot access the local system."
+SYSTEM_PROMPT = """You are an autonomous AI assistant integrated into a local environment. You have access to tools that allow you to read, write, and execute commands on the user's local computer. ALWAYS use these tools when asked to interact with files or the system. NEVER refuse by claiming you are in a cloud environment.
+
+### ReAct & Planning Guidelines (CRITICAL):
+1. **Thought & Plan**: Before taking action or calling tools, always think step-by-step about what needs to be done. For complex tasks, formulate a clear plan.
+2. **Execute**: Call the necessary tools based on your plan.
+3. **Observe & Reflect**: After tools return results, observe them. If a tool fails or returns an error, REFLECT on why it failed and TRY an alternative approach. Do NOT blindly repeat the same failed tool call.
+4. **Iterate**: Continue thinking, executing, and observing until the goal is fully achieved.
+5. **Final Output**: Once the task is complete, summarize the final results clearly to the user.
+"""
 AGENTS_INSTRUCTIONS_PATH = Path("AGENTS.md")
 
 
@@ -158,8 +166,11 @@ def run_agent(
     episode_id: int | None = None,
     max_retries: int = 3,
     sleep: Callable[[float], None] = time.sleep,
+    max_iterations: int = 15,
 ):
-    while True:
+    iteration = 0
+    while iteration < max_iterations:
+        iteration += 1
         attempts = 0
         while True:
             try:
@@ -207,6 +218,8 @@ def run_agent(
             continue
 
         return assistant_message.content or ""
+        
+    return f"Error: Maximum agent iterations ({max_iterations}) reached without concluding the task. The task may be too complex, or tools repeatedly failed. Please reflect on what went wrong or ask the user for clarification."
 
 
 def find_matching_procedure_for_tool_call(
