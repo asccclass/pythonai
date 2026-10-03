@@ -335,7 +335,8 @@ class ServerTests(unittest.TestCase):
 
             prompt = server.build_system_prompt("Base prompt.", agents_path)
 
-        self.assertEqual(prompt, "Base prompt.")
+        self.assertIn("Base prompt.", prompt)
+        self.assertNotIn("AGENTS.md instructions:", prompt)
 
     def test_main_logs_skill_candidates(self):
         class Guard:

@@ -103,9 +103,13 @@ def load_agents_instructions(path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str
 
 def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str:
     agents_instructions = load_agents_instructions(agents_path)
-    if not agents_instructions:
-        return base_prompt
     parts = [part for part in [base_prompt.strip(), f"AGENTS.md instructions:\n{agents_instructions}"] if part]
+
+    from base import workspace_root
+    profile_path = workspace_root() / "profile.md"
+    if not profile_path.exists():
+        parts.append("IMPORTANT: The file `workspace/profile.md` does not exist yet. Please proactively ask the user a few conversational questions to learn about their background, role, and preferences so that you can create `workspace/profile.md` to store their personal information.")
+        
     return "\n\n".join(parts)
 
 message = [
