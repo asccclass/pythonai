@@ -1,4 +1,4 @@
-# Python AI Mini Agent  ?歹?
+# Python AI Mini Agent
 
 A small command-line agent that connects to a remote Ollama-compatible LiteLLM endpoint using the OpenAI Python client. The agent can call a few local file and command helper tools through model tool calls.
 
@@ -11,7 +11,7 @@ Install dependencies:
 
 ```powershell
 python -m pip install openai
-python download_model.py  // ?芷?閬銵?甈?
+python download_model.py
 ```
 
 Optional Laya guard layer:
@@ -172,6 +172,7 @@ python .\observability.py confirm-fact --memory-id 1
 python .\observability.py contradict-fact --memory-id 1
 python .\observability.py supersede-fact --memory-id 1 --subject user --predicate prefers --object TypeScript --memory-type user_profile
 python .\observability.py export
+python .\observability.py export-md --path .\memory.md
 python .\observability.py import --path .\memory-export.json
 ```
 

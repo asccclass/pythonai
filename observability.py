@@ -226,6 +226,65 @@ def supersede_fact(
     }
 
 
+import json
+
+def export_memory_markdown(store, file_path):
+    payload = export_memory(store)
+    
+    lines = ["# Memory Export\n"]
+    
+    # Active Semantic Memories
+    active_semantics = payload.get("active_semantic_memories", [])
+    lines.append("## Active Semantic Memories\n")
+    if active_semantics:
+        lines.append("| ID | Subject | Predicate | Object | Confidence |")
+        lines.append("|---|---|---|---|---|")
+        for mem in active_semantics:
+            lines.append(f"| {mem.get('id')} | {mem.get('subject')} | {mem.get('predicate')} | {mem.get('object')} | {mem.get('confidence')} |")
+    else:
+        lines.append("No active semantic memories found.")
+    lines.append("")
+    
+    # Archived Semantic Memories
+    archived_semantics = payload.get("archived_semantic_memories", [])
+    lines.append("## Archived Semantic Memories\n")
+    if archived_semantics:
+        lines.append("| ID | Subject | Predicate | Object | Archived Reason |")
+        lines.append("|---|---|---|---|---|")
+        for mem in archived_semantics:
+            lines.append(f"| {mem.get('id')} | {mem.get('subject')} | {mem.get('predicate')} | {mem.get('object')} | {mem.get('archived_reason')} |")
+    else:
+        lines.append("No archived semantic memories found.")
+    lines.append("")
+        
+    # Active Procedures
+    active_procedures = payload.get("active_procedures", [])
+    lines.append("## Active Procedures\n")
+    if active_procedures:
+        lines.append("| ID | Task Type | Summary | Success | Fail |")
+        lines.append("|---|---|---|---|---|")
+        for p in active_procedures:
+            lines.append(f"| {p.get('id')} | {p.get('task_type')} | {p.get('summary')} | {p.get('success_count')} | {p.get('failure_count')} |")
+    else:
+        lines.append("No active procedures found.")
+    lines.append("")
+        
+    # Archived Procedures
+    archived_procedures = payload.get("archived_procedures", [])
+    lines.append("## Archived Procedures\n")
+    if archived_procedures:
+        lines.append("| ID | Task Type | Summary | Archived Reason |")
+        lines.append("|---|---|---|---|")
+        for p in archived_procedures:
+            lines.append(f"| {p.get('id')} | {p.get('task_type')} | {p.get('summary')} | {p.get('archived_reason')} |")
+    else:
+        lines.append("No archived procedures found.")
+        
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        
+    return {"message": f"Successfully exported memory to {file_path}"}
+
 def export_memory(store: MemoryStore) -> dict[str, Any]:
     return {
         "active_semantic_memories": store.active_semantic_memories(),
@@ -311,6 +370,7 @@ def main() -> None:
             "contradict-fact",
             "supersede-fact",
             "export",
+            "export-md",
             "import",
         ],
     )
@@ -393,6 +453,10 @@ def main() -> None:
         )
     elif args.command == "export":
         payload = export_memory(store)
+    elif args.command == "export-md":
+        if args.path is None:
+            parser.error("--path is required for export-md")
+        payload = export_memory_markdown(store, args.path)
     else:
         if args.path is None:
             parser.error("--path is required for import")
