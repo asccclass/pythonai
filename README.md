@@ -1,4 +1,4 @@
-# Python AI Mini Agent
+# Python AI Mini Agent  ?歹?
 
 A small command-line agent that connects to a remote Ollama-compatible LiteLLM endpoint using the OpenAI Python client. The agent can call a few local file and command helper tools through model tool calls.
 
@@ -11,7 +11,7 @@ Install dependencies:
 
 ```powershell
 python -m pip install openai
-python download_model.py  // 只需要執行一次
+python download_model.py  // ?芷?閬銵?甈?
 ```
 
 Optional Laya guard layer:
@@ -126,6 +126,16 @@ curl.exe "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/getWebhookInfo"
 ```
 
 If you need your Telegram sender id before enabling `COMM_ALLOWED_SENDERS`, temporarily leave it empty, send a message to the bot, then inspect the communication database or recent inbound rows. After confirming the id, set `COMM_ALLOWED_SENDERS` and restart the server.
+
+
+## New Features (v0.2+)
+
+- **Web Management Interface**: A beautiful, modern Agent Observatory dashboard is served at the root / of communication_server.py. It displays system health, active memories, and task queues.
+- **Cronjob Scheduling**: Background tasks are handled by scheduler.py with an SQLite backend. It includes a built-in maintenance.summary job that generates a markdown report using the local LLM.
+- **Memory Natural Language Correction**: The agent has a manage_memory tool to directly correct, supersede, contradict, or archive memories when instructed. High-risk memory operations require a two-stage user confirmation.
+- **Skill Management CLI**: Use python .\skills_cli.py to list, inspect, enable, disable, and validate local skills.
+- **Multi-Platform Communication**: In addition to Telegram, the communication_server.py now supports Discord and LINE webhook integrations.
+- **Role-Based Access Control (RBAC)**: Support for iewer, operator, and dmin roles. Set the ROLES_CONFIG environment variable to point to a JSON file mapping sender IDs to roles to restrict access to tools and skills.
 
 ## Memory
 
