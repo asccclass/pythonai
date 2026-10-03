@@ -103,7 +103,9 @@ def load_agents_instructions(path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str
 
 def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str:
     agents_instructions = load_agents_instructions(agents_path)
-    parts = [part for part in [base_prompt.strip(), f"AGENTS.md instructions:\n{agents_instructions}"] if part]
+    parts = [base_prompt.strip()] if base_prompt.strip() else []
+    if agents_instructions:
+        parts.append(f"AGENTS.md instructions:\n{agents_instructions}")
 
     from base import workspace_root
     profile_path = workspace_root() / "profile.md"
