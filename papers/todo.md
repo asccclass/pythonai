@@ -27,8 +27,8 @@
 - [x] 賦予 Agent 自主解析並更新 `requirements.txt` 或 `package.json` 等依賴檔案的能力，並自動解決版本衝突問題。
 
 ## 6. Model Context Protocol (MCP) 整合
-- [ ] **實作 MCP Manager (生命週期管理)**：開發 `mcp_manager.py` 來啟動、監控並安全關閉獨立的 MCP Server 行程 (支援 stdio / SSE 雙向通訊機制)。
-- [ ] **實作 MCP Client (通訊與橋接)**：開發 Client 端與 MCP Server 進行 JSON-RPC 2.0 握手，並能夠讀取 Server 端宣告的 `tools`、`resources` 與 `prompts`。
-- [ ] **動態 Tool Schema 轉換**：將 MCP Server 回傳的工具定義，動態轉換並註冊為 LLM (OpenAI 格式) 可直接呼叫的 Function Calling Schema。
-- [ ] **配置檔設計 (MCP Config)**：建立 `mcp_config.json`，讓使用者可以輕鬆配置與掛載第三方的 MCP Servers (如 GitHub, SQLite, FileSystem, Slack 等)。
-- [ ] **實作 Tool Call 路由分發**：當 Agent 呼叫 MCP 工具時，系統能自動將 LLM 產生的參數封裝成 MCP `callTool` 請求，轉發給對應的 MCP Server，並將執行結果送回給 Agent。
+- [x] **實作 MCP Manager (生命週期管理)**：開發 `mcp_manager.py` 來啟動、監控並安全關閉獨立的 MCP Server 行程 (支援 stdio / SSE 雙向通訊機制)。
+- [x] **實作 MCP Client (通訊與橋接)**：開發 Client 端與 MCP Server 進行 JSON-RPC 2.0 握手，並能夠讀取 Server 端宣告的 `tools`、`resources` 與 `prompts`。
+- [x] **動態 Tool Schema 轉換**：將 MCP Server 回傳的工具定義，動態轉換並註冊為 LLM (OpenAI 格式) 可直接呼叫的 Function Calling Schema。
+- [x] **配置檔設計 (MCP Config)**：建立 `mcp_config.json`，讓使用者可以輕鬆配置與掛載第三方的 MCP Servers (如 GitHub, SQLite, FileSystem, Slack 等)。
+- [x] **實作 Tool Call 路由分發**：當 Agent 呼叫 MCP 工具時，系統能自動將 LLM 產生的參數封裝成 MCP `callTool` 請求，轉發給對應的 MCP Server，並將執行結果送回給 Agent。

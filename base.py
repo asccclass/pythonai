@@ -374,6 +374,12 @@ def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None)
     if name in ("run_skill", "manage_memory"):
         args["memory"] = memory
         args["episode_id"] = episode_id
+    if name.startswith("mcp_"):
+        try:
+            from mcp_manager import execute_mcp_tool
+            return execute_mcp_tool(name, args)
+        except Exception as e:
+            return f"Error executing MCP tool: {e}"
     if name not in TOOLS:
         return f"Error: Tool '{name}' not found"
     try:
@@ -774,3 +780,11 @@ TOOLS.update({
     "analyze_image": analyze_image,
     "create_dynamic_tool": create_dynamic_tool
 })
+
+try:
+    from mcp_manager import get_mcp_tools
+    mcp_tools = get_mcp_tools()
+    if mcp_tools:
+        TOOLS_SCHEMAS.extend(mcp_tools)
+except Exception as e:
+    print(f"Failed to load MCP tools: {e}")
