@@ -137,6 +137,15 @@ If you need your Telegram sender id before enabling `COMM_ALLOWED_SENDERS`, temp
 - **Multi-Platform Communication**: In addition to Telegram, the communication_server.py now supports Discord and LINE webhook integrations.
 - **Role-Based Access Control (RBAC)**: Support for iewer, operator, and dmin roles. Set the ROLES_CONFIG environment variable to point to a JSON file mapping sender IDs to roles to restrict access to tools and skills.
 
+## Advanced Agentic Features (v0.3+)
+
+- **Plan, Execute & Reflect**: ReAct / Plan-and-Solve architecture, automatic task decomposition, self-reflection and background retries.
+- **Code Interpreter Sandbox**: Secure Python execution (via `execute_python_script` and `run_command`) for data analysis and debugging.
+- **Multi-Agent Orchestration**: Task delegation to dynamically generated Sub-Agents (e.g., Researcher, Coder).
+- **Human-in-the-Loop (HITL)**: Task suspension and resume state machine, allowing the agent to ask for permission on high-risk actions.
+- **Web Browsing & Vision**: Headless browser integration, RAG web search API, and multi-modal image understanding.
+- **Self-Evolution & Dynamic Tools**: Automatic Python Skill generation, hot-reloading, and dynamic tool creation without restart.
+
 ## Memory
 
 The agent records episodic memory in a local SQLite database at `memory\memory.db`. This file is ignored by Git. Set `MEMORY_DB_PATH` to use a different database location.

@@ -57,7 +57,7 @@ class TelegramPollingWorker:
         while True:
             try:
                 result = self.poll_once()
-            except (HTTPError, URLError, TimeoutError, ConnectionError) as error:
+            except Exception as error:
                 print(f"Telegram polling warning: {error}; retrying in {self.error_sleep_seconds:g} seconds.")
                 self.sleep(self.error_sleep_seconds)
                 continue
@@ -69,7 +69,7 @@ def create_telegram_polling_worker(runtime: AgentRuntime | None = None) -> Teleg
     runtime = runtime or create_agent_runtime()
     store = CommunicationStore()
     adapter = TelegramAdapter(webhook_secret="")
-    worker = CommunicationWorker(store, {"telegram": adapter}, agent_runtime_command_runner(runtime))
+    worker = CommunicationWorker(store, {"telegram": adapter}, agent_runtime_command_runner(runtime, store))
     return TelegramPollingWorker(
         store=store,
         adapter=adapter,

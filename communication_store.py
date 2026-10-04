@@ -63,6 +63,8 @@ class CommunicationStore:
                     attempts INTEGER NOT NULL DEFAULT 0,
                     result_text TEXT,
                     last_error TEXT,
+                    state TEXT,
+                    suspended_tool_call_id TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (source_message_id) REFERENCES comm_messages(id)
@@ -209,6 +211,25 @@ class CommunicationStore:
         with closing(self.connect()) as connection:
             row = connection.execute("SELECT command_id FROM agent_command_jobs WHERE command_id LIKE ?", (f"{prefix}%",)).fetchone()
             return row["command_id"] if row else None
+
+    def suspend_command(self, command_id: str, state_json: str, tool_call_id: str) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute(
+                "UPDATE agent_command_jobs SET status = 'suspended', state = ?, suspended_tool_call_id = ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?",
+                (state_json, tool_call_id, command_id)
+            )
+            connection.commit()
+
+    def get_suspended_command(self, conversation_id: str) -> tuple[str, str, str] | None:
+        """Returns (command_id, state_json, suspended_tool_call_id) of the most recent suspended job."""
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                "SELECT command_id, state, suspended_tool_call_id FROM agent_command_jobs WHERE conversation_id = ? AND status = 'suspended' ORDER BY id DESC LIMIT 1",
+                (conversation_id,)
+            ).fetchone()
+            if row and row["state"] and row["suspended_tool_call_id"]:
+                return (row["command_id"], row["state"], row["suspended_tool_call_id"])
+            return None
 
     def record_outbound_message(
         self,

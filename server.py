@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from exceptions import TaskSuspendedException
+
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
 from openai import OpenAI
 
@@ -167,9 +169,13 @@ def run_agent(
     max_retries: int = 3,
     sleep: Callable[[float], None] = time.sleep,
     max_iterations: int = 15,
+    check_cancelled: Callable[[], bool] | None = None,
 ):
     iteration = 0
     while iteration < max_iterations:
+        if check_cancelled and check_cancelled():
+            return "Task was cancelled by the user."
+            
         iteration += 1
         attempts = 0
         while True:
@@ -180,19 +186,30 @@ def run_agent(
                     tools = TOOLS_SCHEMAS
                 )
                 break
-            except APIStatusError as error:
-                if error.status_code not in TRANSIENT_STATUS_CODES or attempts >= max_retries:
-                    raise
+            except (APIStatusError, APIConnectionError, APITimeoutError) as error:
+                is_transient = True
+                status_code = getattr(error, 'status_code', None)
+                if isinstance(error, APIStatusError) and status_code not in TRANSIENT_STATUS_CODES:
+                    is_transient = False
+                    
+                if not is_transient or attempts >= max_retries:
+                    err_msg = f"⚠️ 遠端 LLM 服務發生錯誤 (連線失敗或伺服器過載)。已達最大重試次數，請稍後再試。\n詳細錯誤: {error}"
+                    print(err_msg)
+                    return err_msg
+                    
                 attempts += 1
-                base_delay = retry_delay_seconds(error)
+                base_delay = retry_delay_seconds(error) if isinstance(error, APIStatusError) else 5.0
                 jitter = random.uniform(0.1, 1.0) if base_delay > 0 else 0.0
                 delay = base_delay * (2 ** (attempts - 1)) + jitter
-                print(f"\nRemote service returned HTTP {error.status_code}; retrying in {delay:g} seconds.")
+                
+                status_str = f"HTTP {status_code}" if status_code else type(error).__name__
+                print(f"\nRemote service returned {status_str}; retrying in {delay:g} seconds.")
                 sleep(delay)
         assistant_message = response.choices[0].message
         messages.append(assistant_message_to_dict(assistant_message))
 
         if assistant_message.tool_calls:
+            suspend_request = None
             for tool_call in assistant_message.tool_calls:
                 matched_procedure = find_matching_procedure_for_tool_call(memory, tool_call)
                 log_episode_event(
@@ -205,6 +222,17 @@ def run_agent(
                         "arguments": tool_call.function.arguments,
                     },
                 )
+                
+                if tool_call.function.name == "ask_user":
+                    import json
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                        question = args.get("question", "Please provide input.")
+                    except:
+                        question = "Please provide input."
+                    suspend_request = (tool_call.id, question)
+                    continue
+
                 result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
                 log_episode_event(
                     memory,
@@ -215,6 +243,11 @@ def run_agent(
                 )
                 record_tool_procedure_result(memory, episode_id, matched_procedure, result)
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
+                
+            if suspend_request:
+                tool_call_id, question = suspend_request
+                raise TaskSuspendedException(question, tool_call_id, messages)
+                
             continue
 
         return assistant_message.content or ""

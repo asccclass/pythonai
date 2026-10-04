@@ -2,21 +2,24 @@ from __future__ import annotations
 
 from typing import Callable, Iterable
 
-from agent_runtime import AgentRuntime, run_agent_turn
+from agent_runtime import AgentRuntime, run_agent_turn, resume_agent_turn, AgentTurnResult
 from base import auto_approve_command_runs
 from communication_models import AgentCommand, CommunicationAdapter, OutboundMessage
 from communication_store import CommunicationStore
 
 
-CommandRunner = Callable[[AgentCommand], str]
+CommandRunner = Callable[[AgentCommand, list | None], AgentTurnResult]
 
 
-def agent_runtime_command_runner(runtime: AgentRuntime) -> CommandRunner:
-    def run(command: AgentCommand) -> str:
+def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStore) -> CommandRunner:
+    def run(command: AgentCommand, resumed_messages: list | None = None) -> AgentTurnResult:
         from permissions import get_user_role, set_current_role
         role = get_user_role(f"{command.platform}:{command.sender_id}")
+        runtime.check_cancelled = lambda: store.is_cancel_requested(command.command_id)
         with auto_approve_command_runs(), set_current_role(role):
-            return run_agent_turn(command.text, runtime).reply
+            if resumed_messages is not None:
+                return resume_agent_turn(resumed_messages, runtime)
+            return run_agent_turn(command.text, runtime)
 
     return run
 
@@ -87,14 +90,59 @@ class CommunicationWorker:
             self._send_reply(command, result_text)
             return self.store.command_by_id(command.command_id)
 
-        try:
-            result_text = self.command_runner(command)
-            self.store.complete_command(command.command_id, result_text)
-            self._send_reply(command, result_text)
-        except Exception as error:
-            error_text = f"Command failed: {error}"
-            self.store.fail_command(command.command_id, str(error))
-            self._send_reply(command, error_text, is_error=True)
+        suspended_job = self.store.get_suspended_command(command.conversation_id) if not text.startswith("/") else None
+
+        import threading
+        import json
+
+        def background_run():
+            try:
+                resumed_messages = None
+                target_command = command
+                
+                if suspended_job:
+                    suspended_id, state_json, tool_call_id = suspended_job
+                    try:
+                        state = json.loads(state_json)
+                        messages = state.get("messages", [])
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": text
+                        })
+                        resumed_messages = messages
+                        self.store.complete_command(command.command_id, "Forwarded to suspended job")
+                        target_command = self.store.command_by_id(suspended_id)
+                        self.store.mark_command_running(suspended_id)
+                    except Exception as e:
+                        print(f"Error resuming job: {e}")
+                
+                turn_result = self.command_runner(target_command, resumed_messages)
+                
+                if turn_result.suspended:
+                    state_str = json.dumps(turn_result.suspended_state)
+                    self.store.suspend_command(target_command.command_id, state_str, turn_result.suspended_tool_call_id)
+                    self._send_reply(target_command, turn_result.reply)
+                else:
+                    self.store.complete_command(target_command.command_id, turn_result.reply)
+                    self._send_reply(target_command, turn_result.reply)
+            except Exception as error:
+                import traceback
+                traceback.print_exc()
+                error_text = f"Command failed: {error}"
+                c_id = target_command.command_id if 'target_command' in locals() else command.command_id
+                cmd = target_command if 'target_command' in locals() else command
+                self.store.fail_command(c_id, str(error))
+                self._send_reply(cmd, error_text, is_error=True)
+
+        # Run normal agent commands in a background thread so the worker can keep processing /cancel and /status
+        thread = threading.Thread(target=background_run)
+        thread.daemon = True
+        if not hasattr(self, "_threads"):
+            self._threads = []
+        self._threads.append(thread)
+        thread.start()
+        
         return self.store.command_by_id(command.command_id)
 
 

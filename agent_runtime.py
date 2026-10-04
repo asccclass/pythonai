@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exceptions import TaskSuspendedException
+
 from dataclasses import dataclass
 import re
 import subprocess
@@ -39,6 +41,7 @@ class AgentRuntime:
     run_agent: Callable[..., str]
     run_skill: Callable[..., dict[str, Any]] | None = None
     async_memory_review: bool = True
+    check_cancelled: Callable[[], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,9 @@ class AgentTurnResult:
     episode_id: int | None
     guard_notice: str = ""
     skipped_laya: bool = False
+    suspended: bool = False
+    suspended_state: dict[str, Any] | None = None
+    suspended_tool_call_id: str | None = None
 
 
 def should_skip_laya_for_user_request(user_input: str) -> bool:
@@ -146,7 +152,20 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
             )
 
     try:
-        reply = runtime.run_agent(agent_messages, memory=runtime.memory, episode_id=episode_id)
+        reply = runtime.run_agent(agent_messages, memory=runtime.memory, episode_id=episode_id, check_cancelled=runtime.check_cancelled)
+    except TaskSuspendedException as error:
+        runtime.messages = error.messages
+        log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
+        finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn)
+        return AgentTurnResult(
+            reply=error.question,
+            episode_id=episode_id,
+            guard_notice=guard_notice,
+            skipped_laya=skip_laya_for_turn,
+            suspended=True,
+            suspended_state={"messages": error.messages},
+            suspended_tool_call_id=error.tool_call_id,
+        )
     except Exception as error:
         log_episode_event(
             runtime.memory,
@@ -281,3 +300,34 @@ def log_retrieval_stats(
     if not stats:
         return
     log_episode_event(memory, episode_id, "memory_retrieval_stats", metadata={"stats": stats})
+
+def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, episode_id: int | None = None) -> AgentTurnResult:
+    try:
+        reply = runtime.run_agent(messages, memory=runtime.memory, episode_id=episode_id, check_cancelled=runtime.check_cancelled)
+    except TaskSuspendedException as error:
+        runtime.messages = error.messages
+        log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
+        finish_turn_memory_review(runtime, episode_id, False)
+        return AgentTurnResult(
+            reply=error.question,
+            episode_id=episode_id,
+            suspended=True,
+            suspended_state={"messages": error.messages},
+            suspended_tool_call_id=error.tool_call_id,
+        )
+    except Exception as error:
+        log_episode_event(
+            runtime.memory,
+            episode_id,
+            "error",
+            content=str(error),
+            metadata={"error_type": type(error).__name__},
+        )
+        finish_episode_safely(runtime.memory, episode_id, status="failed")
+        raise
+
+    runtime.messages = messages
+    runtime.messages.append({"role": "assistant", "content": reply})
+    log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
+    finish_turn_memory_review(runtime, episode_id, False)
+    return AgentTurnResult(reply, episode_id)

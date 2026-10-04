@@ -609,7 +609,7 @@ class ServerTests(unittest.TestCase):
 
         captured_messages = []
 
-        def run_agent(messages, memory=None, episode_id=None):
+        def run_agent(messages, memory=None, episode_id=None, **kwargs):
             captured_messages.extend(messages)
             return "hi"
 
@@ -651,7 +651,7 @@ class ServerTests(unittest.TestCase):
 
         captured_messages = []
 
-        def run_agent(messages, memory=None, episode_id=None):
+        def run_agent(messages, memory=None, episode_id=None, **kwargs):
             captured_messages.extend(messages)
             return "hi"
 

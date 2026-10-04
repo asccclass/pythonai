@@ -157,7 +157,7 @@ def create_multi_service(runtime: AgentRuntime | None = None) -> MultiWebhookSer
     if os.environ.get("DISCORD_BOT_TOKEN"):
         adapters["discord"] = DiscordAdapter()
         
-    worker = CommunicationWorker(store, adapters, agent_runtime_command_runner(runtime))
+    worker = CommunicationWorker(store, adapters, agent_runtime_command_runner(runtime, store))
     return MultiWebhookService(
         store=store,
         adapters=adapters,

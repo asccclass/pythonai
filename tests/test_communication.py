@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from communication_adapters.telegram_adapter import TelegramAdapter, split_telegram_message
 from communication_models import AgentCommand, OutboundMessage
@@ -131,11 +131,15 @@ class CommunicationTests(unittest.TestCase):
             store = CommunicationStore(Path(temp_dir) / "communication.db")
             enqueue_adapter_events(store, adapter, {}, body)
 
-            def runner(command: AgentCommand):
-                return f"reply to {command.text}"
+            def runner(command: AgentCommand, resumed_messages=None):
+                from agent_runtime import AgentTurnResult
+                return AgentTurnResult(f"reply to {command.text}", None)
 
             worker = CommunicationWorker(store, {"telegram": adapter}, runner)
             command = worker.process_next()
+            if hasattr(worker, "_threads") and worker._threads:
+                worker._threads[-1].join(timeout=2.0)
+            command = store.command_by_id(command.command_id)
             messages = store.recent_messages(limit=10)
 
         self.assertEqual(command.status, "completed")
@@ -151,11 +155,14 @@ class CommunicationTests(unittest.TestCase):
             store = CommunicationStore(Path(temp_dir) / "communication.db")
             enqueue_adapter_events(store, adapter, {}, body)
 
-            def runner(command: AgentCommand):
+            def runner(command: AgentCommand, resumed_messages=None):
                 raise RuntimeError("model unavailable")
 
             worker = CommunicationWorker(store, {"telegram": adapter}, runner)
             command = worker.process_next()
+            if hasattr(worker, "_threads") and worker._threads:
+                worker._threads[-1].join(timeout=2.0)
+            command = store.command_by_id(command.command_id)
             messages = store.recent_messages(limit=10)
 
         self.assertEqual(command.status, "failed")
@@ -171,7 +178,7 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(matches[0].skill.name, "mybrain_query_cli")
 
     def test_agent_runtime_command_runner_uses_shared_turn_flow(self):
-        runtime = object()
+        runtime = MagicMock()
         command = AgentCommand(
             command_id="1",
             platform="telegram",
@@ -186,14 +193,14 @@ class CommunicationTests(unittest.TestCase):
             "communication_worker.run_agent_turn",
             return_value=SimpleNamespace(reply="agent reply"),
         ) as run_agent_turn:
-            runner = agent_runtime_command_runner(runtime)
+            runner = agent_runtime_command_runner(runtime, store=MagicMock())
             reply = runner(command)
 
-        self.assertEqual(reply, "agent reply")
+        self.assertEqual(reply.reply, "agent reply")
         run_agent_turn.assert_called_once_with("hello agent", runtime)
 
     def test_agent_runtime_command_runner_auto_approves_command_runs(self):
-        runtime = object()
+        runtime = MagicMock()
         command = AgentCommand(
             command_id="1",
             platform="telegram",
@@ -208,10 +215,10 @@ class CommunicationTests(unittest.TestCase):
             return SimpleNamespace(reply=str(base._auto_approve_commands.get()))
 
         with patch("communication_worker.run_agent_turn", side_effect=run_turn):
-            runner = agent_runtime_command_runner(runtime)
+            runner = agent_runtime_command_runner(runtime, store=MagicMock())
             reply = runner(command)
 
-        self.assertEqual(reply, "True")
+        self.assertEqual(reply.reply, "True")
 
     def test_enqueue_adapter_events_rejects_failed_verification(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="secret")
