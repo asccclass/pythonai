@@ -12,9 +12,9 @@
 - [x] 實作視覺 UI 測試迴圈：Agent 可自主修改前端程式碼後，重新整理瀏覽器並「視覺確認」版面是否正確。
 
 ## 3. 沙盒隔離與容器化執行 (Docker/Sandbox Execution)
-- [ ] 導入 Docker API 整合：允許 Agent 建立臨時的 Container 環境。
-- [ ] 將 `run_command` 等執行工具的後端改為在隔離的 Docker Container 內執行，避免影響本機系統。
-- [ ] 在容器內配置獨立的檔案系統與依賴項，確保每次測試環境的乾淨與一致性。
+- [x] 導入 Docker API 整合：允許 Agent 建立臨時的 Container 環境。
+- [x] 將 `run_command` 等執行工具的後端改為在隔離的 Docker Container 內執行，避免影響本機系統。
+- [x] 在容器內配置獨立的檔案系統與依賴項，確保每次測試環境的乾淨與一致性。
 
 ## 4. 深度網路研究與文件學習 (Deep Web Research & RAG On-the-fly)
 - [ ] 開發 Web Research Sub-agent：具備自動使用 DuckDuckGo 或 Google Search 的能力。
