@@ -1,0 +1,12 @@
+{
+  "type": "function",
+  "function": {
+    "name": "git_status",
+    "description": "Get the current git status of the repository, showing modified, untracked, and staged files.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  }
+}

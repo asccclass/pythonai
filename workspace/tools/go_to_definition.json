@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "function": {
+    "name": "go_to_definition",
+    "description": "LSP feature: Go to the definition of a variable, function, or class at the given line and column in a Python file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Path to the python file"
+        },
+        "line": {
+          "type": "integer",
+          "description": "Line number (1-indexed)"
+        },
+        "column": {
+          "type": "integer",
+          "description": "Column number (0-indexed)"
+        }
+      },
+      "required": ["file_path", "line", "column"]
+    }
+  }
+}

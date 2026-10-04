@@ -1,0 +1,30 @@
+{
+  "type": "function",
+  "function": {
+    "name": "ast_edit",
+    "description": "Precisely edit a specific Python function or class using AST (tree-sitter), without rewriting the whole file. It automatically checks syntax after editing and rolls back if errors are found.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Path to the python file to edit"
+        },
+        "node_type": {
+          "type": "string",
+          "enum": ["function_definition", "class_definition"],
+          "description": "Type of the node to replace (function or class)"
+        },
+        "node_name": {
+          "type": "string",
+          "description": "Name of the function or class"
+        },
+        "new_code": {
+          "type": "string",
+          "description": "The complete new code for the function or class to replace the old one. Must have correct indentation relative to its scope."
+        }
+      },
+      "required": ["file_path", "node_type", "node_name", "new_code"]
+    }
+  }
+}

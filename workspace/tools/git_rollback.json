@@ -1,0 +1,12 @@
+{
+  "type": "function",
+  "function": {
+    "name": "git_rollback",
+    "description": "Rollback all uncommitted changes. Resets the working directory to HEAD and removes all untracked files.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  }
+}

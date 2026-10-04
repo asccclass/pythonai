@@ -1,0 +1,21 @@
+{
+  "type": "function",
+  "function": {
+    "name": "search_codebase",
+    "description": "Codebase RAG Tool: Search the entire project semantically using vector embeddings to find relevant classes and functions based on a natural language query.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Natural language query, e.g., 'where is the login logic' or 'database initialization'"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of results to return (default 5)"
+        }
+      },
+      "required": ["query"]
+    }
+  }
+}

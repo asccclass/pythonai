@@ -1,0 +1,21 @@
+{
+  "type": "function",
+  "function": {
+    "name": "git_diff",
+    "description": "Get the git diff to see exact line changes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "staged": {
+          "type": "boolean",
+          "description": "If true, shows changes that are staged for commit (git diff --cached). If false, shows unstaged changes."
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Optional specific file to diff. Leave empty to diff all files."
+        }
+      },
+      "required": []
+    }
+  }
+}

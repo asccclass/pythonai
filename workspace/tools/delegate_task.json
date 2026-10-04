@@ -1,0 +1,24 @@
+{
+  "type": "function",
+  "function": {
+    "name": "delegate_task",
+    "description": "Delegate a complex task to a specialized sub-agent. The sub-agent will run autonomously until the task is complete and return its findings.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "agent_role": {
+          "type": "string",
+          "description": "The specialized role for the sub-agent, e.g. 'Senior Python Developer', 'Research Analyst', etc."
+        },
+        "task_description": {
+          "type": "string",
+          "description": "A highly detailed description of what the sub-agent needs to accomplish."
+        }
+      },
+      "required": [
+        "agent_role",
+        "task_description"
+      ]
+    }
+  }
+}

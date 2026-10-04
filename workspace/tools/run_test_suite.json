@@ -1,0 +1,22 @@
+{
+  "type": "function",
+  "function": {
+    "name": "run_test_suite",
+    "description": "Execute a test suite or a standalone test script safely inside the sandbox. Captures traceback and stderr on failure so you can fix errors and retry (TDD loop). Features an automatic max-retry interrupt to hand control back to human if tests fail continuously.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "test_target": {
+          "type": "string",
+          "description": "Path to the test file or directory, e.g., 'tests/test_math.py'"
+        },
+        "framework": {
+          "type": "string",
+          "enum": ["pytest", "python"],
+          "description": "The framework to use. 'pytest' is recommended. If it's a simple assert script, use 'python'."
+        }
+      },
+      "required": ["test_target"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "function": {
+    "name": "git_commit",
+    "description": "Commit changes to the git repository. Can optionally add all files and create a new branch.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Commit message"
+        },
+        "add_all": {
+          "type": "boolean",
+          "description": "If true, runs 'git add .' before committing."
+        },
+        "create_branch": {
+          "type": "string",
+          "description": "Optional branch name. If provided, creates and checks out this branch before committing (useful for Checkpoints)."
+        }
+      },
+      "required": ["message"]
+    }
+  }
+}

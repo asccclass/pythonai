@@ -1,0 +1,18 @@
+{
+  "type": "function",
+  "function": {
+    "name": "get_weather_test",
+    "description": "Get weather for a location",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "location"
+      ]
+    }
+  }
+}
