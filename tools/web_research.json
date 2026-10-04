@@ -1,0 +1,21 @@
+{
+  "type": "function",
+  "function": {
+    "name": "web_research",
+    "description": "Perform deep web research on a specific topic. Searches DuckDuckGo, visits the top search results, and parses the webpage contents into Markdown for learning new APIs or solving unknown errors.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The search query (e.g. 'playwright python documentation', 'pytest fixtures')"
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Maximum number of webpages to fetch and analyze (default: 3)"
+        }
+      },
+      "required": ["query"]
+    }
+  }
+}

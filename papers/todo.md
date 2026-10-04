@@ -17,9 +17,9 @@
 - [x] 在容器內配置獨立的檔案系統與依賴項，確保每次測試環境的乾淨與一致性。
 
 ## 4. 深度網路研究與文件學習 (Deep Web Research & RAG On-the-fly)
-- [ ] 開發 Web Research Sub-agent：具備自動使用 DuckDuckGo 或 Google Search 的能力。
-- [ ] 實作網頁爬蟲與 Markdown 轉換：抓取最新 API 官方文件並過濾出純文字內容。
-- [ ] 即時動態 RAG 機制：當 Agent 遭遇未知套件錯誤或過期語法時，自動上網學習並將新知識放入短期記憶以供後續修復使用。
+- [x] 開發 Web Research Sub-agent：具備自動使用 DuckDuckGo 或 Google Search 的能力。
+- [x] 實作網頁爬蟲與 Markdown 轉換：抓取最新 API 官方文件並過濾出純文字內容。
+- [x] 即時動態 RAG 機制：當 Agent 遭遇未知套件錯誤或過期語法時，自動上網學習並將新知識放入短期記憶以供後續修復使用。
 
 ## 5. 專案級重構與依賴管理 (Project Bootstrapping & Dependency Management)
 - [ ] 實作環境管理工具 (Environment Manager)：賦予 Agent 建立虛擬環境 (venv)、安裝與解析套件 (pip/npm) 的完整能力。
