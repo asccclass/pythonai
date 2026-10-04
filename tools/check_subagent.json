@@ -1,0 +1,14 @@
+{
+    "name": "check_subagent",
+    "description": "Checks the status of a subagent and retrieves its output if completed.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "agent_id": {
+                "type": "string",
+                "description": "The unique ID of the subagent to check."
+            }
+        },
+        "required": ["agent_id"]
+    }
+}
