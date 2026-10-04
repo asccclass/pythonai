@@ -1,0 +1,22 @@
+{
+    "name": "browser_vision",
+    "description": "Opens a browser to a URL, optionally executes UI actions (click, type), and uses Vision LLM (or DOM fallback) to analyze the screenshot.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The URL to open."
+            },
+            "actions_json": {
+                "type": "string",
+                "description": "JSON string of UI actions to execute. Example: '[{\"action\":\"wait_for\",\"selector\":\"#app\"}, {\"action\":\"click\",\"selector\":\"#btn\"}, {\"action\":\"type\",\"selector\":\"#search\",\"text\":\"hello\"}, {\"action\":\"wait\",\"time\":2}]'"
+            },
+            "vision_prompt": {
+                "type": "string",
+                "description": "The prompt to ask the Vision LLM about the captured screenshot. E.g. 'Is the login button red?'"
+            }
+        },
+        "required": ["url"]
+    }
+}

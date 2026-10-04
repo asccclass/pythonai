@@ -1,15 +1,15 @@
 # Agentic Agent - Next-Generation Capabilities Todo List
 
 ## 1. 多智能體協作與非同步委派 (Multi-Agent Orchestration)
-- [ ] 實作 Manager/Planner Agent：負責將複雜的開發需求拆解成多步驟的 Markdown 執行計畫。
-- [ ] 實作 Coder Worker Agent：專門接收子任務並進行程式碼撰寫與修改。
-- [ ] 實作 Reviewer Agent：負責在 Coder 完成後，審查程式碼品質、安全性與是否符合需求。
-- [ ] 開發非同步委派 (Delegate) 機制，允許主 Agent 產生並管理多個 Sub-agent 行程。
+- [x] 實作 Manager/Planner Agent：負責將複雜的開發需求拆解成多步驟的 Markdown 執行計畫。
+- [x] 實作 Coder Worker Agent：專門接收子任務並進行程式碼撰寫與修改。
+- [x] 實作 Reviewer Agent：負責在 Coder 完成後，審查程式碼品質、安全性與是否符合需求。
+- [x] 開發非同步委派 (Delegate) 機制，允許主 Agent 產生並管理多個 Sub-agent 行程。
 
 ## 2. 瀏覽器與視覺感知能力 (Browser & Visual Perception)
-- [ ] 整合 Playwright (無頭瀏覽器)，賦予 Agent 自動連線、點擊、輸入與捲動網頁的自動化能力。
-- [ ] 開發截圖與視覺分析工具 (Vision)：將網頁截圖或圖表送交 VLM (如 GPT-4o/LLaVA) 進行分析，讓 Agent 具備「看」的能力。
-- [ ] 實作視覺 UI 測試迴圈：Agent 可自主修改前端程式碼後，重新整理瀏覽器並「視覺確認」版面是否正確。
+- [x] 整合 Playwright (無頭瀏覽器)，賦予 Agent 自動連線、點擊、輸入與捲動網頁的自動化能力。
+- [x] 開發截圖與視覺分析工具 (Vision)：將網頁截圖或圖表送交 VLM (如 GPT-4o/LLaVA) 進行分析，讓 Agent 具備「看」的能力。
+- [x] 實作視覺 UI 測試迴圈：Agent 可自主修改前端程式碼後，重新整理瀏覽器並「視覺確認」版面是否正確。
 
 ## 3. 沙盒隔離與容器化執行 (Docker/Sandbox Execution)
 - [ ] 導入 Docker API 整合：允許 Agent 建立臨時的 Container 環境。
