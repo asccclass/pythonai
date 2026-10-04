@@ -22,6 +22,6 @@
 - [x] 即時動態 RAG 機制：當 Agent 遭遇未知套件錯誤或過期語法時，自動上網學習並將新知識放入短期記憶以供後續修復使用。
 
 ## 5. 專案級重構與依賴管理 (Project Bootstrapping & Dependency Management)
-- [ ] 實作環境管理工具 (Environment Manager)：賦予 Agent 建立虛擬環境 (venv)、安裝與解析套件 (pip/npm) 的完整能力。
-- [ ] 實作專案鷹架 (Scaffolding) 工具：根據使用者的需求架構，自動產出整個微服務專案的資料夾樹狀結構與基礎配置檔。
-- [ ] 賦予 Agent 自主解析並更新 `requirements.txt` 或 `package.json` 等依賴檔案的能力，並自動解決版本衝突問題。
+- [x] 實作環境管理工具 (Environment Manager)：賦予 Agent 建立虛擬環境 (venv)、安裝與解析套件 (pip/npm) 的完整能力。
+- [x] 實作專案鷹架 (Scaffolding) 工具：根據使用者的需求架構，自動產出整個微服務專案的資料夾樹狀結構與基礎配置檔。
+- [x] 賦予 Agent 自主解析並更新 `requirements.txt` 或 `package.json` 等依賴檔案的能力，並自動解決版本衝突問題。

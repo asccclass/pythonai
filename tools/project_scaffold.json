@@ -1,0 +1,22 @@
+{
+  "type": "function",
+  "function": {
+    "name": "project_scaffold",
+    "description": "Scaffold a new project structure. Automatically generates a complete directory tree and base configuration files for a chosen framework.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "project_name": {
+          "type": "string",
+          "description": "The name of the new project (a folder will be created)."
+        },
+        "framework": {
+          "type": "string",
+          "description": "The framework to scaffold. Options: 'python_basic', 'fastapi', 'node_express', 'react_vite'.",
+          "enum": ["python_basic", "fastapi", "node_express", "react_vite"]
+        }
+      },
+      "required": ["project_name", "framework"]
+    }
+  }
+}

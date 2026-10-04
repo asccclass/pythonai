@@ -1,0 +1,27 @@
+{
+  "type": "function",
+  "function": {
+    "name": "env_manager",
+    "description": "Manage virtual environments and project dependencies. Can create a venv, or install packages (pip/npm) while automatically updating requirements.txt or package.json.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "The action to perform: 'create_venv', 'install_pip', 'install_npm'",
+          "enum": ["create_venv", "install_pip", "install_npm"]
+        },
+        "project_path": {
+          "type": "string",
+          "description": "The relative path to the project directory."
+        },
+        "packages": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of packages to install (only used for install_pip and install_npm)."
+        }
+      },
+      "required": ["action", "project_path"]
+    }
+  }
+}
