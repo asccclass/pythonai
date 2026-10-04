@@ -744,7 +744,7 @@ def load_dynamic_tools():
             func = getattr(module, tool_name)
             TOOLS[tool_name] = func
             global TOOLS_SCHEMAS
-            TOOLS_SCHEMAS = [s for s in TOOLS_SCHEMAS if s["function"]["name"] != tool_name]
+            TOOLS_SCHEMAS = [s for s in TOOLS_SCHEMAS if s.get("function", s).get("name") != tool_name]
             TOOLS_SCHEMAS.append(schema)
         except Exception as e:
             print(f"Failed to load dynamic tool {tool_name}: {e}")
