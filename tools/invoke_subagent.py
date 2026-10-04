@@ -5,7 +5,6 @@ import traceback
 from pathlib import Path
 
 from base import resolve_workspace_path
-from server import run_agent, build_system_prompt
 
 SUBAGENT_STATE_DIR = resolve_workspace_path("subagents")
 SUBAGENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,6 +19,7 @@ def subagent_worker(agent_id: str, persona: str, task: str):
     state_file = SUBAGENT_STATE_DIR / f"{agent_id}.json"
     
     try:
+        from server import run_agent, build_system_prompt
         base_prompt = build_system_prompt()
         persona_prompt = PERSONAS.get(persona, PERSONAS["coder"])
         

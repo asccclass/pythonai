@@ -3,7 +3,6 @@ import base64
 import time
 import traceback
 from pathlib import Path
-from server import get_client, OLLAMA_MODEL
 from base import resolve_workspace_path
 
 def execute_playwright_actions(page, actions):
@@ -26,7 +25,7 @@ def execute_playwright_actions(page, actions):
         except Exception as e:
             print(f"[BrowserVision] Action {act_type} on {selector} failed: {e}")
 
-def run_browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Describe this page in detail.") -> str:
+def browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Describe this page in detail.") -> str:
     """
     Opens a URL, performs optional UI actions (click, type), and sends a screenshot to the Vision LLM.
     If the LLM doesn't support vision, it falls back to extracting the DOM text.
@@ -83,6 +82,7 @@ def run_browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = 
     
     # Call VLM
     try:
+        from server import get_client, OLLAMA_MODEL
         client = get_client()
         response = client.chat.completions.create(
             model=OLLAMA_MODEL,
