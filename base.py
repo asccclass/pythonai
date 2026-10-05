@@ -750,6 +750,10 @@ def load_dynamic_tools():
             spec.loader.exec_module(module)
             func = getattr(module, tool_name)
             TOOLS[tool_name] = func
+            
+            if "function" not in schema:
+                schema = {"type": "function", "function": schema}
+                
             global TOOLS_SCHEMAS
             TOOLS_SCHEMAS = [s for s in TOOLS_SCHEMAS if s.get("function", s).get("name") != tool_name]
             TOOLS_SCHEMAS.append(schema)
@@ -760,8 +764,8 @@ def create_dynamic_tool(name: str, code: str, schema_json: str) -> str:
     try:
         import json
         schema = json.loads(schema_json)
-        if "function" not in schema or "name" not in schema["function"]:
-            return "Error: Schema must contain 'function' and 'name' fields."
+        if "name" not in schema and ("function" not in schema or "name" not in schema["function"]):
+            return "Error: Schema must contain a 'name' field either at the top level or inside 'function'."
         py_file = DYNAMIC_TOOLS_DIR / f"{name}.py"
         schema_file = DYNAMIC_TOOLS_DIR / f"{name}.json"
         py_file.write_text(code, encoding="utf-8")
