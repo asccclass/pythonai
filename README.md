@@ -250,17 +250,12 @@ Run syntax checks:
 ```powershell
 python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py request_budget.py retrieval.py retrieval_ranker.py semantic_extractor.py skills.py vector_search.py working_memory.py tests\test_base.py tests\test_forgetting.py tests\test_laya_guard.py tests\test_memory.py tests\test_memory_classifier.py tests\test_memory_review.py tests\test_observability.py tests\test_procedure_similarity.py tests\test_retrieval.py tests\test_retrieval_ranker.py tests\test_semantic_extractor.py tests\test_skills.py tests\test_vector_search.py tests\test_server.py tests\test_working_memory.py
 ```
+## Advanced Agentic Capabilities (Next-Generation)
 
-## Advanced Agentic Capabilities
-
-
-## 1. 撠?蝝?蝔?蝣潸??圾??蝎暹?蝺刻摩 (AST & LSP Integration)
-- ?游? `tree-sitter` 靘圾??Python/JS 蝑?隤??鞊∟?瘜邦 (AST)??- 撖虫?蝎暹???撘Ⅳ蝺刻摩撌亙嚗?閮?Agent ???孵???Class ??Function ?脰?憭???撘??挾?踵?嚗?閬神?港遢瑼???- 銝脫 Language Server Protocol (LSP)嚗釵鈭?Agent?歲?啣?蝢?(Go to definition)?????曉???(Find references)??蝔?蝣澆?閬質??- ?批遣 Linter (憒?flake8, pylint) 瑼Ｘ嚗 Agent 靽格敺??餅??芸??菜葫隤??葬?隤扎?
-## 2. ?典?蝔?蝣潛揣撘? RAG 瑼Ｙ揣 (Codebase Indexing & Vector Search)
-- 撱箇?撠?撅斤???File Tree ??Metadata 敹怠?璈??- 撖虫? Codebase RAG嚗????獢??撠???Function/Class 蝯???docstrings 頧??箏???(Embeddings) 銝血??交璈??澈??- ? `search_codebase` 撌亙嚗? Agent ?賜隤????曉?瑼? (靘?: "撠??仿?霅??頝舐?芋??)??- 撖虫??芸? Context 憯葬??畾菜???塚??踹?瑼Ｙ揣?啁?憭折?瑼??? LLM ??Context Window??
-## 3. ?芸??葫閰血?擖艘??(Test-Driven Loop & CI Integration)
-- 撖虫????葫閰阡???(TDD) ??????- ? `run_test_suite` 撌亙嚗?閮?Agent ?冽??摰?啗?銵?`pytest` ?閮葫閰西?研?- 撱箇??芸???航艘??蝎曄Ⅱ?瑕? `stderr` ??Traceback ?航炊嚗蒂?芸?雿銝?甈?Code Revision ?撓?亙摰嫘?- 閮剖??芣?靽格迤甈⊥銝? (Max Retries)嚗??靽桀儔憭望???孛??HITL嚗??批甈??航炊?勗?鈭日?蝯虫犖憿?
-## 4. 瘛勗漲 Git ??批?游? (Deep Git Integration)
-- ?撠惇蝯??? Git ??撌亙蝢?(憒?`git_status`, `git_diff_parser`, `git_commit`)??- 撖虫?摰蝺刻摩摮?暺?(Checkpoint) 璈嚗?甈?Agent ?脰?憭扯?璅⊿?瑽?嚗?遣蝡??舀? Commit嚗Ⅱ靽??∠? Rollback??- 鞈虫? Agent 閫??憭折? Diff ???銝血祕雿?撖急?皞????釭 Commit Messages ??PR 隤芣???蝔?
-## 5. IDE ?單?鈭?隞 (Editor Integration)
-- ?撠惇??VSCode Extension ???楊頛臬 API嚗歲?怎? CLI ??Telegram ??摮?閰梢??嗚?- 撖虫? Inline Chat ?嚗?閮曹蝙?刻蝺刻摩?典?詨??孵?蝔?蝣澆?憛??湔?澆 Agent ?脰?????圾??- 撖虫??葫?抒?撘Ⅳ鋆 (Streaming Ghost Text) ?璈?API 隡箸??剁???憿撮 GitHub Copilot ?蝮恍??潮?撽?
+- **Multi-Agent Orchestration**: Asynchronous task delegation to dynamically generated Sub-Agents (e.g., Planner, Coder, Reviewer).
+- **Browser & Visual Perception**: Headless browser integration (Playwright) and visual analysis tools (VLMs) enabling the agent to autonomously browse, click, and verify UI elements visually.
+- **Docker & Sandbox Execution**: Containerized command execution and isolated environments for safe and consistent agent testing.
+- **Deep Web Research & Dynamic RAG**: Web-search sub-agents and web scraping capabilities for on-the-fly API documentation learning and issue resolution.
+- **Project Bootstrapping & Dependency Management**: Autonomous environment setups (venv), scaffolding of full directory trees, and conflict resolution in package dependencies.
+- **Model Context Protocol (MCP) Integration**: Full lifecycle management, client communication, dynamic tool schema translation, and request routing for third-party MCP servers.
+- **Task Success Verification & Self-Correction**: Multi-dimensional assertions, LLM-as-a-Judge evaluators, and a self-healing Critic-Correction loop that ensures tasks are fully completed and verified before persisting into procedural memory.
