@@ -23,6 +23,7 @@ from memory_worker import BackgroundWorkerLease, MemoryReviewWorker, QueueOnlyMe
 from scheduler import SchedulerWorker
 from skills import SkillMatcher, SkillRegistry
 from vector_search import OpenAICompatibleEmbeddingProvider, VectorMemorySearcher
+from task_evaluator import EvaluationResult, TaskEvaluator
 
 
 load_dotenv()
@@ -170,8 +171,12 @@ def run_agent(
     sleep: Callable[[float], None] = time.sleep,
     max_iterations: int = 15,
     check_cancelled: Callable[[], bool] | None = None,
+    task_evaluator: TaskEvaluator | None = None,
+    max_eval_retries: int = 2,
 ):
     iteration = 0
+    eval_retries = 0
+    pre_state = task_evaluator.capture_state() if task_evaluator is not None else None
     while iteration < max_iterations:
         if check_cancelled and check_cancelled():
             return "Task was cancelled by the user."
@@ -249,6 +254,72 @@ def run_agent(
                 raise TaskSuspendedException(question, tool_call_id, messages)
                 
             continue
+
+        if task_evaluator is not None:
+            user_goal = ""
+            for msg in messages:
+                if msg.get("role") == "user":
+                    content = str(msg.get("content") or "")
+                    if not content.startswith("【任務驗收未通過"):
+                        user_goal = content
+                        break
+
+            post_state = task_evaluator.capture_state()
+            eval_res = task_evaluator.evaluate(
+                user_goal=user_goal,
+                messages=messages,
+                final_reply=assistant_message.content or "",
+                pre_state=pre_state,
+                post_state=post_state,
+            )
+
+            log_episode_event(
+                memory,
+                episode_id,
+                "task_evaluation",
+                metadata={
+                    "success": eval_res.success,
+                    "score": eval_res.score,
+                    "feedback": eval_res.feedback,
+                    "criteria_met": eval_res.criteria_met,
+                    "side_effects": eval_res.side_effects,
+                    "eval_retry": eval_retries,
+                },
+            )
+
+            if not eval_res.success:
+                if eval_retries < max_eval_retries:
+                    eval_retries += 1
+                    critic_feedback = (
+                        f"【任務驗收未通過 (Critic Feedback - 第 {eval_retries}/{max_eval_retries} 次修正)】\n"
+                        f"評估結果: 未達成目標 (得分: {eval_res.score})\n"
+                        f"問題反饋:\n{eval_res.feedback}\n"
+                        f"請根據上述反饋自主修正，檢查程式碼或執行相應的修復工具，直到完成任務目標。"
+                    )
+                    messages.append({"role": "user", "content": critic_feedback})
+                    log_episode_event(
+                        memory,
+                        episode_id,
+                        "critic_correction",
+                        content=critic_feedback,
+                        metadata={"eval_retry": eval_retries, "score": eval_res.score},
+                    )
+                    continue
+                else:
+                    log_episode_event(
+                        memory,
+                        episode_id,
+                        "hitl_handover",
+                        metadata={
+                            "max_eval_retries": max_eval_retries,
+                            "feedback": eval_res.feedback,
+                        },
+                    )
+                    return (
+                        f"⛔ 任務驗收未通過 (已達最大修正次數 {max_eval_retries})，已轉交人工審核 (HITL)。\n"
+                        f"未通過原因:\n{eval_res.feedback}\n\n"
+                        f"Agent 最終回覆:\n{assistant_message.content or ''}"
+                    )
 
         return assistant_message.content or ""
         
@@ -345,6 +416,12 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     else:
         worker = QueueOnlyMemoryWorker()
         print("Memory background worker already active in another process; this process will only enqueue review jobs.")
+    from base import workspace_root
+    task_evaluator = TaskEvaluator(
+        workspace_root=workspace_root(),
+        client=get_client(),
+        model=OLLAMA_MODEL,
+    )
     runtime = AgentRuntime(
         messages=messages,
         guard=guard,
@@ -358,6 +435,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         run_agent=run_agent,
         run_skill=run_skill,
         async_memory_review=async_memory_review,
+        task_evaluator=task_evaluator,
     )
     print("Mini agent ready. Type 'exit' to quit.")
 

@@ -42,6 +42,7 @@ class AgentRuntime:
     run_skill: Callable[..., dict[str, Any]] | None = None
     async_memory_review: bool = True
     check_cancelled: Callable[[], bool] | None = None
+    task_evaluator: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -152,11 +153,25 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
             )
 
     try:
-        reply = runtime.run_agent(agent_messages, memory=runtime.memory, episode_id=episode_id, check_cancelled=runtime.check_cancelled)
+        try:
+            reply = runtime.run_agent(
+                agent_messages,
+                memory=runtime.memory,
+                episode_id=episode_id,
+                check_cancelled=runtime.check_cancelled,
+                task_evaluator=getattr(runtime, "task_evaluator", None),
+            )
+        except TypeError:
+            reply = runtime.run_agent(
+                agent_messages,
+                memory=runtime.memory,
+                episode_id=episode_id,
+                check_cancelled=runtime.check_cancelled,
+            )
     except TaskSuspendedException as error:
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
-        finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn)
+        finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn, status="running")
         return AgentTurnResult(
             reply=error.question,
             episode_id=episode_id,
@@ -177,22 +192,41 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
         finish_episode_safely(runtime.memory, episode_id, status="failed")
         raise
 
+    episode_status = determine_episode_status(reply, runtime.memory, episode_id)
     runtime.messages.append({"role": "assistant", "content": reply})
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
 
-    finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn)
+    finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn, status=episode_status)
 
     return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
+
+
+def determine_episode_status(reply: str, memory: MemoryStore | None = None, episode_id: int | None = None) -> str:
+    if "HITL" in reply or "已轉交人工審核" in reply:
+        return "needs_review"
+    if "Task was cancelled" in reply:
+        return "rejected"
+    if reply.startswith("Error:"):
+        return "failed"
+    if memory is not None and episode_id is not None and hasattr(memory, "episode_events"):
+        events = safe_memory_call(memory.episode_events, episode_id) or []
+        for event in reversed(events):
+            if event.get("event_type") == "task_evaluation":
+                meta = event.get("metadata") or {}
+                if not meta.get("success", False):
+                    return "needs_review"
+                break
+    return "verified_completed"
 
 
 def finish_turn_memory_review(
     runtime: AgentRuntime,
     episode_id: int | None,
     skip_laya_for_turn: bool,
+    status: str = "verified_completed",
 ) -> None:
-    if skip_laya_for_turn:
-        finish_episode_safely(runtime.memory, episode_id)
-    elif runtime.memory_worker is not None:
+    finish_episode_safely(runtime.memory, episode_id, status=status)
+    if not skip_laya_for_turn and runtime.memory_worker is not None:
         runtime.memory_worker.enqueue(
             runtime.memory,
             episode_id,
@@ -273,7 +307,7 @@ def log_episode_event(
 def finish_episode_safely(
     memory: MemoryStore | None,
     episode_id: int | None,
-    status: str = "completed",
+    status: str = "verified_completed",
     summary: str | None = None,
 ) -> None:
     if memory is None or episode_id is None:
@@ -303,11 +337,25 @@ def log_retrieval_stats(
 
 def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, episode_id: int | None = None) -> AgentTurnResult:
     try:
-        reply = runtime.run_agent(messages, memory=runtime.memory, episode_id=episode_id, check_cancelled=runtime.check_cancelled)
+        try:
+            reply = runtime.run_agent(
+                messages,
+                memory=runtime.memory,
+                episode_id=episode_id,
+                check_cancelled=runtime.check_cancelled,
+                task_evaluator=getattr(runtime, "task_evaluator", None),
+            )
+        except TypeError:
+            reply = runtime.run_agent(
+                messages,
+                memory=runtime.memory,
+                episode_id=episode_id,
+                check_cancelled=runtime.check_cancelled,
+            )
     except TaskSuspendedException as error:
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
-        finish_turn_memory_review(runtime, episode_id, False)
+        finish_turn_memory_review(runtime, episode_id, False, status="running")
         return AgentTurnResult(
             reply=error.question,
             episode_id=episode_id,
@@ -329,5 +377,6 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
     runtime.messages = messages
     runtime.messages.append({"role": "assistant", "content": reply})
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
-    finish_turn_memory_review(runtime, episode_id, False)
+    status = determine_episode_status(reply, runtime.memory, episode_id)
+    finish_turn_memory_review(runtime, episode_id, False, status=status)
     return AgentTurnResult(reply, episode_id)

@@ -193,6 +193,25 @@ def process_procedure_candidate(
     candidate: dict[str, Any],
     procedure_matcher: ProcedureSimilarityMatcher | None = None,
 ) -> dict[str, Any] | None:
+    episode = store.get_episode(episode_id) if hasattr(store, "get_episode") else None
+    if episode is not None:
+        status = episode.get("status")
+        if status in ("rejected", "needs_review", "failed"):
+            store.add_event(
+                episode_id,
+                "memory_review_result",
+                metadata={
+                    "memory_kind": "procedure",
+                    "action": "rejected",
+                    "reason": f"Episode status is {status}; only verified_completed episodes can be saved as procedural memory.",
+                },
+            )
+            return {
+                "memory_kind": "procedure",
+                "action": "rejected",
+                "reason": f"Episode status is {status}; only verified_completed episodes can be saved as procedural memory.",
+            }
+
     tool_calls = [event for event in events if event["event_type"] == "tool_call"]
     if not tool_calls:
         return None

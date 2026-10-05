@@ -28,12 +28,21 @@ class SandboxExecution:
         if not self.has_docker:
             # Fallback: create isolated directory and sync workspace files
             self.sandbox_dir.mkdir(parents=True, exist_ok=True)
-            # Basic sync of files (excluding venv, .git, etc. for speed)
+            # Basic sync of files (excluding heavy directories for speed and memory)
+            excluded = {
+                ".git", "venv", "__pycache__", "sandbox", "temp",
+                "models", ".agents", "tests", ".pytest_cache",
+                "node_modules", "papers", "workspace"
+            }
             for item in self.workspace_root.iterdir():
-                if item.name not in [".git", "venv", "__pycache__", "sandbox", "temp"]:
+                if item.name not in excluded:
                     if item.is_dir():
-                        shutil.copytree(item, self.sandbox_dir / item.name)
-                    else:
+                        shutil.copytree(
+                            item,
+                            self.sandbox_dir / item.name,
+                            ignore=shutil.ignore_patterns("*.safetensors", "*.bin", "*.pt", "*.onnx")
+                        )
+                    elif item.stat().st_size < 10 * 1024 * 1024:
                         shutil.copy2(item, self.sandbox_dir / item.name)
             print(f"[Sandbox] Docker not available. Created fallback isolated environment at {self.sandbox_dir}")
         else:

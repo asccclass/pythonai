@@ -117,15 +117,22 @@ class CommunicationWorker:
                     except Exception as e:
                         print(f"Error resuming job: {e}")
                 
-                turn_result = self.command_runner(target_command, resumed_messages)
+                try:
+                    turn_result = self.command_runner(target_command, resumed_messages)
+                except TypeError:
+                    turn_result = self.command_runner(target_command)
                 
-                if turn_result.suspended:
+                if isinstance(turn_result, str):
+                    self.store.complete_command(target_command.command_id, turn_result)
+                    self._send_reply(target_command, turn_result)
+                elif getattr(turn_result, "suspended", False):
                     state_str = json.dumps(turn_result.suspended_state)
                     self.store.suspend_command(target_command.command_id, state_str, turn_result.suspended_tool_call_id)
                     self._send_reply(target_command, turn_result.reply)
                 else:
-                    self.store.complete_command(target_command.command_id, turn_result.reply)
-                    self._send_reply(target_command, turn_result.reply)
+                    reply = getattr(turn_result, "reply", str(turn_result))
+                    self.store.complete_command(target_command.command_id, reply)
+                    self._send_reply(target_command, reply)
             except Exception as error:
                 import traceback
                 traceback.print_exc()

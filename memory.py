@@ -189,7 +189,25 @@ class MemoryStore:
             connection.commit()
             return int(cursor.lastrowid)
 
-    def finish_episode(self, episode_id: int, status: str = "completed", summary: str | None = None) -> None:
+    def get_episode(self, episode_id: int) -> dict[str, Any] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT id, started_at, ended_at, status, summary
+                FROM episodes
+                WHERE id = ?
+                """,
+                (episode_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def finish_episode(self, episode_id: int, status: str = "verified_completed", summary: str | None = None) -> None:
+        if status == "completed":
+            status = "verified_completed"
+        existing = self.get_episode(episode_id)
+        if existing and existing.get("status") in ("verified_completed", "rejected", "needs_review", "failed"):
+            if status == "verified_completed" and existing["status"] in ("rejected", "needs_review", "failed"):
+                status = existing["status"]
         with closing(self.connect()) as connection:
             connection.execute(
                 """

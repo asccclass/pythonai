@@ -3,7 +3,6 @@ from collections import defaultdict
 import itertools
 
 import matplotlib.pyplot as plt
-from ckip_transformers.nlp import CkipNerChunker, CkipWordSegmenter
 import networkx as nx
 import pandas as pd
 from snownlp import SnowNLP
@@ -15,6 +14,8 @@ STORY_ENTITY_TYPES = {"PERSON", "GPE", "ORG", "LOC"}
 
 
 def load_story_chapters(story_path: Path = DEFAULT_STORY_PATH) -> dict[str, str]:
+    if not story_path.exists():
+        return {}
     lines = [
         line.strip()
         for line in story_path.read_text(encoding="utf-8").splitlines()
@@ -23,10 +24,8 @@ def load_story_chapters(story_path: Path = DEFAULT_STORY_PATH) -> dict[str, str]
     return {f"第{index}章": text for index, text in enumerate(lines, start=1)}
 
 
-story_chapters_zh = load_story_chapters()
-
-
-def create_ckip_drivers(device: int = -1) -> tuple[CkipWordSegmenter, CkipNerChunker]:
+def create_ckip_drivers(device: int = -1):
+    from ckip_transformers.nlp import CkipNerChunker, CkipWordSegmenter
     ws_driver = CkipWordSegmenter(model="bert-base", device=device)
     ner_driver = CkipNerChunker(model="bert-base", device=device)
     return ws_driver, ner_driver
@@ -259,6 +258,7 @@ def main() -> None:
     print("正在載入 CKIP 模型...")
     ws_driver, ner_driver = create_ckip_drivers(device=-1)
 
+    story_chapters_zh = load_story_chapters()
     chapters = list(story_chapters_zh.keys())
     texts = list(story_chapters_zh.values())
 

@@ -51,6 +51,32 @@ class MultiWebhookService:
         )
         return {"ok": True, "queued": len(commands)}
 
+
+class TelegramWebhookService(MultiWebhookService):
+    def __init__(
+        self,
+        store: CommunicationStore,
+        adapter: TelegramAdapter,
+        worker: CommunicationWorker,
+        runtime: AgentRuntime | None = None,
+        allowed_senders: set[str] | None = None,
+        worker_interval_seconds: float = 0.2,
+    ) -> None:
+        super().__init__(
+            store=store,
+            adapters={"telegram": adapter},
+            worker=worker,
+            runtime=runtime,
+            allowed_senders=allowed_senders,
+            worker_interval_seconds=worker_interval_seconds,
+        )
+        self.adapter = adapter
+
+    def handle_webhook(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if len(args) == 2 and isinstance(args[0], dict):
+            return super().handle_webhook("telegram", args[0], args[1])
+        return super().handle_webhook(*args, **kwargs)
+
     def process_pending_once(self) -> int:
         processed = 0
         while self.worker.process_next() is not None:
@@ -129,7 +155,10 @@ def print_loaded_skills(registry: Any) -> list[str]:
     return loaded
 
 
-def print_telegram_connection_status(adapters: dict[str, Any]) -> dict[str, Any] | None:
+def print_telegram_connection_status(adapter_or_adapters: Any) -> dict[str, Any] | None:
+    adapter = adapter_or_adapters.get("telegram") if isinstance(adapter_or_adapters, dict) else adapter_or_adapters
+    if adapter is None:
+        return None
     try:
         bot = adapter.get_me()
     except Exception as error:
@@ -167,6 +196,21 @@ def create_multi_service(runtime: AgentRuntime | None = None) -> MultiWebhookSer
     )
 
 
+def create_telegram_service(runtime: AgentRuntime | None = None) -> TelegramWebhookService:
+    runtime = runtime or create_agent_runtime()
+    store = CommunicationStore()
+    adapter = TelegramAdapter()
+    worker = CommunicationWorker(store, {"telegram": adapter}, agent_runtime_command_runner(runtime, store))
+    return TelegramWebhookService(
+        store=store,
+        adapter=adapter,
+        worker=worker,
+        runtime=runtime,
+        allowed_senders=parse_allowed_senders(os.environ.get("COMM_ALLOWED_SENDERS", "")),
+        worker_interval_seconds=float(os.environ.get("COMM_WORKER_INTERVAL_SECONDS", "0.2")),
+    )
+
+
 def parse_allowed_senders(value: str) -> set[str] | None:
     senders = {item.strip() for item in value.split(",") if item.strip()}
     return senders or None
@@ -191,7 +235,7 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
                 
                 # Check signature
                 if not service.adapters[adapter_name].verify_request(dict(self.headers.items()), body):
-                    self._send_json(401, {"ok": False, "error": "unauthorized"})
+                    self._send_json(403, {"ok": False, "error": "unauthorized"})
                     return
                 
                 # Discord Ping check
@@ -242,7 +286,9 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
 scheduler_worker = SchedulerWorker()
 
 def run_http_server(service: MultiWebhookService, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
-    if "telegram" in service.adapters:
+    if hasattr(service, "adapter"):
+        print_telegram_connection_status(service.adapter)
+    elif "telegram" in getattr(service, "adapters", {}):
         print_telegram_connection_status(service.adapters["telegram"])
     service.start_worker_loop()
     scheduler_worker.start()

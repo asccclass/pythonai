@@ -232,14 +232,15 @@ def run_command(
     run_options = subprocess_text_options()
     if env is not None:
         run_options["env"] = env
-    from sandbox import SandboxExecution
-    sandbox = SandboxExecution(workspace_root())
-    sandbox.setup()
-    try:
-        result = sandbox.run(resolved_command, cwd=resolved_cwd, **run_options)
-        return result
-    finally:
-        sandbox.cleanup()
+    if os.environ.get("AGENT_USE_SANDBOX", "").lower() in ("1", "true"):
+        from sandbox import SandboxExecution
+        sandbox = SandboxExecution(workspace_root())
+        sandbox.setup()
+        try:
+            return sandbox.run(resolved_command, cwd=resolved_cwd, **run_options)
+        finally:
+            sandbox.cleanup()
+    return subprocess.run(resolved_command, cwd=resolved_cwd, **run_options)
 
 
 def resolve_command_cwd(
