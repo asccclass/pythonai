@@ -1,4 +1,12 @@
 {
     "mcpServers": {
+        "aisms": {
+            "command": "D:\\myprograms\\aisms\\ais-mcp.exe",
+            "args": [],
+            "cwd": "D:\\myprograms\\aisms",
+            "env": {
+                "DB_PATH": "D:\\myprograms\\aisms\\data\\isms.db"
+            }
+        }
     }
 }

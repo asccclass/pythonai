@@ -8,10 +8,18 @@ import uuid
 from typing import Dict, Any, List, Optional
 
 class MCPClient:
-    def __init__(self, name: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        name: str,
+        command: str,
+        args: List[str],
+        env: Optional[Dict[str, str]] = None,
+        cwd: Optional[str] = None,
+    ):
         self.name = name
         self.command = command
         self.args = args
+        self.cwd = cwd
         
         # Merge environment variables
         self.env = os.environ.copy()
@@ -37,6 +45,7 @@ class MCPClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=self.env,
+            cwd=self.cwd,
             text=True,
             bufsize=1  # Line buffered
         )
@@ -189,8 +198,9 @@ class MCPManager:
             command = server_config.get("command")
             args = server_config.get("args", [])
             env = server_config.get("env", {})
+            cwd = server_config.get("cwd")
             
-            client = MCPClient(name, command, args, env)
+            client = MCPClient(name, command, args, env, cwd)
             print(f"Starting MCP Server: {name}")
             try:
                 client.start()
