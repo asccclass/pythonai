@@ -172,7 +172,9 @@ def execute_job(job: dict) -> tuple[str, str, str]:
                 return "completed", result.stdout, ""
             else:
                 return "failed", result.stdout, result.stderr
-        elif job_type == "maintenance.summary":
+        elif job_type == "maintenance.summary" or (
+            job_type == "maintenance" and payload.get("task") == "daily_summary"
+        ):
             from summary import generate_daily_summary
             telegram_chat_id = payload.get("telegram_chat_id")
             output, error = generate_daily_summary(telegram_chat_id=telegram_chat_id)

@@ -5,15 +5,27 @@ from pathlib import Path
 
 
 STORY_APP_PATH = Path(__file__).resolve().parents[1] / "skills" / "story" / "story.py"
-SPEC = importlib.util.spec_from_file_location("story_app", STORY_APP_PATH)
-story_app = importlib.util.module_from_spec(SPEC)
-assert SPEC is not None and SPEC.loader is not None
-SPEC.loader.exec_module(story_app)
+story_app = None
+
+
+def load_story_app():
+    global story_app
+    if story_app is None:
+        spec = importlib.util.spec_from_file_location("story_app", STORY_APP_PATH)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        story_app = module
+    return story_app
 
 
 class ComputationalNarratologyAppTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.story_app = load_story_app()
+
     def test_load_and_split_novel_reads_and_chunks_text(self):
-        app = story_app.ComputationalNarratologyApp.__new__(story_app.ComputationalNarratologyApp)
+        app = self.story_app.ComputationalNarratologyApp.__new__(self.story_app.ComputationalNarratologyApp)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             novel_path = Path(temp_dir) / "novel.txt"

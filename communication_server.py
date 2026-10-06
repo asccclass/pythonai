@@ -94,6 +94,7 @@ class TelegramWebhookService(MultiWebhookService):
         self._stop_event.set()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        self.worker.drain(timeout=2.0)
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():

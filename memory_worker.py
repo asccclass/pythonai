@@ -112,6 +112,8 @@ class BackgroundWorkerLease:
             return True
         if pid <= 0:
             return True
+        if os.name == "nt":
+            return not windows_pid_exists(pid)
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -120,6 +122,28 @@ class BackgroundWorkerLease:
             return False
         except OSError:
             return False
+        return False
+
+
+def windows_pid_exists(pid: int) -> bool:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(process_query_limited_information, False, wintypes.DWORD(pid))
+        if not handle:
+            return False
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
         return False
 
 

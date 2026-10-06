@@ -659,7 +659,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.run_agent", return_value="hi"),
                 patch("builtins.print"),
             ):
-                server.main()
+                server.main(async_memory_review=False)
 
             events = store.recent_events(limit=10)
 
@@ -692,7 +692,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.run_agent", side_effect=run_agent),
                 patch("builtins.print"),
             ):
-                server.main()
+                server.main(async_memory_review=False)
 
             events = store.recent_events(limit=10)
 
@@ -730,7 +730,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.run_agent", side_effect=run_agent),
                 patch("builtins.print"),
             ):
-                server.main()
+                server.main(async_memory_review=False)
 
         self.assertEqual(captured_messages[0], {"role": "system", "content": "system with agents"})
 
@@ -746,7 +746,7 @@ class ServerTests(unittest.TestCase):
             patch("server.run_agent", return_value="hi") as run_agent,
             patch("builtins.print"),
         ):
-            server.main()
+            server.main(async_memory_review=False)
 
         run_agent.assert_called_once()
 
@@ -764,7 +764,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.run_agent", side_effect=APITimeoutError(request=None)),
                 patch("builtins.print") as print_mock,
             ):
-                server.main()
+                server.main(async_memory_review=False)
 
             events = store.recent_events(limit=10)
 
@@ -798,7 +798,7 @@ class ServerTests(unittest.TestCase):
             patch("server.run_agent", return_value="hi") as run_agent,
             patch("builtins.print"),
         ):
-            server.main()
+            server.main(async_memory_review=False)
 
         run_agent.assert_called_once()
 

@@ -1,9 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-
-import httpx
-from openai import APIStatusError
+from unittest.mock import patch
 
 from memory import MemoryStore
 from memory_classifier import MemoryCandidateDecision
@@ -36,9 +34,13 @@ class StaticEmbeddingProvider:
 
 class RateLimitedEmbeddingProvider:
     def embed(self, text):
-        request = httpx.Request("POST", "https://example.test/v1/embeddings")
-        response = httpx.Response(429, headers={"Retry-After": "3"}, request=request)
-        raise APIStatusError("rate limited", response=response, body={})
+        class Response:
+            headers = {"retry-after": "3"}
+
+        error = RuntimeError("rate limited")
+        error.status_code = 429
+        error.response = Response()
+        raise error
 
 
 class MemoryWorkerTests(unittest.TestCase):
@@ -66,6 +68,22 @@ class MemoryWorkerTests(unittest.TestCase):
         lease = BackgroundWorkerLease.acquire(BrokenMemory())
 
         self.assertFalse(lease.acquired)
+
+    def test_background_worker_lease_uses_windows_pid_check_without_signal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "background_worker.lock"
+            lock_path.write_text("123", encoding="ascii")
+
+            with (
+                patch("memory_worker.os.name", "nt"),
+                patch("memory_worker.windows_pid_exists", return_value=True) as exists_mock,
+                patch("memory_worker.os.kill") as kill_mock,
+            ):
+                stale = BackgroundWorkerLease._is_stale(lock_path)
+
+        self.assertFalse(stale)
+        exists_mock.assert_called_once_with(123)
+        kill_mock.assert_not_called()
 
     def test_queue_only_worker_enqueues_review_without_processing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

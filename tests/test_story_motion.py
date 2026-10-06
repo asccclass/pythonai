@@ -6,10 +6,18 @@ from pathlib import Path
 
 
 MOTION_PATH = Path(__file__).resolve().parents[1] / "skills" / "story" / "motion.py"
-SPEC = importlib.util.spec_from_file_location("story_motion", MOTION_PATH)
-motion = importlib.util.module_from_spec(SPEC)
-assert SPEC is not None and SPEC.loader is not None
-SPEC.loader.exec_module(motion)
+motion = None
+
+
+def load_motion():
+    global motion
+    if motion is None:
+        spec = importlib.util.spec_from_file_location("story_motion", MOTION_PATH)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        motion = module
+    return motion
 
 
 @dataclass
@@ -20,12 +28,16 @@ class Entity:
 
 
 class StoryMotionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.motion = load_motion()
+
     def test_load_story_chapters_reads_story_txt_lines(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             story_path = Path(temp_dir) / "story.txt"
             story_path.write_text("第一段\n\n第二段\n第三段\n", encoding="utf-8")
 
-            chapters = motion.load_story_chapters(story_path)
+            chapters = self.motion.load_story_chapters(story_path)
 
         self.assertEqual(
             chapters,
@@ -44,7 +56,7 @@ class StoryMotionTests(unittest.TestCase):
             Entity("李大叔", "PERSON", (6, 9)),
         ]
 
-        merged_tokens = motion.merge_tokens_with_entities(text, tokens, ner)
+        merged_tokens = self.motion.merge_tokens_with_entities(text, tokens, ner)
 
         self.assertEqual(merged_tokens, ["張小明", "遇到", "了", "李大叔"])
         self.assertNotIn("李", merged_tokens)
@@ -62,7 +74,7 @@ class StoryMotionTests(unittest.TestCase):
             ],
         ]
 
-        chapter_characters = motion.extract_chapter_characters(story_ner)
+        chapter_characters = self.motion.extract_chapter_characters(story_ner)
 
         self.assertEqual(chapter_characters, [["張小明"], ["李大叔"]])
 
@@ -73,7 +85,7 @@ class StoryMotionTests(unittest.TestCase):
             ["李大叔", "張小華", "張小明"],
         ]
 
-        edges_data = motion.build_edges_data(chapter_characters)
+        edges_data = self.motion.build_edges_data(chapter_characters)
 
         self.assertEqual(
             edges_data,
@@ -85,13 +97,13 @@ class StoryMotionTests(unittest.TestCase):
         )
 
     def test_analyze_character_centrality_returns_ranked_table(self):
-        graph = motion.build_relation_graph([
+        graph = self.motion.build_relation_graph([
             ["張小明", "張小華"],
             ["張小明", "李大叔"],
             ["李大叔", "張小華", "張小明"],
         ])
 
-        df = motion.analyze_character_centrality(graph)
+        df = self.motion.analyze_character_centrality(graph)
 
         self.assertEqual(
             list(df.columns),
@@ -105,12 +117,12 @@ class StoryMotionTests(unittest.TestCase):
         self.assertEqual(set(df["角色名稱"]), {"張小明", "張小華", "李大叔"})
 
     def test_analyze_character_centrality_uses_edge_weights(self):
-        graph = motion.nx.Graph()
+        graph = self.motion.nx.Graph()
         graph.add_edge("主角", "夥伴", weight=10)
         graph.add_edge("主角", "配角", weight=1)
         graph.add_edge("夥伴", "配角", weight=1)
 
-        df = motion.analyze_character_centrality(graph)
+        df = self.motion.analyze_character_centrality(graph)
         rows = {row["角色名稱"]: row for row in df.to_dict("records")}
 
         self.assertEqual(rows["主角"]["加權度中心性 (互動廣度)"], 1.0)
@@ -122,11 +134,11 @@ class StoryMotionTests(unittest.TestCase):
         )
 
     def test_draw_relation_graph_saves_output_file(self):
-        graph = motion.build_relation_graph([["張小明", "張小華"]])
+        graph = self.motion.build_relation_graph([["張小明", "張小華"]])
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "relation_graph.png"
-            result = motion.draw_relation_graph(graph, output_path=output_path)
+            result = self.motion.draw_relation_graph(graph, output_path=output_path)
 
             self.assertEqual(result, output_path)
             self.assertTrue(output_path.exists())
@@ -140,7 +152,7 @@ class StoryMotionTests(unittest.TestCase):
         ]
         sentiment_scores = [-0.6, 0.4, 0.9]
 
-        graph = motion.build_sentiment_relation_graph(chapter_characters, sentiment_scores)
+        graph = self.motion.build_sentiment_relation_graph(chapter_characters, sentiment_scores)
 
         self.assertEqual(graph["張小明"]["張小華"]["interactions"], 2)
         self.assertAlmostEqual(graph["張小明"]["張小華"]["total_sentiment"], -0.2)
@@ -148,12 +160,12 @@ class StoryMotionTests(unittest.TestCase):
         self.assertFalse(graph.has_node("孤立角色"))
 
     def test_analyze_character_sentiment_traits_labels_roles(self):
-        graph = motion.nx.Graph()
+        graph = self.motion.nx.Graph()
         graph.add_edge("李大叔", "張小明", total_sentiment=0.8, interactions=1)
         graph.add_edge("黑龍會", "張小明", total_sentiment=-0.8, interactions=1)
         graph.add_edge("張小華", "張小明", total_sentiment=0.0, interactions=1)
 
-        df = motion.analyze_character_sentiment_traits(graph)
+        df = self.motion.analyze_character_sentiment_traits(graph)
         rows = {row["角色名稱"]: row for row in df.to_dict("records")}
 
         self.assertEqual(

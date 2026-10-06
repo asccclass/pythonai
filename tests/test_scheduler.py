@@ -79,10 +79,26 @@ def test_execute_job_command():
     assert status == "completed"
     assert "hello" in output
 
-def test_execute_job_maintenance():
+def test_execute_job_maintenance(monkeypatch):
+    import summary
+
+    monkeypatch.setattr(summary, "generate_daily_summary", lambda telegram_chat_id=None: ("daily report", ""))
     job = {
         "job_type": "maintenance",
         "job_payload": json.dumps({"task": "daily_summary"})
     }
     status, output, error = execute_job(job)
     assert status == "completed"
+    assert output == "daily report"
+
+def test_execute_job_maintenance_summary(monkeypatch):
+    import summary
+
+    monkeypatch.setattr(summary, "generate_daily_summary", lambda telegram_chat_id=None: ("daily report", ""))
+    job = {
+        "job_type": "maintenance.summary",
+        "job_payload": json.dumps({})
+    }
+    status, output, error = execute_job(job)
+    assert status == "completed"
+    assert output == "daily report"

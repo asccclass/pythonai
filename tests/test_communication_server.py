@@ -249,6 +249,33 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(sent[0]["text"], "reply to hello")
         self.assertIn("outbound", {message["direction"] for message in messages})
 
+    def test_stop_worker_loop_drains_command_threads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            adapter = TelegramAdapter(
+                bot_token="token",
+                webhook_secret="",
+                http_post=lambda url, payload: None,
+            )
+            done = threading.Event()
+
+            def runner(command):
+                done.set()
+                return f"reply to {command.text}"
+
+            service = TelegramWebhookService(
+                store=store,
+                adapter=adapter,
+                worker=CommunicationWorker(store, {"telegram": adapter}, runner),
+                worker_interval_seconds=0.01,
+            )
+            service.handle_webhook({}, json.dumps(telegram_update("hello")).encode("utf-8"))
+            service.start_worker_loop()
+            self.assertTrue(done.wait(2.0))
+            service.stop_worker_loop()
+
+            self.assertEqual(service.worker._threads, [])
+
     def _service(self, temp_dir, secret="", allowed_senders=None):
         db_path = Path(temp_dir) / "communication.db"
         store = CommunicationStore(db_path)
@@ -267,7 +294,10 @@ class CommunicationServerTests(unittest.TestCase):
         class ServerContext:
             def __enter__(self):
                 self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), create_request_handler(service))
-                self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+                self.thread = threading.Thread(
+                    target=lambda: self.httpd.serve_forever(poll_interval=0.01),
+                    daemon=True,
+                )
                 self.thread.start()
                 return self.httpd.server_address
 

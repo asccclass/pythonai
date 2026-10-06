@@ -7,7 +7,7 @@ import os
 
 from communication_adapters.telegram_adapter import TelegramAdapter
 from memory import memory_db_path
-from communication_store import DEFAULT_DB_PATH as communication_db_path
+from communication_store import communication_db_path
 import server
 
 def get_recent_jobs(hours: int = 24) -> list[dict]:
@@ -59,7 +59,7 @@ def generate_daily_summary(telegram_chat_id: str | None = None) -> tuple[str, st
 
 Data:
 - Completed Tasks: {len(completed_jobs)} (Snippets: {json.dumps([j.get('text', '')[:50] for j in completed_jobs[:5]])})
-- Failed Tasks: {len(failed_jobs)} (Snippets: {json.dumps([j.get('error_message', '')[:50] for j in failed_jobs[:5]])})
+- Failed Tasks: {len(failed_jobs)} (Snippets: {json.dumps([(j.get('error_message') or j.get('last_error') or '')[:50] for j in failed_jobs[:5]])})
 - New Semantic Memories: {len(new_memories)} (Snippets: {json.dumps([f"{m['subject']} {m['predicate']} {m['object']}" for m in new_memories[:5]])})
 - Updated Semantic Memories: {len(updated_memories)}
 - Low Confidence Memories requiring review: {len(low_confidence_memories)}

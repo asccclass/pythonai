@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Callable, Iterable
+import threading
 
 from agent_runtime import AgentRuntime, run_agent_turn, resume_agent_turn, AgentTurnResult
 from base import auto_approve_command_runs
@@ -34,6 +35,8 @@ class CommunicationWorker:
         self.store = store
         self.adapters = adapters
         self.command_runner = command_runner
+        self._threads: list[threading.Thread] = []
+        self._threads_lock = threading.Lock()
 
     def _send_reply(self, command: AgentCommand, text: str, is_error: bool = False) -> None:
         adapter = self.adapters[command.platform]
@@ -92,7 +95,6 @@ class CommunicationWorker:
 
         suspended_job = self.store.get_suspended_command(command.conversation_id) if not text.startswith("/") else None
 
-        import threading
         import json
 
         def background_run():
@@ -141,16 +143,40 @@ class CommunicationWorker:
                 cmd = target_command if 'target_command' in locals() else command
                 self.store.fail_command(c_id, str(error))
                 self._send_reply(cmd, error_text, is_error=True)
+            finally:
+                current = threading.current_thread()
+                with self._threads_lock:
+                    self._threads = [thread for thread in self._threads if thread is not current]
 
         # Run normal agent commands in a background thread so the worker can keep processing /cancel and /status
         thread = threading.Thread(target=background_run)
         thread.daemon = True
-        if not hasattr(self, "_threads"):
-            self._threads = []
-        self._threads.append(thread)
+        with self._threads_lock:
+            self._threads.append(thread)
         thread.start()
         
         return self.store.command_by_id(command.command_id)
+
+    def drain(self, timeout: float = 2.0) -> None:
+        end_time = None
+        if timeout is not None:
+            import time
+            end_time = time.monotonic() + timeout
+
+        while True:
+            with self._threads_lock:
+                threads = list(self._threads)
+            if not threads:
+                return
+            for thread in threads:
+                join_timeout = 0.1
+                if end_time is not None:
+                    import time
+                    remaining = end_time - time.monotonic()
+                    if remaining <= 0:
+                        return
+                    join_timeout = min(join_timeout, remaining)
+                thread.join(join_timeout)
 
 
 def enqueue_adapter_events(

@@ -51,6 +51,7 @@ class TelegramPollingWorker:
         processed = 0
         while self.worker.process_next() is not None:
             processed += 1
+        self.worker.drain(timeout=2.0)
         return processed
 
     def run_forever(self) -> None:
@@ -92,6 +93,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print()
     finally:
+        polling_worker.worker.drain(timeout=2.0)
         scheduler_worker.stop()
         memory_worker = getattr(polling_worker.runtime, "memory_worker", None)
         if memory_worker is not None:
