@@ -342,6 +342,58 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(memory["object"], "Python")
         self.assertIsNone(missing)
 
+    def test_store_updates_semantic_memory_and_clears_embedding(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory(
+                "user",
+                "prefers",
+                "Python",
+                source_event_id=event_id,
+                embedding=[0.1, 0.2],
+            )
+
+            updated = store.update_semantic_memory(
+                memory_id,
+                subject="project",
+                predicate="uses",
+                object_value="SQLite",
+                confidence=0.9,
+                memory_type="technology",
+                scope="repo",
+                expires_at="2099-01-01 00:00:00",
+            )
+            memory = store.semantic_memory(memory_id)
+
+        self.assertTrue(updated)
+        self.assertEqual(memory["subject"], "project")
+        self.assertEqual(memory["predicate"], "uses")
+        self.assertEqual(memory["object"], "SQLite")
+        self.assertEqual(memory["memory_type"], "technology")
+        self.assertEqual(memory["scope"], "repo")
+        self.assertEqual(memory["confidence"], 0.9)
+        self.assertEqual(memory["expires_at"], "2099-01-01 00:00:00")
+        self.assertIsNone(memory["embedding"])
+        self.assertIsNone(memory["embedding_updated_at"])
+        self.assertIsNotNone(memory["subject_entity_id"])
+
+    def test_store_restores_archived_semantic_memory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            event_id = store.add_event(episode_id, "message", role="user", content="hello")
+            memory_id = store.add_semantic_memory("user", "prefers", "Python", source_event_id=event_id)
+
+            store.archive_semantic_memory(memory_id, reason="obsolete")
+            restored = store.restore_semantic_memory(memory_id)
+            memory = store.semantic_memory(memory_id)
+
+        self.assertTrue(restored)
+        self.assertIsNone(memory["archived_at"])
+        self.assertIsNone(memory["archive_reason"])
+
     def test_store_returns_semantic_memories_missing_embeddings(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemoryStore(Path(temp_dir) / "memory.db")

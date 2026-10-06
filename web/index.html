@@ -1,316 +1,560 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="zh-Hant">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Python AI Agent Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-color: #0f172a;
-            --text-color: #f8fafc;
-            --card-bg: rgba(30, 41, 59, 0.7);
-            --card-border: rgba(255, 255, 255, 0.1);
-            --accent-color: #3b82f6;
-            --accent-hover: #60a5fa;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-        }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Memory Manager</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --panel-2: #eef2f7;
+      --line: #d7dde8;
+      --text: #1c2430;
+      --muted: #657084;
+      --blue: #2563eb;
+      --green: #078669;
+      --yellow: #a86500;
+      --red: #c2413b;
+      --focus: #8ab4ff;
+    }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: var(--bg-color);
-            background-image: 
-                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
-                radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.1) 0px, transparent 50%);
-            color: var(--text-color);
-            min-height: 100vh;
-            padding: 2rem;
-            line-height: 1.5;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        header {
-            margin-bottom: 3rem;
-            text-align: center;
-        }
-
-        h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: linear-gradient(to right, #60a5fa, #a78bfa);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
-        }
-
-        p.subtitle {
-            color: #94a3b8;
-            font-size: 1.1rem;
-        }
-
-        /* Glassmorphism Cards */
-        .card {
-            background: var(--card-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid var(--card-border);
-            border-radius: 1rem;
-            padding: 1.5rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 3rem;
-        }
-
-        .stat-card {
-            text-align: center;
-        }
-
-        .stat-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-            color: #fff;
-        }
-
-        .stat-label {
-            color: #cbd5e1;
-            font-size: 0.875rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        /* Main Layout */
-        .main-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 2rem;
-        }
-
-        @media (min-width: 768px) {
-            .main-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-
-        h2 {
-            font-size: 1.5rem;
-            margin-bottom: 1rem;
-            color: #f1f5f9;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        /* Lists */
-        .list-container {
-            max-height: 500px;
-            overflow-y: auto;
-            padding-right: 0.5rem;
-        }
-
-        /* Custom Scrollbar */
-        .list-container::-webkit-scrollbar {
-            width: 6px;
-        }
-        .list-container::-webkit-scrollbar-track {
-            background: rgba(255,255,255,0.05);
-            border-radius: 3px;
-        }
-        .list-container::-webkit-scrollbar-thumb {
-            background: rgba(255,255,255,0.2);
-            border-radius: 3px;
-        }
-
-        .list-item {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255,255,255,0.05);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            transition: background 0.2s ease;
-        }
-
-        .list-item:hover {
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        .memory-text {
-            font-size: 0.95rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .meta {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 0.75rem;
-            color: #94a3b8;
-        }
-
-        .badge {
-            padding: 0.2rem 0.5rem;
-            border-radius: 9999px;
-            font-weight: 600;
-        }
-
-        .badge.completed { background: rgba(16, 185, 129, 0.2); color: var(--success); }
-        .badge.failed { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
-        .badge.running { background: rgba(59, 130, 246, 0.2); color: var(--accent-color); }
-        .badge.pending { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
-        
-        .loading {
-            text-align: center;
-            padding: 2rem;
-            color: #94a3b8;
-        }
-
-    </style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      line-height: 1.45;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+    .shell {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 18px 20px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      min-height: 20px;
+      text-align: right;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .stat {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .stat strong {
+      display: block;
+      font-size: 24px;
+      margin-bottom: 2px;
+    }
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    main.shell {
+      display: grid;
+      grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    section {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      min-width: 0;
+    }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    form {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 10px;
+      font: inherit;
+      min-height: 40px;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 96px;
+    }
+    input:focus, select:focus, textarea:focus, button:focus {
+      outline: 2px solid var(--focus);
+      outline-offset: 1px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid transparent;
+      background: var(--blue);
+      color: #ffffff;
+      border-radius: 6px;
+      padding: 9px 12px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      min-height: 38px;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--line);
+    }
+    button.danger {
+      background: transparent;
+      color: var(--red);
+      border-color: rgba(194, 65, 59, 0.4);
+    }
+    button.success {
+      background: transparent;
+      color: var(--green);
+      border-color: rgba(7, 134, 105, 0.4);
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .toolbar label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: none;
+      font-weight: 400;
+    }
+    .toolbar input[type="search"] {
+      width: min(320px, 45vw);
+    }
+    .table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 220px);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 920px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    tr.archived {
+      color: #8a94a8;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .fact {
+      max-width: 420px;
+      word-break: break-word;
+    }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .row-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 180px;
+    }
+    .row-actions button {
+      padding: 6px 8px;
+      min-height: 30px;
+      font-size: 12px;
+    }
+    .tasks {
+      margin-top: 16px;
+    }
+    .task-list {
+      padding: 12px 14px;
+      display: grid;
+      gap: 8px;
+      max-height: 240px;
+      overflow: auto;
+    }
+    .task {
+      border: 1px solid var(--line);
+      background: #121722;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 13px;
+    }
+    .task-meta {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 12px;
+    }
+    .empty {
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+    @media (max-width: 900px) {
+      .stats, main.shell {
+        grid-template-columns: 1fr;
+      }
+      .toolbar input[type="search"] {
+        width: 100%;
+      }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Agent Observatory</h1>
-            <p class="subtitle">System Health & Live Monitoring</p>
-        </header>
+  <header>
+    <div class="shell">
+      <div class="topbar">
+        <h1>Agent Memory Manager</h1>
+        <div id="status" class="status">Ready</div>
+      </div>
+      <div class="stats" id="stats"></div>
+    </div>
+  </header>
 
-        <section class="stats-grid" id="stats-container">
-            <div class="card stat-card"><div class="stat-value">...</div><div class="stat-label">Loading Stats</div></div>
-        </section>
+  <main class="shell">
+    <div>
+      <section>
+        <div class="section-head">
+          <h2 id="form-title">新增記憶</h2>
+          <button class="secondary" type="button" id="reset-form">清空</button>
+        </div>
+        <form id="memory-form">
+          <input type="hidden" id="memory-id">
+          <label>Subject
+            <input id="subject" required autocomplete="off" placeholder="user">
+          </label>
+          <label>Predicate
+            <input id="predicate" required autocomplete="off" placeholder="prefers">
+          </label>
+          <label>Object
+            <textarea id="object" required placeholder="Python"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>Type
+              <input id="memory-type" value="fact">
+            </label>
+            <label>Scope
+              <input id="scope" value="global">
+            </label>
+          </div>
+          <div class="form-grid">
+            <label>Confidence
+              <input id="confidence" type="number" min="0" max="1" step="0.01" value="0.8">
+            </label>
+            <label>Expires At
+              <input id="expires-at" placeholder="YYYY-MM-DD HH:MM:SS">
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit" id="submit-btn">儲存</button>
+            <button class="secondary" type="button" id="reload-btn">重新整理</button>
+          </div>
+        </form>
+      </section>
 
-        <section class="main-grid">
-            <div class="card">
-                <h2>📝 Recent Semantic Memories</h2>
-                <div class="list-container" id="memories-container">
-                    <div class="loading">Loading memories...</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>⚡ Task Queue & History</h2>
-                <div class="list-container" id="tasks-container">
-                    <div class="loading">Loading tasks...</div>
-                </div>
-            </div>
-        </section>
+      <section class="tasks">
+        <div class="section-head">
+          <h2>最近任務</h2>
+        </div>
+        <div class="task-list" id="tasks"></div>
+      </section>
     </div>
 
-    <script>
-        async function fetchAPI(endpoint) {
-            try {
-                const res = await fetch(endpoint);
-                if (!res.ok) throw new Error('API Error');
-                return await res.json();
-            } catch (e) {
-                console.error('Failed to fetch', endpoint, e);
-                return null;
-            }
-        }
+    <section>
+      <div class="section-head">
+        <h2>語意記憶</h2>
+        <div class="toolbar">
+          <input type="search" id="search" placeholder="搜尋 subject / predicate / object">
+          <label><input type="checkbox" id="include-archived"> 顯示封存</label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Fact</th>
+              <th>Type</th>
+              <th>Scope</th>
+              <th>Confidence</th>
+              <th>Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="memory-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
 
-        function renderStats(stats) {
-            if (!stats) return;
-            const container = document.getElementById('stats-container');
-            container.innerHTML = `
-                <div class="card stat-card">
-                    <div class="stat-value">${stats.semantic_memory_count || 0}</div>
-                    <div class="stat-label">Active Memories</div>
-                </div>
-                <div class="card stat-card">
-                    <div class="stat-value">${stats.procedure_count || 0}</div>
-                    <div class="stat-label">Procedures</div>
-                </div>
-                <div class="card stat-card">
-                    <div class="stat-value">${stats.pending_tasks || 0} / ${stats.running_tasks || 0}</div>
-                    <div class="stat-label">Pending / Running Tasks</div>
-                </div>
-                <div class="card stat-card">
-                    <div class="stat-value">${stats.failed_tasks || 0}</div>
-                    <div class="stat-label">Failed Tasks</div>
-                </div>
-            `;
-        }
+  <script>
+    const state = { memories: [] };
+    const $ = id => document.getElementById(id);
 
-        function renderMemories(memories) {
-            const container = document.getElementById('memories-container');
-            if (!memories || memories.length === 0) {
-                container.innerHTML = '<div class="loading">No active memories found.</div>';
-                return;
-            }
-            container.innerHTML = memories.map(m => `
-                <div class="list-item">
-                    <div class="memory-text">${m.subject} ${m.predicate} ${m.object}</div>
-                    <div class="meta">
-                        <span>ID: #${m.id} | Conf: ${(m.confidence * 100).toFixed(0)}%</span>
-                        <span>${new Date(m.created_at).toLocaleString()}</span>
-                    </div>
-                </div>
-            `).join('');
-        }
+    function setStatus(message, isError = false) {
+      const node = $('status');
+      node.textContent = message;
+      node.style.color = isError ? 'var(--red)' : 'var(--muted)';
+    }
 
-        function renderTasks(tasks) {
-            const container = document.getElementById('tasks-container');
-            if (!tasks || tasks.length === 0) {
-                container.innerHTML = '<div class="loading">No tasks found.</div>';
-                return;
-            }
-            container.innerHTML = tasks.map(t => {
-                const badgeClass = t.status === 'completed' ? 'completed' : 
-                                  t.status === 'failed' ? 'failed' : 
-                                  t.status === 'running' ? 'running' : 'pending';
-                
-                return `
-                <div class="list-item">
-                    <div class="memory-text">${t.text || 'Background Task'}</div>
-                    ${t.error_message ? `<div style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;">Error: ${t.error_message}</div>` : ''}
-                    <div class="meta">
-                        <span class="badge ${badgeClass}">${t.status.toUpperCase()}</span>
-                        <span>${new Date(t.created_at).toLocaleString()}</span>
-                    </div>
-                </div>
-            `}).join('');
-        }
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+      }
+      return payload;
+    }
 
-        async function updateDashboard() {
-            const [stats, memories, tasks] = await Promise.all([
-                fetchAPI('/api/stats'),
-                fetchAPI('/api/memories'),
-                fetchAPI('/api/tasks')
-            ]);
-            
-            renderStats(stats);
-            renderMemories(memories);
-            renderTasks(tasks);
-        }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[ch]));
+    }
 
-        // Init and refresh every 10 seconds
-        updateDashboard();
-        setInterval(updateDashboard, 10000);
-    </script>
+    function formPayload() {
+      return {
+        subject: $('subject').value.trim(),
+        predicate: $('predicate').value.trim(),
+        object: $('object').value.trim(),
+        memory_type: $('memory-type').value.trim() || 'fact',
+        scope: $('scope').value.trim() || 'global',
+        confidence: Number($('confidence').value),
+        expires_at: $('expires-at').value.trim() || null
+      };
+    }
+
+    function resetForm() {
+      $('memory-id').value = '';
+      $('subject').value = '';
+      $('predicate').value = '';
+      $('object').value = '';
+      $('memory-type').value = 'fact';
+      $('scope').value = 'global';
+      $('confidence').value = '0.8';
+      $('expires-at').value = '';
+      $('form-title').textContent = '新增記憶';
+      $('submit-btn').textContent = '儲存';
+    }
+
+    function editMemory(id) {
+      const memory = state.memories.find(item => item.id === id);
+      if (!memory) return;
+      $('memory-id').value = memory.id;
+      $('subject').value = memory.subject || '';
+      $('predicate').value = memory.predicate || '';
+      $('object').value = memory.object || '';
+      $('memory-type').value = memory.memory_type || 'fact';
+      $('scope').value = memory.scope || 'global';
+      $('confidence').value = memory.confidence ?? 0.5;
+      $('expires-at').value = memory.expires_at || '';
+      $('form-title').textContent = `編輯記憶 #${memory.id}`;
+      $('submit-btn').textContent = '更新';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function archiveMemory(id) {
+      if (!confirm(`封存記憶 #${id}?`)) return;
+      await api(`/api/memories/${id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reason: 'web_management_delete' })
+      });
+      setStatus(`Archived memory #${id}`);
+      await loadAll();
+    }
+
+    async function restoreMemory(id) {
+      await api(`/api/memories/${id}/restore`, { method: 'POST', body: JSON.stringify({}) });
+      setStatus(`Restored memory #${id}`);
+      await loadAll();
+    }
+
+    function renderStats(stats) {
+      $('stats').innerHTML = [
+        ['Active Memories', stats.semantic_memory_count || 0],
+        ['Low Confidence', stats.low_confidence_memory_count || 0],
+        ['Procedures', stats.procedure_count || 0],
+        ['Pending Tasks', stats.pending_tasks || 0],
+        ['Failed Tasks', stats.failed_tasks || 0]
+      ].map(([label, value]) => `
+        <div class="stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>
+      `).join('');
+    }
+
+    function filteredMemories() {
+      const term = $('search').value.trim().toLowerCase();
+      if (!term) return state.memories;
+      return state.memories.filter(memory =>
+        [memory.subject, memory.predicate, memory.object, memory.memory_type, memory.scope]
+          .some(value => String(value || '').toLowerCase().includes(term))
+      );
+    }
+
+    function renderMemories() {
+      const rows = filteredMemories();
+      if (!rows.length) {
+        $('memory-rows').innerHTML = '<tr><td colspan="7" class="empty">No memories found.</td></tr>';
+        return;
+      }
+      $('memory-rows').innerHTML = rows.map(memory => {
+        const archived = Boolean(memory.archived_at);
+        const confidence = `${Math.round(Number(memory.confidence || 0) * 100)}%`;
+        return `
+          <tr class="${archived ? 'archived' : ''}">
+            <td>#${memory.id}</td>
+            <td class="fact">
+              <strong>${escapeHtml(memory.subject)}</strong>
+              ${escapeHtml(memory.predicate)}
+              ${escapeHtml(memory.object)}
+              ${archived ? `<div class="pill">封存：${escapeHtml(memory.archive_reason || '')}</div>` : ''}
+            </td>
+            <td><span class="pill">${escapeHtml(memory.memory_type)}</span></td>
+            <td>${escapeHtml(memory.scope)}</td>
+            <td>${confidence}</td>
+            <td>${escapeHtml(memory.updated_at || memory.created_at || '')}</td>
+            <td>
+              <div class="row-actions">
+                <button class="secondary" type="button" onclick="editMemory(${memory.id})">編輯</button>
+                ${archived
+                  ? `<button class="success" type="button" onclick="restoreMemory(${memory.id})">復原</button>`
+                  : `<button class="danger" type="button" onclick="archiveMemory(${memory.id})">封存</button>`}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderTasks(tasks) {
+      if (!tasks || !tasks.length) {
+        $('tasks').innerHTML = '<div class="empty">No recent tasks.</div>';
+        return;
+      }
+      $('tasks').innerHTML = tasks.slice(0, 8).map(task => `
+        <div class="task">
+          <div>${escapeHtml(task.text || 'Background task')}</div>
+          <div class="task-meta">#${task.id} · ${escapeHtml(task.status)} · ${escapeHtml(task.created_at || '')}</div>
+          ${task.last_error ? `<div class="task-meta" style="color:var(--red)">${escapeHtml(task.last_error)}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    async function loadAll() {
+      setStatus('Loading...');
+      const includeArchived = $('include-archived').checked ? '1' : '0';
+      const [stats, memories, tasks] = await Promise.all([
+        api('/api/stats'),
+        api(`/api/memories?limit=200&include_archived=${includeArchived}`),
+        api('/api/tasks?limit=20')
+      ]);
+      state.memories = memories;
+      renderStats(stats);
+      renderMemories();
+      renderTasks(tasks);
+      setStatus(`Loaded ${memories.length} memories`);
+    }
+
+    $('memory-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        const id = $('memory-id').value;
+        const payload = formPayload();
+        if (id) {
+          await api(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+          setStatus(`Updated memory #${id}`);
+        } else {
+          await api('/api/memories', { method: 'POST', body: JSON.stringify(payload) });
+          setStatus('Created memory');
+        }
+        resetForm();
+        await loadAll();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+
+    $('reset-form').addEventListener('click', resetForm);
+    $('reload-btn').addEventListener('click', loadAll);
+    $('include-archived').addEventListener('change', loadAll);
+    $('search').addEventListener('input', renderMemories);
+
+    loadAll().catch(error => setStatus(error.message, true));
+  </script>
 </body>
 </html>

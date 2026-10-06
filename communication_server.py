@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import mimetypes
 import os
+from pathlib import Path
 import threading
 from typing import Any
 from urllib.parse import urlparse
@@ -13,6 +15,7 @@ from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_store import CommunicationStore
 from scheduler import SchedulerWorker
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
+from web_api import handle_api_request
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -223,6 +226,9 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/"):
+                self._handle_api("POST")
+                return
             adapter_name = None
             if parsed.path.startswith("/webhooks/"):
                 adapter_name = parsed.path.split("/")[-1]
@@ -263,6 +269,24 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
             if parsed.path == "/health":
                 self._send_json(200, {"ok": True})
                 return
+            if parsed.path.startswith("/api/"):
+                self._handle_api("GET")
+                return
+            if parsed.path == "/":
+                self._send_static_file(Path("web") / "index.html")
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_PUT(self) -> None:
+            if urlparse(self.path).path.startswith("/api/"):
+                self._handle_api("PUT")
+                return
+            self._send_json(404, {"ok": False, "error": "not_found"})
+
+        def do_DELETE(self) -> None:
+            if urlparse(self.path).path.startswith("/api/"):
+                self._handle_api("DELETE")
+                return
             self._send_json(404, {"ok": False, "error": "not_found"})
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -273,10 +297,37 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
             content_length = int(self.headers.get("Content-Length", "0") or "0")
             return self.rfile.read(content_length)
 
-        def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
+        def _handle_api(self, method: str) -> None:
+            status_code, payload = handle_api_request(
+                self.path,
+                method=method,
+                body=self._read_body() if method in ("POST", "PUT", "DELETE") else None,
+            )
+            self._send_json(status_code, payload)
+
+        def _send_json(self, status_code: int, payload: Any) -> None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _send_static_file(self, path: Path) -> None:
+            root = Path(__file__).resolve().parent
+            full_path = (root / path).resolve()
+            try:
+                full_path.relative_to(root.resolve())
+            except ValueError:
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            if not full_path.is_file():
+                self._send_json(404, {"ok": False, "error": "not_found"})
+                return
+            data = full_path.read_bytes()
+            content_type = mimetypes.guess_type(str(full_path))[0] or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)

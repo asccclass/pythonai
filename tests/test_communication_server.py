@@ -44,6 +44,15 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["ok"], True)
 
+    def test_root_serves_memory_management_interface(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self._running_server(self._service(temp_dir=temp_dir)) as address:
+                status, content_type, body = self._raw_request(address, "GET", "/")
+
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", content_type)
+        self.assertIn("Agent Memory Manager", body)
+
     def test_telegram_webhook_enqueues_command(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             service = self._service(temp_dir=temp_dir, secret="secret")
@@ -316,6 +325,16 @@ class CommunicationServerTests(unittest.TestCase):
             response = connection.getresponse()
             payload = json.loads(response.read().decode("utf-8"))
             return response.status, payload
+        finally:
+            connection.close()
+
+    def _raw_request(self, address, method, path, body=None, headers=None):
+        connection = http.client.HTTPConnection(address[0], address[1], timeout=5)
+        try:
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            payload = response.read().decode("utf-8")
+            return response.status, response.getheader("Content-Type", ""), payload
         finally:
             connection.close()
 

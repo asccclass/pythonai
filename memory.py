@@ -425,6 +425,72 @@ class MemoryStore:
             )
             connection.commit()
 
+    def update_semantic_memory(
+        self,
+        memory_id: int,
+        *,
+        subject: str,
+        predicate: str,
+        object_value: str,
+        confidence: float,
+        memory_type: str = "fact",
+        scope: str = "global",
+        expires_at: str | None = None,
+    ) -> bool:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                "SELECT source_event_id FROM semantic_memories WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            subject_entity_id = self._get_or_create_entity(
+                connection,
+                subject,
+                infer_entity_type(subject, memory_type),
+                int(row["source_event_id"]),
+            )
+            object_entity_id = None
+            if should_link_object_entity(object_value, memory_type):
+                object_entity_id = self._get_or_create_entity(
+                    connection,
+                    object_value,
+                    infer_entity_type(object_value, memory_type),
+                    int(row["source_event_id"]),
+                )
+            cursor = connection.execute(
+                """
+                UPDATE semantic_memories
+                SET subject = ?,
+                    predicate = ?,
+                    object = ?,
+                    subject_entity_id = ?,
+                    object_entity_id = ?,
+                    memory_type = ?,
+                    scope = ?,
+                    confidence = ?,
+                    expires_at = ?,
+                    embedding = NULL,
+                    embedding_updated_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    subject,
+                    predicate,
+                    object_value,
+                    subject_entity_id,
+                    object_entity_id,
+                    memory_type,
+                    scope,
+                    confidence,
+                    expires_at,
+                    memory_id,
+                ),
+            )
+            connection.commit()
+            return cursor.rowcount > 0
+
     def update_semantic_embedding(self, memory_id: int, embedding: list[float] | str) -> None:
         embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
@@ -800,6 +866,21 @@ class MemoryStore:
             )
             connection.commit()
             return int(cursor.lastrowid)
+
+    def restore_semantic_memory(self, memory_id: int) -> bool:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE semantic_memories
+                SET archived_at = NULL,
+                    archive_reason = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (memory_id,),
+            )
+            connection.commit()
+            return cursor.rowcount > 0
 
     def pending_memory_jobs(self, job_type: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         query = """
