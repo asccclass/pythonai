@@ -182,6 +182,7 @@ class MCPManager:
     def __init__(self, config_path: str = "mcp_config.json"):
         self.config_path = config_path
         self.clients: Dict[str, MCPClient] = {}
+        self.skipped_servers: Dict[str, str] = {}
         
     def load_config_and_start(self):
         """Load the config file and start all configured MCP servers."""
@@ -201,12 +202,15 @@ class MCPManager:
             cwd = server_config.get("cwd")
             
             client = MCPClient(name, command, args, env, cwd)
-            print(f"Starting MCP Server: {name}")
             try:
                 client.start()
                 self.clients[name] = client
             except Exception as e:
-                print(f"Failed to start MCP Server {name}: {e}")
+                self.skipped_servers[name] = str(e)
+                try:
+                    client.stop()
+                except Exception:
+                    pass
 
     def get_all_tools(self) -> List[Dict[str, Any]]:
         """Get all tools from all registered MCP servers, formatted for OpenAI API."""

@@ -42,6 +42,41 @@ class MCPManagerTests(unittest.TestCase):
             )
             client_class.return_value.start.assert_called_once_with()
 
+    def test_load_config_skips_failed_server_without_printing_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "mcp_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "aisms": {
+                                "command": "missing-mcp.exe",
+                                "args": [],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("mcp_manager.MCPClient") as client_class,
+                patch("builtins.print") as print_mock,
+            ):
+                client_class.return_value.start.side_effect = FileNotFoundError(
+                    2,
+                    "系統找不到指定的檔案。",
+                    "missing-mcp.exe",
+                )
+                manager = MCPManager(str(config_path))
+                manager.load_config_and_start()
+
+            self.assertEqual(manager.clients, {})
+            self.assertIn("aisms", manager.skipped_servers)
+            self.assertIn("missing-mcp.exe", manager.skipped_servers["aisms"])
+            print_mock.assert_not_called()
+            client_class.return_value.stop.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
