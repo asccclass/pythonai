@@ -18,6 +18,7 @@ from observability import (
     low_confidence_facts,
     main,
     memory_health,
+    hook_executions,
     memory_messages,
     memory_overview,
     procedures,
@@ -43,6 +44,25 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIn("active_procedures", overview)
         self.assertIn("archived_procedures", overview)
         self.assertIn("review_candidates", overview)
+
+    def test_hook_executions_summarizes_lifecycle_decisions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            episode_id = store.start_episode()
+            store.add_event(
+                episode_id,
+                "hook_execution",
+                metadata={
+                    "hook": "guard",
+                    "lifecycle": "PreToolExecute",
+                    "decision": "return_tool_error",
+                },
+            )
+
+            result = hook_executions(store)
+
+        self.assertEqual(result["summary"]["PreToolExecute"]["return_tool_error"], 1)
+        self.assertEqual(result["events"][0]["metadata"]["hook"], "guard")
 
     def test_inspect_episode_returns_events(self):
         with tempfile.TemporaryDirectory() as temp_dir:

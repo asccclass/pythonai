@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from exceptions import TaskSuspendedException
@@ -14,6 +16,7 @@ from openai import OpenAI
 
 from agent_runtime import AgentRuntime, format_guard_notice, run_agent_turn, should_skip_laya_for_user_request
 from base import TOOLS_SCHEMAS, load_dotenv, run_skill, run_tool_with_context
+from hooks import HookContext, HookDecision, HookLifecycle, HookManager
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
@@ -173,6 +176,7 @@ def run_agent(
     check_cancelled: Callable[[], bool] | None = None,
     task_evaluator: TaskEvaluator | None = None,
     max_eval_retries: int = 2,
+    hook_manager: HookManager | None = None,
 ):
     iteration = 0
     eval_retries = 0
@@ -182,6 +186,18 @@ def run_agent(
             return "Task was cancelled by the user."
             
         iteration += 1
+        if hook_manager is not None:
+            hook_context = HookContext(
+                lifecycle=HookLifecycle.PRE_MODEL_CALL,
+                messages=messages,
+                model_request={"model": OLLAMA_MODEL, "tools": TOOLS_SCHEMAS},
+                memory=memory,
+                episode_id=episode_id,
+                metadata={"iteration": iteration},
+            )
+            hook_result = hook_manager.dispatch(HookLifecycle.PRE_MODEL_CALL, hook_context)
+            if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
         attempts = 0
         while True:
             try:
@@ -212,6 +228,21 @@ def run_agent(
                 sleep(delay)
         assistant_message = response.choices[0].message
         messages.append(assistant_message_to_dict(assistant_message))
+        if hook_manager is not None:
+            hook_context = HookContext(
+                lifecycle=HookLifecycle.POST_MODEL_CALL,
+                messages=messages,
+                model_response=assistant_message,
+                memory=memory,
+                episode_id=episode_id,
+                metadata={"iteration": iteration},
+            )
+            hook_result = hook_manager.dispatch(HookLifecycle.POST_MODEL_CALL, hook_context)
+            if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+            if hook_result.decision == HookDecision.APPEND_FEEDBACK:
+                messages.append({"role": "user", "content": hook_result.feedback})
+                continue
 
         if assistant_message.tool_calls:
             suspend_request = None
@@ -238,7 +269,58 @@ def run_agent(
                     suspend_request = (tool_call.id, question)
                     continue
 
+                tool_name = tool_call.function.name
+                tool_args = parse_tool_arguments(tool_call.function.arguments)
+                if hook_manager is not None:
+                    hook_context = HookContext(
+                        lifecycle=HookLifecycle.PRE_TOOL_EXECUTE,
+                        messages=messages,
+                        tool_call=tool_call,
+                        tool_name=tool_name,
+                        tool_arguments=tool_args,
+                        memory=memory,
+                        episode_id=episode_id,
+                        metadata={"iteration": iteration},
+                    )
+                    hook_result = hook_manager.dispatch(HookLifecycle.PRE_TOOL_EXECUTE, hook_context)
+                    tool_name = hook_context.tool_name or tool_name
+                    tool_args = hook_context.tool_arguments
+                    if hook_result.decision in {HookDecision.BLOCK, HookDecision.RETURN_TOOL_ERROR}:
+                        result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} blocked by hook"
+                        messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
+                        log_episode_event(
+                            memory,
+                            episode_id,
+                            "tool_result",
+                            content=str(result),
+                            metadata={"tool_call_id": tool_call.id, "blocked_by_hook": True},
+                        )
+                        continue
+                    if hook_result.decision == HookDecision.RETURN_EARLY:
+                        return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+                    tool_call = mutable_tool_call(tool_call, tool_name, tool_args)
+
                 result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                if hook_manager is not None:
+                    hook_context = HookContext(
+                        lifecycle=HookLifecycle.POST_TOOL_EXECUTE,
+                        messages=messages,
+                        tool_call=tool_call,
+                        tool_name=tool_name,
+                        tool_arguments=tool_args,
+                        tool_result=result,
+                        memory=memory,
+                        episode_id=episode_id,
+                        metadata={"iteration": iteration},
+                    )
+                    hook_result = hook_manager.dispatch(HookLifecycle.POST_TOOL_EXECUTE, hook_context)
+                    result = hook_context.tool_result
+                    if hook_result.decision == HookDecision.APPEND_FEEDBACK:
+                        messages.append({"role": "user", "content": hook_result.feedback})
+                    elif hook_result.decision in {HookDecision.BLOCK, HookDecision.RETURN_TOOL_ERROR}:
+                        result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} rejected by hook"
+                    elif hook_result.decision == HookDecision.RETURN_EARLY:
+                        return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
                 log_episode_event(
                     memory,
                     episode_id,
@@ -371,6 +453,24 @@ def record_tool_procedure_result(
 
 def tool_result_succeeded(result: Any) -> bool:
     return not str(result).lstrip().lower().startswith("error:")
+
+
+def parse_tool_arguments(arguments: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(arguments or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def mutable_tool_call(tool_call: Any, tool_name: str, tool_arguments: dict[str, Any]) -> Any:
+    return SimpleNamespace(
+        id=tool_call.id,
+        function=SimpleNamespace(
+            name=tool_name,
+            arguments=json.dumps(tool_arguments, ensure_ascii=False),
+        ),
+    )
 
 
 def assistant_message_to_dict(assistant_message: Any) -> dict[str, Any]:

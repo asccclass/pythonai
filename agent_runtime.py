@@ -7,6 +7,7 @@ import re
 import subprocess
 from typing import Any, Callable
 
+from hooks import HookManager
 from memory import MemoryStore
 from request_budget import foreground_memory_budget
 from retrieval import build_combined_memory_context, build_memory_context, inject_memory_context
@@ -43,6 +44,7 @@ class AgentRuntime:
     async_memory_review: bool = True
     check_cancelled: Callable[[], bool] | None = None
     task_evaluator: Any | None = None
+    hook_manager: HookManager | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,7 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
                 episode_id=episode_id,
                 check_cancelled=runtime.check_cancelled,
                 task_evaluator=getattr(runtime, "task_evaluator", None),
+                hook_manager=getattr(runtime, "hook_manager", None),
             )
         except TypeError:
             reply = runtime.run_agent(
@@ -392,6 +395,7 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
                 episode_id=episode_id,
                 check_cancelled=runtime.check_cancelled,
                 task_evaluator=getattr(runtime, "task_evaluator", None),
+                hook_manager=getattr(runtime, "hook_manager", None),
             )
         except TypeError:
             reply = runtime.run_agent(

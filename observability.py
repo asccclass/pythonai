@@ -144,6 +144,18 @@ def memory_health(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
     }
 
 
+def hook_executions(store: MemoryStore, limit: int = 50) -> dict[str, Any]:
+    events = store.events_by_type("hook_execution", limit=limit)
+    summary: dict[str, dict[str, int]] = {}
+    for event in events:
+        metadata = event.get("metadata") or {}
+        lifecycle = str(metadata.get("lifecycle", "unknown"))
+        decision = str(metadata.get("decision", "unknown"))
+        lifecycle_summary = summary.setdefault(lifecycle, {})
+        lifecycle_summary[decision] = lifecycle_summary.get(decision, 0) + 1
+    return {"limit": limit, "events": events, "summary": summary}
+
+
 def semantic_conflicts(store: MemoryStore) -> dict[str, Any]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for memory in store.active_semantic_memories():
@@ -363,6 +375,7 @@ def main() -> None:
             "low-confidence",
             "embedding-candidates",
             "backfill-embeddings",
+            "hooks",
             "memory-health",
             "conflicts",
             "archive-fact",
@@ -419,6 +432,8 @@ def main() -> None:
         payload = embedding_backfill_candidates(store, limit=args.limit, stale_before=args.stale_before)
     elif args.command == "backfill-embeddings":
         payload = backfill_embeddings(store, limit=args.limit, stale_before=args.stale_before)
+    elif args.command == "hooks":
+        payload = hook_executions(store, limit=args.limit)
     elif args.command == "memory-health":
         payload = memory_health(store, limit=args.limit)
     elif args.command == "conflicts":
