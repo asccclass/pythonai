@@ -59,32 +59,6 @@ class MultiWebhookService:
         )
         return {"ok": True, "queued": len(commands)}
 
-
-class TelegramWebhookService(MultiWebhookService):
-    def __init__(
-        self,
-        store: CommunicationStore,
-        adapter: TelegramAdapter,
-        worker: CommunicationWorker,
-        runtime: AgentRuntime | None = None,
-        allowed_senders: set[str] | None = None,
-        worker_interval_seconds: float = 0.2,
-    ) -> None:
-        super().__init__(
-            store=store,
-            adapters={"telegram": adapter},
-            worker=worker,
-            runtime=runtime,
-            allowed_senders=allowed_senders,
-            worker_interval_seconds=worker_interval_seconds,
-        )
-        self.adapter = adapter
-
-    def handle_webhook(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        if len(args) == 2 and isinstance(args[0], dict):
-            return super().handle_webhook("telegram", args[0], args[1])
-        return super().handle_webhook(*args, **kwargs)
-
     def process_pending_once(self) -> int:
         processed = 0
         while self.worker.process_next() is not None:
@@ -110,6 +84,31 @@ class TelegramWebhookService(MultiWebhookService):
             if processed == 0:
                 self._stop_event.wait(self.worker_interval_seconds)
 
+
+class TelegramWebhookService(MultiWebhookService):
+    def __init__(
+        self,
+        store: CommunicationStore,
+        adapter: TelegramAdapter,
+        worker: CommunicationWorker,
+        runtime: AgentRuntime | None = None,
+        allowed_senders: set[str] | None = None,
+        worker_interval_seconds: float = 0.2,
+    ) -> None:
+        super().__init__(
+            store=store,
+            adapters={"telegram": adapter},
+            worker=worker,
+            runtime=runtime,
+            allowed_senders=allowed_senders,
+            worker_interval_seconds=worker_interval_seconds,
+        )
+        self.adapter = adapter
+
+    def handle_webhook(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if len(args) == 2 and isinstance(args[0], dict):
+            return super().handle_webhook("telegram", args[0], args[1])
+        return super().handle_webhook(*args, **kwargs)
 
 def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
     import server

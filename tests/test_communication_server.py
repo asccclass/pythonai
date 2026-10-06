@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_server import (
+    MultiWebhookService,
     TelegramWebhookService,
     create_agent_runtime,
     create_asgi_app,
@@ -61,6 +62,23 @@ class CommunicationServerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"ok": True})
+
+    def test_asgi_startup_accepts_multi_webhook_service(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            worker = CommunicationWorker(store, {}, lambda command: "ok")
+            service = MultiWebhookService(store=store, adapters={}, worker=worker)
+            with (
+                patch.object(service, "start_worker_loop") as start_mock,
+                patch.object(service, "stop_worker_loop") as stop_mock,
+                patch("communication_server.scheduler_worker"),
+                TestClient(create_asgi_app(service)) as client,
+            ):
+                response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        start_mock.assert_called_once_with()
+        stop_mock.assert_called_once_with()
 
     def test_root_serves_memory_management_interface(self):
         with tempfile.TemporaryDirectory() as temp_dir:
