@@ -60,11 +60,23 @@ Use `communication_server.py` when Telegram should deliver messages to the agent
 
 `communication_server.py` creates the same agent runtime used by `server.py`, starts background processing for queued Telegram messages, and should be used together with a public tunnel or public host when Telegram webhook mode is enabled.
 
+Use `websocket_server.py` when a desktop, mobile, or browser companion client needs a persistent WebSocket channel. It exposes `/ws/v1` using the companion protocol in `papers/websocket.md`: the first client message must be `hello`, followed by JSON control messages such as `ping`, `ack`, `chat.send`, `event`, `state.report`, `tool.result`, and `settings.update`. Binary frames are reserved for audio stream payloads.
+
 In short:
 
 - Local terminal chat: run `python .\server.py`.
 - Telegram long polling without a public URL: run `python .\telegram_polling_worker.py`.
 - Telegram webhook with a public URL or tunnel: run `python .\communication_server.py`.
+- Companion WebSocket endpoint: run `python -m uvicorn websocket_server:app --host 127.0.0.1 --port 8765`.
+
+Configure WebSocket tokens with one of these environment variables:
+
+```env
+COMPANION_WS_TOKENS=desktop-token:andy,mobile-token:andy
+COMPANION_WS_TOKEN=single-token:andy
+```
+
+Do not put the token in the WebSocket URL. Send it in the first `hello` message payload.
 
 ## Telegram Webhook
 
