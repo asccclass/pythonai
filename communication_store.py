@@ -71,7 +71,18 @@ class CommunicationStore:
                 )
                 """
             )
+            self._ensure_agent_command_job_columns(connection)
             connection.commit()
+
+    def _ensure_agent_command_job_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(agent_command_jobs)").fetchall()
+        }
+        if "state" not in columns:
+            connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN state TEXT")
+        if "suspended_tool_call_id" not in columns:
+            connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN suspended_tool_call_id TEXT")
 
     def record_inbound_message(self, message: InboundMessage) -> tuple[int, bool]:
         with closing(self.connect()) as connection:

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import base
 from types import SimpleNamespace
 import tempfile
@@ -106,6 +107,50 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].text, "hello")
+
+    def test_store_migrates_suspended_command_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "communication.db"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE agent_command_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        command_id TEXT NOT NULL UNIQUE,
+                        platform TEXT NOT NULL,
+                        conversation_id TEXT NOT NULL,
+                        sender_id TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        requires_confirmation INTEGER NOT NULL DEFAULT 0,
+                        source_message_id INTEGER,
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        result_text TEXT,
+                        last_error TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO agent_command_jobs (
+                        command_id, platform, conversation_id, sender_id, text
+                    )
+                    VALUES ('cmd-1', 'telegram', '456', '123', 'hello')
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            store = CommunicationStore(db_path)
+            store.suspend_command("cmd-1", '{"messages":[]}', "tool-1")
+
+            suspended = store.get_suspended_command("456")
+
+        self.assertEqual(suspended, ("cmd-1", '{"messages":[]}', "tool-1"))
 
     def test_enqueue_adapter_events_enforces_allowed_senders(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="")
