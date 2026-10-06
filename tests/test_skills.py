@@ -284,6 +284,22 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(args["cwd"], "skills\\mybrain_query_cli\\scripts")
         self.assertEqual(args["env_file"], "skills\\mybrain_query_cli\\scripts\\envfile")
 
+    def test_security_audit_skill_loads_as_guidance_skill(self):
+        skill = load_skill(Path("skills") / "security_audit")
+
+        self.assertEqual(skill.name, "security_audit")
+        self.assertEqual(skill.allowed_tools, [])
+        self.assertEqual(skill.execution["steps"], [])
+        self.assertIn("security audit", skill.triggers)
+        self.assertIn("Require a boundary and result", skill.instructions)
+
+    def test_security_audit_skill_matches_security_review_request(self):
+        matcher = SkillMatcher(SkillRegistry(Path("skills")))
+
+        matches = matcher.match("please do a security review of generated code")
+
+        self.assertIn("security_audit", [match.skill.name for match in matches])
+
 
 if __name__ == "__main__":
     unittest.main()

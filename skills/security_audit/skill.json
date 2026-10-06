@@ -1,0 +1,29 @@
+{
+  "name": "security_audit",
+  "description": "Security guidance and vulnerability review for codebases, APIs, services, CLI tools, libraries, agents, and generated code.",
+  "triggers": [
+    "security audit",
+    "security review",
+    "security check",
+    "vulnerability",
+    "vulnerabilities",
+    "pen test",
+    "pentest",
+    "secure code",
+    "安全審查",
+    "安全审查",
+    "安全稽核",
+    "漏洞",
+    "程式碼安全",
+    "代码安全"
+  ],
+  "inputs": {
+    "type": "object",
+    "properties": {}
+  },
+  "allowed_tools": [],
+  "execution": {
+    "mode": "tool_sequence",
+    "steps": []
+  }
+}

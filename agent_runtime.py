@@ -102,7 +102,10 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
             "skill_candidates",
             metadata={"candidates": [match.to_dict() for match in skill_matches]},
         )
-    if len(skill_matches) == 1 and runtime.run_skill is not None and hasattr(skill_matches[0], "skill"):
+    executable_skill_matches = [
+        match for match in skill_matches if hasattr(match, "skill") and skill_has_executable_steps(match.skill)
+    ]
+    if len(skill_matches) == 1 and executable_skill_matches and runtime.run_skill is not None:
         selected = skill_matches[0].skill
         inputs = {"question": user_input} if "question" in selected.inputs.get("properties", {}) else {}
         result = runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id)
@@ -137,6 +140,16 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
         log_episode_event(runtime.memory, episode_id, "retrieval_context", content=memory_context)
 
     agent_messages = inject_memory_context(runtime.messages, memory_context)
+    skill_context = build_skill_guidance_context(skill_matches)
+    if skill_context:
+        agent_messages = [
+            {
+                "role": "system",
+                "content": skill_context,
+            },
+            *agent_messages,
+        ]
+        log_episode_event(runtime.memory, episode_id, "skill_guidance", content=skill_context)
     compacted_messages, working_summary, preservation_decision = compact_messages(
         agent_messages,
         preservation_classifier=None if skip_laya_for_turn else getattr(runtime.guard, "_agent", None),
@@ -199,6 +212,41 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
     finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn, status=episode_status)
 
     return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
+
+
+def skill_has_executable_steps(skill: Any) -> bool:
+    execution = getattr(skill, "execution", {}) or {}
+    steps = execution.get("steps", [])
+    allowed_tools = getattr(skill, "allowed_tools", []) or []
+    return bool(steps or allowed_tools)
+
+
+def build_skill_guidance_context(skill_matches: list[Any]) -> str:
+    guidance_blocks = []
+    for match in skill_matches:
+        skill = getattr(match, "skill", None)
+        if skill is None or skill_has_executable_steps(skill):
+            continue
+        instructions = getattr(skill, "instructions", "").strip()
+        if not instructions:
+            continue
+        guidance_blocks.append(
+            "\n".join(
+                [
+                    f"Skill guidance: {skill.name}",
+                    f"Description: {skill.description}",
+                    instructions,
+                ]
+            )
+        )
+    if not guidance_blocks:
+        return ""
+    return (
+        "Use the following matched local skill guidance while answering this turn. "
+        "It provides methodology and constraints; it does not by itself authorize tool execution, "
+        "file creation, or a full workflow unless the user explicitly requested that scope.\n\n"
+        + "\n\n---\n\n".join(guidance_blocks)
+    )
 
 
 def determine_episode_status(reply: str, memory: MemoryStore | None = None, episode_id: int | None = None) -> str:

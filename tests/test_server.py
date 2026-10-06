@@ -437,6 +437,71 @@ class ServerTests(unittest.TestCase):
         assistant = next(event for event in events if event["event_type"] == "message" and event["role"] == "assistant")
         self.assertEqual(assistant["content"], "正式區 IP 是 192.0.2.10")
 
+    def test_guidance_skill_match_injects_instructions_without_running_skill(self):
+        class Guard:
+            def assess(self, user_input):
+                return server.GuardDecision(intent="chat", risk=0.1, needs_confirmation=False)
+
+        skill = Skill(
+            name="security_audit",
+            description="Security guidance.",
+            triggers=["security audit"],
+            inputs={"type": "object", "properties": {}},
+            allowed_tools=[],
+            execution={"mode": "tool_sequence", "steps": []},
+            path=Path("skills/security_audit"),
+            instructions="Require source evidence before confirming a vulnerability.",
+        )
+
+        class Matcher:
+            def match(self, text):
+                return [SkillMatch(skill, "trigger:security audit")]
+
+        received_messages = []
+
+        def run_agent(messages, **kwargs):
+            received_messages.extend(messages)
+            return "reviewed"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(Path(temp_dir) / "memory.db")
+            runtime = server.AgentRuntime(
+                messages=[],
+                guard=Guard(),
+                memory=store,
+                memory_searcher=None,
+                skill_matcher=Matcher(),
+                memory_worker=None,
+                memory_classifier_factory=None,
+                semantic_extractor=None,
+                procedure_matcher=None,
+                run_agent=run_agent,
+                run_skill=lambda *args, **kwargs: self.fail("Guidance skills should not execute as tool skills"),
+            )
+
+            result = server.run_agent_turn("security audit this codebase", runtime)
+            events = store.recent_events(limit=10)
+
+        self.assertEqual(result.reply, "reviewed")
+        self.assertEqual(received_messages[0]["role"], "system")
+        self.assertIn("Skill guidance: security_audit", received_messages[0]["content"])
+        self.assertIn("Require source evidence", received_messages[0]["content"])
+        self.assertIn("skill_guidance", [event["event_type"] for event in events])
+
+    def test_allowed_tool_skill_without_steps_still_executes(self):
+        skill = Skill(
+            name="tool_backed",
+            description="Tool-backed skill.",
+            triggers=["tool backed"],
+            inputs={"type": "object", "properties": {}},
+            allowed_tools=["run_command"],
+            execution={"mode": "tool_sequence", "steps": []},
+            path=Path("skills/tool_backed"),
+            instructions="",
+        )
+
+        self.assertTrue(agent_runtime.skill_has_executable_steps(skill))
+
     def test_format_skill_reply_extracts_completed_process_stdout(self):
         reply = agent_runtime.format_skill_reply(
             {
