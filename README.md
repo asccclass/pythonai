@@ -63,14 +63,20 @@ Use `communication_server.py` when Telegram should deliver messages to the agent
 
 `communication_server.py` creates the same agent runtime used by `server.py`, starts background processing for queued Telegram messages, and can be deployed behind a public tunnel or reverse proxy for webhook and WebSocket traffic.
 
-Use `websocket_server.py` when a desktop, mobile, or browser companion client needs a persistent WebSocket channel. It exposes `/ws/v1` using the companion protocol in `papers/websocket.md`: the first client message must be `hello`, followed by JSON control messages such as `ping`, `ack`, `chat.send`, `event`, `state.report`, `tool.result`, and `settings.update`. Binary frames are reserved for audio stream payloads.
-
-In short:
+In short, use one of these three entry points:
 
 - Local terminal chat: run `python .\server.py`.
 - Telegram long polling without a public URL: run `python .\telegram_polling_worker.py`.
 - Unified HTTP webhook, dashboard, API, and WebSocket ASGI app: run `python .\communication_server.py`.
-- Standalone companion WebSocket app for focused local testing: run `python -m uvicorn websocket_server:app --host 127.0.0.1 --port 8765`.
+
+For the unified ASGI service, configure host, port, and WebSocket tokens as needed:
+
+```powershell
+$env:COMMUNICATION_HOST="127.0.0.1"
+$env:COMMUNICATION_PORT="8000"
+$env:COMPANION_WS_TOKENS="desktop-token:andy,mobile-token:andy"
+python .\communication_server.py
+```
 
 Configure WebSocket tokens with one of these environment variables:
 
