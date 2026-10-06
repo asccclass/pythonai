@@ -6,10 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_server import (
     TelegramWebhookService,
     create_agent_runtime,
+    create_asgi_app,
     create_request_handler,
     create_telegram_service,
     parse_allowed_senders,
@@ -44,6 +47,21 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["ok"], True)
 
+    def test_asgi_health_endpoint_returns_ok(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir)
+            with (
+                patch.object(service, "start_worker_loop"),
+                patch.object(service, "stop_worker_loop"),
+                patch("communication_server.scheduler_worker"),
+                patch("communication_server.print_telegram_connection_status"),
+                TestClient(create_asgi_app(service)) as client,
+            ):
+                response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})
+
     def test_root_serves_memory_management_interface(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self._running_server(self._service(temp_dir=temp_dir)) as address:
@@ -52,6 +70,22 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("text/html", content_type)
         self.assertIn("Agent Memory Manager", body)
+
+    def test_asgi_root_serves_memory_management_interface(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir)
+            with (
+                patch.object(service, "start_worker_loop"),
+                patch.object(service, "stop_worker_loop"),
+                patch("communication_server.scheduler_worker"),
+                patch("communication_server.print_telegram_connection_status"),
+                TestClient(create_asgi_app(service)) as client,
+            ):
+                response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("Agent Memory Manager", response.text)
 
     def test_telegram_webhook_enqueues_command(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -76,6 +110,45 @@ class CommunicationServerTests(unittest.TestCase):
         self.assertEqual(payload, {"ok": True, "queued": 1})
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].text, "hello")
+
+    def test_asgi_telegram_webhook_enqueues_command(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir, secret="secret")
+            with (
+                patch.object(service, "start_worker_loop"),
+                patch.object(service, "stop_worker_loop"),
+                patch("communication_server.scheduler_worker"),
+                patch("communication_server.print_telegram_connection_status"),
+                TestClient(create_asgi_app(service)) as client,
+            ):
+                response = client.post(
+                    "/webhooks/telegram",
+                    content=json.dumps(telegram_update("hello")),
+                    headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+                )
+            pending = service.store.pending_commands()
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json(), {"ok": True, "queued": 1})
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0].text, "hello")
+
+    def test_asgi_exposes_companion_websocket(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self._service(temp_dir=temp_dir)
+            with (
+                patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False),
+                patch.object(service, "start_worker_loop"),
+                patch.object(service, "stop_worker_loop"),
+                patch("communication_server.scheduler_worker"),
+                patch("communication_server.print_telegram_connection_status"),
+                TestClient(create_asgi_app(service)) as client,
+            ):
+                with client.websocket_connect("/ws/v1") as ws:
+                    ws.send_json({"type": "hello", "payload": {"token": "token-1", "device_id": "web-1"}})
+                    welcome = ws.receive_json()
+
+        self.assertEqual(welcome["type"], "welcome")
 
     def test_telegram_webhook_prints_received_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:

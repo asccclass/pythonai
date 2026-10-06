@@ -53,12 +53,15 @@ Use `server.py` when you want to chat with the agent directly from the local com
 
 Use `telegram_polling_worker.py` when you want Telegram integration during local development or on a machine without a public HTTPS URL. It calls Telegram `getUpdates` from your machine, queues incoming text messages, runs them through the shared agent runtime, and sends replies back to the Telegram chat. This mode does not require ngrok, a public IP, or webhook registration.
 
-Use `communication_server.py` when Telegram should deliver messages to the agent through HTTP webhooks. It starts a small HTTP server with these endpoints:
+Use `communication_server.py` when Telegram should deliver messages to the agent through HTTP webhooks, when you want the web dashboard, or when companion clients need WebSocket access. It starts a unified FastAPI / ASGI app with these endpoints:
 
 - `POST /webhooks/telegram`: verifies and queues Telegram webhook updates, then lets the communication worker process pending commands.
 - `GET /health`: returns a lightweight health response for local checks or tunnel monitoring.
+- `GET /`: serves the memory management web interface from `web/index.html`.
+- `/api/...`: serves dashboard and memory management JSON APIs.
+- `WebSocket /ws/v1`: accepts companion protocol connections.
 
-`communication_server.py` creates the same agent runtime used by `server.py`, starts background processing for queued Telegram messages, and should be used together with a public tunnel or public host when Telegram webhook mode is enabled.
+`communication_server.py` creates the same agent runtime used by `server.py`, starts background processing for queued Telegram messages, and can be deployed behind a public tunnel or reverse proxy for webhook and WebSocket traffic.
 
 Use `websocket_server.py` when a desktop, mobile, or browser companion client needs a persistent WebSocket channel. It exposes `/ws/v1` using the companion protocol in `papers/websocket.md`: the first client message must be `hello`, followed by JSON control messages such as `ping`, `ack`, `chat.send`, `event`, `state.report`, `tool.result`, and `settings.update`. Binary frames are reserved for audio stream payloads.
 
@@ -66,8 +69,8 @@ In short:
 
 - Local terminal chat: run `python .\server.py`.
 - Telegram long polling without a public URL: run `python .\telegram_polling_worker.py`.
-- Telegram webhook with a public URL or tunnel: run `python .\communication_server.py`.
-- Companion WebSocket endpoint: run `python -m uvicorn websocket_server:app --host 127.0.0.1 --port 8765`.
+- Unified HTTP webhook, dashboard, API, and WebSocket ASGI app: run `python .\communication_server.py`.
+- Standalone companion WebSocket app for focused local testing: run `python -m uvicorn websocket_server:app --host 127.0.0.1 --port 8765`.
 
 Configure WebSocket tokens with one of these environment variables:
 

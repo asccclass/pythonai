@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -10,12 +11,16 @@ import threading
 from typing import Any
 from urllib.parse import urlparse
 
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
+
 from agent_runtime import AgentRuntime
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_store import CommunicationStore
 from scheduler import SchedulerWorker
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
 from web_api import handle_api_request
+from websocket_server import ws_endpoint
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -335,6 +340,85 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
     return CommunicationRequestHandler
 
 
+def create_asgi_app(service: MultiWebhookService | None = None) -> FastAPI:
+    service = service or create_multi_service()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if hasattr(service, "adapter"):
+            print_telegram_connection_status(service.adapter)
+        elif "telegram" in getattr(service, "adapters", {}):
+            print_telegram_connection_status(service.adapters["telegram"])
+        service.start_worker_loop()
+        scheduler_worker.start()
+        try:
+            yield
+        finally:
+            scheduler_worker.stop()
+            service.stop_worker_loop()
+            memory_worker = getattr(service.runtime, "memory_worker", None)
+            if memory_worker is not None:
+                memory_worker.stop()
+
+    app = FastAPI(title="PythonAI Communication", lifespan=lifespan)
+    app.websocket("/ws/v1")(ws_endpoint)
+
+    @app.get("/health")
+    async def health() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.get("/")
+    async def root() -> FileResponse:
+        return static_file_response(Path("web") / "index.html")
+
+    @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+    async def api(path: str, request: Request) -> JSONResponse:
+        body = await request.body() if request.method in ("POST", "PUT", "DELETE") else None
+        status_code, payload = handle_api_request(
+            str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
+            method=request.method,
+            body=body,
+        )
+        return JSONResponse(payload, status_code=status_code)
+
+    @app.post("/webhooks/{adapter_name}")
+    async def webhook(adapter_name: str, request: Request) -> JSONResponse:
+        if adapter_name not in service.adapters:
+            return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+        body = await request.body()
+        headers = dict(request.headers.items())
+        adapter = service.adapters[adapter_name]
+        if not adapter.verify_request(headers, body):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=403)
+        try:
+            if adapter_name == "discord":
+                payload = json.loads(body.decode("utf-8"))
+                if payload.get("type") == 1:
+                    return JSONResponse({"type": 1})
+            result = service.handle_webhook(adapter_name, headers, body)
+        except PermissionError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=403)
+        except json.JSONDecodeError:
+            return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+        except Exception as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=500)
+        return JSONResponse(result, status_code=202)
+
+    return app
+
+
+def static_file_response(path: Path) -> FileResponse:
+    root = Path(__file__).resolve().parent
+    full_path = (root / path).resolve()
+    try:
+        full_path.relative_to(root.resolve())
+    except ValueError as error:
+        raise FileNotFoundError("not_found") from error
+    if not full_path.is_file():
+        raise FileNotFoundError("not_found")
+    return FileResponse(full_path)
+
+
 scheduler_worker = SchedulerWorker()
 
 def run_http_server(service: MultiWebhookService, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
@@ -360,10 +444,16 @@ def run_http_server(service: MultiWebhookService, host: str = DEFAULT_HOST, port
             memory_worker.stop()
 
 
+def run_asgi_server(service: MultiWebhookService | None = None, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    import uvicorn
+
+    uvicorn.run(create_asgi_app(service), host=host, port=port)
+
+
 def main() -> None:
     host = os.environ.get("COMMUNICATION_HOST", DEFAULT_HOST)
     port = int(os.environ.get("COMMUNICATION_PORT", str(DEFAULT_PORT)))
-    run_http_server(create_multi_service(), host=host, port=port)
+    run_asgi_server(create_multi_service(), host=host, port=port)
 
 
 if __name__ == "__main__":
