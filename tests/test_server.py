@@ -12,6 +12,7 @@ from openai import APITimeoutError
 from memory import MemoryStore
 from skills import Skill, SkillMatch
 import server
+from communication_models import InboundAttachment
 
 
 class ServerTests(unittest.TestCase):
@@ -501,6 +502,25 @@ class ServerTests(unittest.TestCase):
         )
 
         self.assertTrue(agent_runtime.skill_has_executable_steps(skill))
+
+    def test_build_user_message_embeds_image_attachment_for_llm(self):
+        attachment = InboundAttachment("photo.png", "image/png", b"\x89PNG")
+
+        message = agent_runtime.build_user_message("describe it", [attachment])
+
+        self.assertEqual(message["role"], "user")
+        self.assertEqual(message["content"][0], {"type": "text", "text": "describe it"})
+        self.assertEqual(message["content"][1]["type"], "text")
+        self.assertEqual(message["content"][2]["type"], "image_url")
+        self.assertTrue(message["content"][2]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_build_user_message_includes_text_attachment_content(self):
+        attachment = InboundAttachment("note.txt", "text/plain", "繁體中文".encode("utf-8"))
+
+        message = agent_runtime.build_user_message("summarize", [attachment])
+
+        self.assertIn("Uploaded text file: note.txt", message["content"][1]["text"])
+        self.assertIn("繁體中文", message["content"][1]["text"])
 
     def test_format_skill_reply_extracts_completed_process_stdout(self):
         reply = agent_runtime.format_skill_reply(

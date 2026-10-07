@@ -20,7 +20,7 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
         with auto_approve_command_runs(), set_current_role(role):
             if resumed_messages is not None:
                 return resume_agent_turn(resumed_messages, runtime)
-            return run_agent_turn(command.text, runtime)
+            return run_agent_turn(command.text, runtime, attachments=command.attachments)
 
     return run
 

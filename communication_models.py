@@ -5,6 +5,18 @@ from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
+class InboundAttachment:
+    filename: str
+    content_type: str
+    data: bytes
+    platform_file_id: str | None = None
+
+    @property
+    def size_bytes(self) -> int:
+        return len(self.data)
+
+
+@dataclass(frozen=True)
 class InboundMessage:
     platform: str
     platform_message_id: str
@@ -13,6 +25,7 @@ class InboundMessage:
     text: str
     raw_payload: dict[str, Any] = field(default_factory=dict)
     received_at: str | None = None
+    attachments: tuple[InboundAttachment, ...] = field(default_factory=tuple)
 
     @property
     def idempotency_key(self) -> str:
@@ -33,6 +46,7 @@ class AgentCommand:
     status: str = "pending"
     requires_confirmation: bool = False
     source_message_id: int | None = None
+    attachments: tuple[InboundAttachment, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

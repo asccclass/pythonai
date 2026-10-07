@@ -7,10 +7,11 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from communication_models import AgentCommand, InboundMessage
+from communication_models import AgentCommand, InboundAttachment, InboundMessage
 
 
 DEFAULT_COMMUNICATION_DB = Path(__file__).resolve().parent / "communication" / "communication.db"
+_PENDING_ATTACHMENTS: dict[str, tuple[InboundAttachment, ...]] = {}
 
 
 def communication_db_path() -> Path:
@@ -100,7 +101,7 @@ class CommunicationStore:
                     message.conversation_id,
                     message.sender_id,
                     message.text,
-                    json.dumps(message.raw_payload, ensure_ascii=False),
+                    json.dumps(raw_payload_with_attachment_metadata(message), ensure_ascii=False),
                 ),
             )
             inserted = cursor.rowcount > 0
@@ -120,6 +121,8 @@ class CommunicationStore:
 
     def enqueue_command(self, message: InboundMessage, source_message_id: int) -> AgentCommand:
         command_id = message.idempotency_key
+        if message.attachments:
+            _PENDING_ATTACHMENTS[command_id] = tuple(message.attachments)
         with closing(self.connect()) as connection:
             connection.execute(
                 """
@@ -310,8 +313,9 @@ class CommunicationStore:
 
 
 def _command_from_row(row: sqlite3.Row) -> AgentCommand:
+    command_id = str(row["command_id"])
     return AgentCommand(
-        command_id=str(row["command_id"]),
+        command_id=command_id,
         platform=str(row["platform"]),
         conversation_id=str(row["conversation_id"]),
         sender_id=str(row["sender_id"]),
@@ -319,4 +323,20 @@ def _command_from_row(row: sqlite3.Row) -> AgentCommand:
         status=str(row["status"]),
         requires_confirmation=bool(row["requires_confirmation"]),
         source_message_id=int(row["source_message_id"]) if row["source_message_id"] is not None else None,
+        attachments=_PENDING_ATTACHMENTS.get(command_id, ()),
     )
+
+
+def raw_payload_with_attachment_metadata(message: InboundMessage) -> dict[str, Any]:
+    payload = dict(message.raw_payload or {})
+    if message.attachments:
+        payload["attachments"] = [
+            {
+                "filename": attachment.filename,
+                "content_type": attachment.content_type,
+                "size_bytes": attachment.size_bytes,
+                "platform_file_id": attachment.platform_file_id,
+            }
+            for attachment in message.attachments
+        ]
+    return payload

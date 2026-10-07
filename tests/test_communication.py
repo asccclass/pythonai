@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from communication_adapters.telegram_adapter import TelegramAdapter, split_telegram_message
-from communication_models import AgentCommand, OutboundMessage
+from communication_models import AgentCommand, InboundAttachment, OutboundMessage
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
 from skills import SkillMatcher, SkillRegistry
@@ -25,6 +25,17 @@ def telegram_update(text="hello", update_id=100, message_id=7):
             "text": text,
         },
     }
+
+
+def telegram_document_update(caption="read this", update_id=101, message_id=8):
+    payload = telegram_update(caption, update_id, message_id)
+    payload["message"]["caption"] = payload["message"].pop("text")
+    payload["message"]["document"] = {
+        "file_id": "file-1",
+        "file_name": "note.txt",
+        "mime_type": "text/plain",
+    }
+    return payload
 
 
 class CommunicationTests(unittest.TestCase):
@@ -49,6 +60,23 @@ class CommunicationTests(unittest.TestCase):
         events = adapter.parse_events({}, json.dumps(payload).encode("utf-8"))
 
         self.assertEqual(events, [])
+
+    def test_telegram_adapter_downloads_document_attachment(self):
+        adapter = TelegramAdapter(
+            bot_token="token",
+            webhook_secret="",
+            http_get=lambda url, params: {"ok": True, "result": {"file_path": "documents/note.txt"}},
+            http_download=lambda url: b"hello from file",
+        )
+        body = json.dumps(telegram_document_update()).encode("utf-8")
+
+        events = adapter.parse_events({}, body)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].text, "read this")
+        self.assertEqual(events[0].attachments[0].filename, "note.txt")
+        self.assertEqual(events[0].attachments[0].content_type, "text/plain")
+        self.assertEqual(events[0].attachments[0].data, b"hello from file")
 
     def test_telegram_adapter_verifies_optional_secret_header(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="secret")
@@ -224,6 +252,7 @@ class CommunicationTests(unittest.TestCase):
 
     def test_agent_runtime_command_runner_uses_shared_turn_flow(self):
         runtime = MagicMock()
+        attachment = InboundAttachment("note.txt", "text/plain", b"hello")
         command = AgentCommand(
             command_id="1",
             platform="telegram",
@@ -232,6 +261,7 @@ class CommunicationTests(unittest.TestCase):
             text="hello agent",
             status="pending",
             source_message_id=7,
+            attachments=(attachment,),
         )
 
         with patch(
@@ -242,7 +272,7 @@ class CommunicationTests(unittest.TestCase):
             reply = runner(command)
 
         self.assertEqual(reply.reply, "agent reply")
-        run_agent_turn.assert_called_once_with("hello agent", runtime)
+        run_agent_turn.assert_called_once_with("hello agent", runtime, attachments=(attachment,))
 
     def test_agent_runtime_command_runner_auto_approves_command_runs(self):
         runtime = MagicMock()
@@ -256,7 +286,7 @@ class CommunicationTests(unittest.TestCase):
             source_message_id=7,
         )
 
-        def run_turn(text, runtime):
+        def run_turn(text, runtime, attachments=None):
             return SimpleNamespace(reply=str(base._auto_approve_commands.get()))
 
         with patch("communication_worker.run_agent_turn", side_effect=run_turn):

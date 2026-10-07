@@ -3,6 +3,8 @@ from __future__ import annotations
 from exceptions import TaskSuspendedException
 
 from dataclasses import dataclass
+import base64
+import mimetypes
 import re
 import subprocess
 from typing import Any, Callable
@@ -26,6 +28,14 @@ DANGEROUS_LOCAL_ACTION_RE = re.compile(
     r"(刪除|删除|delete|remove|rm\s+-|執行|执行|run\s+command|shell|powershell|cmd\.exe)",
     re.IGNORECASE,
 )
+TEXT_ATTACHMENT_TYPES = {
+    "application/json",
+    "application/xml",
+    "application/x-yaml",
+    "text/csv",
+}
+MAX_TEXT_ATTACHMENT_CHARS = 12000
+MAX_BINARY_ATTACHMENT_BASE64_CHARS = 12000
 
 
 @dataclass
@@ -68,7 +78,7 @@ def should_skip_laya_for_user_request(user_input: str) -> bool:
     )
 
 
-def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
+def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any] | tuple[Any, ...] | None = None) -> AgentTurnResult:
     turn_budget = foreground_memory_budget()
     episode_id = safe_memory_call(runtime.memory.start_episode) if runtime.memory is not None else None
     log_episode_event(runtime.memory, episode_id, "message", role="user", content=user_input)
@@ -95,7 +105,8 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
             metadata={"guard": guard_decision},
         )
 
-    runtime.messages.append({"role": "user", "content": user_input})
+    user_message = build_user_message(user_input, attachments)
+    runtime.messages.append(user_message)
     skill_matches = safe_memory_call(runtime.skill_matcher.match, user_input) or []
     if skill_matches:
         log_episode_event(
@@ -215,6 +226,66 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime) -> AgentTurnResult:
     finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn, status=episode_status)
 
     return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
+
+
+def build_user_message(user_input: str, attachments: list[Any] | tuple[Any, ...] | None = None) -> dict[str, Any]:
+    if not attachments:
+        return {"role": "user", "content": user_input}
+
+    content: list[dict[str, Any]] = [{"type": "text", "text": user_input}]
+    for attachment in attachments:
+        content.extend(attachment_content_parts(attachment))
+    return {"role": "user", "content": content}
+
+
+def attachment_content_parts(attachment: Any) -> list[dict[str, Any]]:
+    filename = str(getattr(attachment, "filename", "uploaded-file") or "uploaded-file")
+    content_type = str(
+        getattr(attachment, "content_type", None)
+        or mimetypes.guess_type(filename)[0]
+        or "application/octet-stream"
+    )
+    data = bytes(getattr(attachment, "data", b"") or b"")
+    size = len(data)
+    if content_type.startswith("image/"):
+        encoded = base64.b64encode(data).decode("ascii")
+        return [
+            {"type": "text", "text": f"Uploaded image: {filename} ({content_type}, {size} bytes)."},
+            {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{encoded}"}},
+        ]
+    if content_type.startswith("text/") or content_type in TEXT_ATTACHMENT_TYPES:
+        decoded = decode_text_attachment(data)
+        if len(decoded) > MAX_TEXT_ATTACHMENT_CHARS:
+            decoded = decoded[:MAX_TEXT_ATTACHMENT_CHARS] + "\n[truncated]"
+        return [
+            {
+                "type": "text",
+                "text": f"Uploaded text file: {filename} ({content_type}, {size} bytes).\n\n{decoded}",
+            }
+        ]
+
+    encoded = base64.b64encode(data).decode("ascii")
+    if len(encoded) > MAX_BINARY_ATTACHMENT_BASE64_CHARS:
+        encoded = encoded[:MAX_BINARY_ATTACHMENT_BASE64_CHARS] + "\n[base64 truncated]"
+    return [
+        {
+            "type": "text",
+            "text": (
+                f"Uploaded binary file: {filename} ({content_type}, {size} bytes). "
+                "Base64 content follows for inspection when useful:\n"
+                f"{encoded}"
+            ),
+        }
+    ]
+
+
+def decode_text_attachment(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp950"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
 
 
 def skill_has_executable_steps(skill: Any) -> bool:
