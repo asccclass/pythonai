@@ -31,10 +31,12 @@ class CommunicationWorker:
         store: CommunicationStore,
         adapters: dict[str, CommunicationAdapter],
         command_runner: CommandRunner,
+        session_clearer: Callable[[], None] | None = None,
     ) -> None:
         self.store = store
         self.adapters = adapters
         self.command_runner = command_runner
+        self.session_clearer = session_clearer
         self._threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
 
@@ -70,6 +72,15 @@ class CommunicationWorker:
                 status_icon = "⏳" if j.status == "pending" else "🏃" if j.status == "running" else "✅" if j.status == "completed" else "❌"
                 lines.append(f"{status_icon} [{j.status}] {j.command_id[:8]}: {j.text[:30]}")
             result_text = "\\n".join(lines)
+            self.store.complete_command(command.command_id, result_text)
+            self._send_reply(command, result_text)
+            return self.store.command_by_id(command.command_id)
+
+        if text == "/clear" or text == "/reset":
+            if self.session_clearer is not None:
+                self.session_clearer()
+            self.store.clear_suspended_command(command.conversation_id)
+            result_text = "✅ 對話 session 已清除，後續訊息將從新的上下文開始。"
             self.store.complete_command(command.command_id, result_text)
             self._send_reply(command, result_text)
             return self.store.command_by_id(command.command_id)

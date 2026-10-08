@@ -295,6 +295,39 @@ class CommunicationTests(unittest.TestCase):
 
         self.assertEqual(reply.reply, "True")
 
+    def test_clear_command_resets_session_and_cancels_suspended_job(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CommunicationStore(Path(temp_dir) / "communication.db")
+            sent = []
+            adapter = MagicMock()
+            adapter.send_message.side_effect = lambda message: sent.append(message.text)
+            first = enqueue_adapter_events(
+                store,
+                TelegramAdapter(bot_token="token", webhook_secret=""),
+                {},
+                json.dumps(telegram_update("start", update_id=200)).encode(),
+            )[0]
+            store.suspend_command(first.command_id, '{"messages": []}', "tool-1")
+            clear = enqueue_adapter_events(
+                store,
+                TelegramAdapter(bot_token="token", webhook_secret=""),
+                {},
+                json.dumps(telegram_update("/clear", update_id=201, message_id=8)).encode(),
+            )[0]
+            cleared = []
+            worker = CommunicationWorker(
+                store,
+                {"telegram": adapter},
+                lambda command, resumed_messages=None: SimpleNamespace(reply="unexpected"),
+                session_clearer=lambda: cleared.append(True),
+            )
+            worker.process_next()
+
+            self.assertEqual(store.command_by_id(clear.command_id).status, "completed")
+            self.assertEqual(store.command_by_id(first.command_id).status, "cancelled")
+            self.assertEqual(cleared, [True])
+            self.assertIn("session 已清除", sent[0])
+
     def test_enqueue_adapter_events_rejects_failed_verification(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="secret")
         with tempfile.TemporaryDirectory() as temp_dir:

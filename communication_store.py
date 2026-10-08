@@ -243,7 +243,17 @@ class CommunicationStore:
             ).fetchone()
             if row and row["state"] and row["suspended_tool_call_id"]:
                 return (row["command_id"], row["state"], row["suspended_tool_call_id"])
-            return None
+        return None
+
+    def clear_suspended_command(self, conversation_id: str) -> int:
+        """Cancel suspended jobs so the next message cannot resume old context."""
+        with closing(self.connect()) as connection:
+            cursor = connection.execute(
+                "UPDATE agent_command_jobs SET status = 'cancelled', state = NULL, suspended_tool_call_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND status = 'suspended'",
+                (conversation_id,),
+            )
+            connection.commit()
+            return cursor.rowcount
 
     def record_outbound_message(
         self,

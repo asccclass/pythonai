@@ -194,7 +194,12 @@ def create_multi_service(runtime: AgentRuntime | None = None) -> MultiWebhookSer
     if os.environ.get("DISCORD_BOT_TOKEN"):
         adapters["discord"] = DiscordAdapter()
         
-    worker = CommunicationWorker(store, adapters, agent_runtime_command_runner(runtime, store))
+    worker = CommunicationWorker(
+        store,
+        adapters,
+        agent_runtime_command_runner(runtime, store),
+        session_clearer=getattr(runtime, "messages", None).clear if getattr(runtime, "messages", None) is not None else None,
+    )
     return MultiWebhookService(
         store=store,
         adapters=adapters,
@@ -208,7 +213,12 @@ def create_telegram_service(runtime: AgentRuntime | None = None) -> TelegramWebh
     runtime = runtime or create_agent_runtime()
     store = CommunicationStore()
     adapter = TelegramAdapter()
-    worker = CommunicationWorker(store, {"telegram": adapter}, agent_runtime_command_runner(runtime, store))
+    worker = CommunicationWorker(
+        store,
+        {"telegram": adapter},
+        agent_runtime_command_runner(runtime, store),
+        session_clearer=getattr(runtime, "messages", None).clear if getattr(runtime, "messages", None) is not None else None,
+    )
     return TelegramWebhookService(
         store=store,
         adapter=adapter,
