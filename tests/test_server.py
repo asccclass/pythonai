@@ -16,6 +16,14 @@ from communication_models import InboundAttachment
 
 
 class ServerTests(unittest.TestCase):
+    def setUp(self):
+        # CLI tests exercise memory behavior without contacting the configured provider.
+        from vector_search import OpenAICompatibleEmbeddingProvider
+        offline=patch.object(OpenAICompatibleEmbeddingProvider,'embed',
+            lambda provider,text,allow_remote=True:provider.fallback_embed(text))
+        offline.start()
+        self.addCleanup(offline.stop)
+
     def test_create_ollama_client_uses_remote_ollama_settings(self):
         with (
             patch("server.OLLAMA_API_KEY", "sk-test-key"),
@@ -27,6 +35,8 @@ class ServerTests(unittest.TestCase):
         openai.assert_called_once_with(
             base_url=server.OLLAMA_BASE_URL,
             api_key="sk-test-key",
+            max_retries=0,
+            timeout=60,
         )
 
     def test_create_ollama_client_rejects_non_litellm_key(self):
@@ -574,6 +584,7 @@ class ServerTests(unittest.TestCase):
                 ),
                 patch("server.run_agent", return_value="done"),
                 patch("agent_runtime.compact_messages", wraps=agent_runtime.compact_messages) as compact_mock,
+                patch("agent_runtime.active_budget",return_value=None),
                 patch("builtins.print"),
             ):
                 server.main(async_memory_review=False)
@@ -676,6 +687,7 @@ class ServerTests(unittest.TestCase):
                 patch("server.MemoryStore", return_value=store),
                 patch("server.read_user_input", side_effect=["hello", "exit"]),
                 patch("agent_runtime.compact_messages", return_value=(compacted, "old context", None)),
+                patch("agent_runtime.active_budget",return_value=None),
                 patch("server.run_agent", return_value="hi"),
                 patch("builtins.print"),
             ):

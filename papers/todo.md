@@ -70,16 +70,20 @@
   - 現況：ReAct 規劃靠提示與 15 次迭代上限；通訊已有 ask_user 暫停／恢復，未涵蓋任意執行點，且 ask_user 未列入預設工具 schema。
   - 工作：註冊 ask_user schema 並驗證真實暫停／續跑入口；保存 task／plan／steps、依賴、輸入與驗收、執行狀態及 checkpoint；重啟恢復 pending／running；不可重放操作使用 idempotency key 或轉人工確認。
   - 驗收：工具前／後、驗收前／後中斷程序仍可安全續跑；外部寫入不重複；失敗步驟可有限重試或重規劃；保留 episode 關聯。依賴 T01、T05。
-  - 完成（2026-10-09）：TaskStore goal／criteria／step 輸入、結果、依賴、episode 與 checkpoint；原子 lease／heartbeat／fencing、3 次 crash 恢復、模型／工具前後／驗收前後、直接 Skill 結果；CLI／通訊／WS 接入，ask_user schema／持久問答與人類 tasks／steps／resume／cancel／resolve。
+  - 完成（2026-10-09，commit `468cb5e`）：TaskStore goal／criteria／step 輸入、結果、依賴、episode 與 checkpoint；原子 lease／heartbeat／fencing、3 次 crash 恢復、模型／工具前後／驗收前後、直接 Skill 結果；CLI／通訊／WS 接入，ask_user schema／持久問答與人類 tasks／steps／resume／cancel／resolve。
   - 相關驗證：54 passed、1 skipped（外部 provider）、4 subtests passed；使用真正退出的子程序，在 model_received、tool_done、evaluation_pending／done 中斷後仍僅一次寫入。tool_started 中斷會轉 uncertain，不猜測外部副作用；WS runtime 重建後問答成功，episode／tool pairing 保留。
   - 完整測試首次 421 passed、1 failed（Docker rm 清理的 5 秒 timeout）、1 skipped、7 subtests passed；修復為 20 秒有界 runner 並忽略任務取消，單獨實際 Docker／程序測試 19 passed，修復 commit `dc68d4c`。完整測試重跑（Docker／Chromium 開啟）427 passed、1 skipped（外部 provider）、7 subtests passed；其後 /clear 持久暫停取消補強相關測試 55 passed、1 skipped、4 subtests passed。語法／diff 檢查通過。
   - 邊界：plan 是現有 ReAct 實際產生的循序步驟與依賴，跨代理 DAG 由 T13 處理；task completed 不等同 verified_completed，T10 補明確條件。Skill 中途副作用須人工查核／取消，不自動重播。舊版無 task checkpoint 的 running job 保留人工處理，安全恢復須等待 180 秒 lease 過期。
 
 
-- [ ] **T09 — 任務總預算、模型路由與上下文治理**
+- [x] **T09 — 任務總預算、模型路由與上下文治理**
   - 現況：`request_budget.py` 主要限制記憶請求；工作記憶為摘要，所有開發任務主要使用 OLLAMA_MODEL。
   - 工作：task／子代理總 token、成本、deadline、併發與 retry 預算；模型能力探測、文字／視覺／embedding 路由；依 token 壓縮並保留目標、批准、工具呼叫／結果配對。
   - 驗收：連續 429／timeout／子代理遞迴不會突破預算；不支援 vision 時明確降級；壓縮後仍保持驗收條件與合法訊息結構。依賴 T08。
+  - 實作：根任務持久化 token／request／成本／deadline／子代理總數与深度；前景模型、embedding、Judge 與重試扣額，SDK 隱藏重試關閉；全域 SQLite model slots／串流 wall deadline、通訊背景入列上限與控制指令通道。子代理獨立 checkpoint 防止覆寫父任務；仍共享父預算。
+  - 模型／上下文：文字／視覺／embedding 配置、明確能力拒絕與 opt-in bounded probe；失敗能力標 unknown。UTF-8 bytes 保守 token 估算，整組工具配對裁剪、保留 goal／criteria／approval／最新輸入；不裁剪權威 checkpoint、不將摘要提高權限。
+  - 邊界：成本上限預設關閉，啟用須提供受信任費率；保留額度不退還，usage 超估向上記帳後停止後續工作，不是供應商帳單保證。圖片 Base64 保守計入，較大圖片需配置已驗證視窗，超限明確拒絕。真實 provider 能力探測仍受目前 TCP 443 連線逾時限制；不據本機 fixture 宣稱部署模型具備視覺品質。DAG／child crash coordinator 由 T13 處理。
+  - 完整驗證（2026-10-09）：`python -m pytest tests agent_execution/tests -q`，開啟實際 Docker／Chromium：444 passed、1 skipped（外部 provider）、7 subtests passed。新增 16 項預算／上下文測試，包含真實 SDK HTTP 429 無隱藏重試、Agent 連續 429 停止、Windows host 程序 deadline、blocked stream 關閉、SQLite 併發扣額與成本／重啟／child checkpoint；語法與 diff 檢查通過。前次相關測試 96 passed、1 skipped、4 subtests passed。
 
 - [ ] **T10 — 結構化工具結果與明確完成條件**
   - 現況：工具混用字串／dict／CompletedProcess；驗收會解析文字測試輸出，部分 Skill 回傳非零 returncode 未必成為步驟失敗。

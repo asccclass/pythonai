@@ -106,6 +106,8 @@ def browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Des
         
     except Exception as e:
         # Fallback if the LLM does not support vision (e.g. raises BadRequestError or TypeError)
+        from agent_execution.budgets import BudgetExhausted
+        if isinstance(e,BudgetExhausted):raise
         error_str = str(e).lower()
         print(f"[BrowserVision] VLM Error caught: {e}. Falling back to text-only mode.")
         

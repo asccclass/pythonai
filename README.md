@@ -8,8 +8,8 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 功能領域 | 現有能力 | 狀態與限制 | 實作依據 |
 | --- | --- | --- | --- |
-| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；預設最多 15 次迭代，持久化 task／checkpoint／循序工具依賴；跨代理 DAG 與全域預算仍待增修 | `server.py`, `agent_runtime.py` |
-| Provider 相容與重試 | OpenAI-compatible endpoint、模型／embedding 設定、暫時性 API 錯誤重試與 Retry-After | 已實作；主要使用 Chat Completions，未建立多 provider 路由及總成本上限 | `server.py`, `request_budget.py` |
+| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；15 次迭代、持久化 task／checkpoint／循序依賴、總 token／request／deadline／子代理預算；跨代理 DAG 待增修 | `server.py`, `agent_runtime.py`, `agent_execution/budgets.py` |
+| Provider 相容與重試 | OpenAI-compatible endpoint、文字／視覺／embedding 模型設定、能力探測、Retry-After | 已實作；關閉 SDK 隱藏重試，task 預算涵蓋重試；成本上限須配置模型費率，多 provider failover 尚未提供 | `server.py`, `agent_execution/budgets.py`, `agent_execution/model_probe.py` |
 | 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；共用政策檢查角色與路徑／symlink，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
 | Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、共用政策、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
 | 動態工具 | 載入 tools/*.py + JSON schema、create_dynamic_tool 建立並重新載入 | 基礎實作；載入會執行 Python 模組，尚無發布前測試、版本審核及撤回流程 | `base.py`, `tools/` |
@@ -18,7 +18,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Semantic memory | 主詞／關係／受詞、user_profile／agent_persona 等類型、scope、信心、來源、實體關聯 | 已實作；遠端採身份／專案實體 DB 隔離，通訊另依會話隔離；本機既有資料保留 | `semantic_extractor.py`, `memory.py`, `agent_execution/sessions.py` |
 | Procedural memory | 重用工作流程、相似度比對、成功／失敗計數、驗收狀態控制保存 | 已實作；不代表模型訓練或任意任務成功保證 | `memory_review.py`, `procedure_similarity.py`, `server.py` |
 | 記憶檢索 | embedding／cosine similarity、Hashing fallback、關鍵詞、實體與程序檢索、可選 Laya 排序 | 已實作；本機候選與向量計算，尚無大型資料 ANN 索引 | `retrieval.py`, `retrieval_ranker.py`, `vector_search.py` |
-| 工作記憶與遺忘 | 對話摘要壓縮、保留候選、TTL、矛盾／替代、衝突處理、程序淘汰 | 已實作；壓縮尚非完整 token 預算及無損任務狀態保存 | `working_memory.py`, `forgetting.py` |
+| 工作記憶與遺忘 | token 上限、工具配對、目標／驗收／批准保留、TTL、矛盾／替代、程序淘汰 | task 模型輸入依保守 UTF-8 bytes 估算裁剪完整訊息組；權威 checkpoint 保留，legacy 無 task 入口仍使用摘要 | `agent_execution/context.py`, `working_memory.py`, `forgetting.py` |
 | 背景記憶維護 | 持久化 review／embedding queue、請求預算、跨程序 worker lease、429 cooldown、stale embedding 更新 | 已實作；限制背景記憶流量，非全 Agent 的成本／併發治理 | `memory_worker.py`, `request_budget.py`, `observability.py` |
 | 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險模型工具與 API 更新要求身份／會話／參數綁定的一次性批准 | `memory_tools.py`, `agent_execution/approvals.py`, `web_api.py` |
 | Telegram | webhook／polling、getMe 診斷、訊息去重、佇列、長訊息分段、圖片／document 接收 | 已實作；圖片轉 image_url、文字解碼及截斷；二進位附件以 Base64 文字傳入，非通用 PDF／Office 解析 | `communication_adapters/telegram_adapter.py`, `telegram_polling_worker.py`, `agent_runtime.py` |
@@ -31,7 +31,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
 | 任務驗收與自修正 | 檔案／Python 語法、測試輸出、Git 前後狀態、LLM Judge、Critic feedback | 已實作；預設最多 2 次驗收修正；規則／文字輸出及 Judge 有侷限，人工交接不等於完整審批 UI | `task_evaluator.py`, `tests/test_task_evaluator.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
-| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 基礎實作；繼承角色／身份／執行 context，但共享 workspace／工具，無 worktree、依賴 DAG、取消、重啟恢復及結果合併治理 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
+| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 繼承角色／身份及父取消、共享根預算、独立 checkpoint；仍共享 workspace／工具，worktree、DAG、durable coordinator 及結果合併待增修 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
 | 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
 | 開發工具 | Git status／diff／commit／rollback、pytest／Python 測試 runner、venv／pip／npm、四種 scaffold | 基礎實作；Git rollback 具破壞性，尚無 PR／CI／worktree 全流程；測試 runner timeout 為 30 秒 | `tools/git_*.py`, `tools/run_test_suite.py`, `tools/env_manager.py`, `tools/project_scaffold.py` |
@@ -50,7 +50,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
-| 長任務／通用 Agentic | 有多輪、摘要、通訊暫停／續跑 | 已有持久化循序步驟／checkpoint、lease 與保守副作用恢復；仍需總預算、token 治理與跨代理 DAG |
+| 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算 | 已有循序步驟／checkpoint、lease 與保守副作用恢復；跨代理 DAG／結果收斂待 T13 |
 | 完成度驗證／通用 Agentic | 已有 Critic loop 與來源事件 | 補使用者驗收條件、結構化工具結果、端到端測試、獨立 Reviewer 與任務品質評測 |
 | 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
@@ -443,3 +443,31 @@ checkpoint 包含 model_pending／model_received、tool_started／tool_done、ev
 task 最多 10000 筆／256 MiB（`AGENT_TASK_LIMIT`、`AGENT_TASK_STORAGE_BYTES`），單 checkpoint 64 MiB、人類回答／resolve 1 MiB。達上限拒絕新工作／checkpoint，不刪舊資料；管理者須規劃保留與匯出。task completed 表示迴圈已回覆，真正的 verified_completed 條件由 T10 結構化驗收補強；不把 checkpoint 等同任務品質證明。多代理計畫 DAG／worktree 分別由 T13／T12 擴充。
 
 驗證包含以子程序 `os._exit` 在實際已提交的 checkpoint 結束、在新執行環境續跑；模型回覆後、工具結果後與驗收前後均不重複檔案寫入，工具開始但未保存結果時停待人工。另測試 lease／舊 token／owner、取消、快取、容量交易、Skill stdout、人類回答與原 episode、WebSocket runtime 重建後問答續接。
+
+## 任務預算、模型路由與上下文（T09）
+
+CLI／通訊／WebSocket 的 task 預算與 checkpoint 保存於同一 `AGENT_TASK_DB`，重啟及 `/resume` 不重設 token、request、成本、deadline 或子代理額度。子代理共用根任務額度，但使用獨立 checkpoint；記憶 embedding、前景抽取、Judge 與明確重試亦扣除額度。背景記憶維護仍使用既有 request_budget，沒有將無關背景工作算到另一位使用者的 task。
+
+| 設定 | 預設 | 意義 |
+|---|---:|---|
+| `AGENT_TASK_MAX_TOKENS` | 256000 | 累計輸入及輸出保留額度 |
+| `AGENT_TASK_MAX_REQUESTS` | 24 | 包含失敗、timeout 及明確重試 |
+| `AGENT_TASK_DEADLINE_SECONDS` | 600 | 建立起算的 wall deadline，包含人工暫停 |
+| `AGENT_TASK_MAX_CHILDREN`／`AGENT_TASK_MAX_DEPTH` | 4／2 | 累計子代理數與巢狀深度；0 禁止 |
+| `AGENT_MODEL_MAX_OUTPUT_TOKENS` | 2048 | 每次生成上限 |
+| `AGENT_MODEL_CONTEXT_TOKENS` | 32768 | 預設單模型輸入＋輸出視窗 |
+| `AGENT_MODEL_CONCURRENCY` | 4 | 同一 task DB 的跨程序模型 slots |
+| `AGENT_TASK_CONCURRENCY` | 4 | 每個 communication worker 的背景工作上限 |
+| `AGENT_TASK_MAX_COST_USD` | 0 | 0 表示未啟用成本限制 |
+
+每次請求先原子保留預估 token／成本；失敗、取消或缺 usage 不退還。供應商 usage 高於保留量時向上記帳並阻止後續模型／工具工作；估算不是帳單保證。token 使用 JSON UTF-8 bytes 的保守估算，包含 schemas 與圖片 Base64；較大圖片可能超出 context 並明確拒絕，需按已驗證的模型視窗調整設定，圖片不會被悄悄移除。若啟用成本上限，須配置 `AGENT_MODEL_RATES={"model-id":{"input":1,"output":5}}`（USD／百萬 tokens）；缺費率拒絕請求，費率與上限在根任務建立時保存。`/budget <task_id>` 僅顯示本人會話的用量、上限、成本是否啟用及剩餘秒數。
+
+SDK `max_retries=0`、單請求 timeout 最多 60 秒且不超過剩餘 deadline；串流有 60 秒 wall 上限、usage chunk 記帳、取消關閉及 slot 清理。未知模型保留原有相容模式；`OLLAMA_MODEL`、`OLLAMA_VISION_MODEL`、`OLLAMA_EMBEDDING_MODEL` 分別選文字、圖像及 embedding。`AGENT_MODEL_CAPABILITIES={"model-id":{"chat":true,"vision":false,"embedding":false,"available":true,"context_tokens":32768,"output_parameter":"max_completion_tokens"}}` 可保存部署者已查證的能力。明確 vision=false 拒絕圖片分析；browser_vision 可標示為 DOM 文字 fallback。未配置能力代表未知，不代表已驗證支援。
+
+預設使用 `max_completion_tokens`；不支援此參數的 compatible provider 須配置 capability `output_parameter=max_tokens` 或 `AGENT_OUTPUT_PARAMETER=max_tokens`。不因 HTTP 400 靜默移除輸出上限。串流要求 `stream_options.include_usage=true`；中斷可能缺 usage，因此仍保留扣額，API 參數依據 [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
+
+可選的實際 provider 探測（每請求最長 15 秒、無隱藏重試、不傳 workspace 內容）：`python -m agent_execution.model_probe --model <id>`，加 `--vision` 測圖像，或 `--embedding` 測 embedding。成功僅證明請求可接受，不驗證語意品質；任何失敗回報 unknown 與錯誤類別／HTTP status，不洩露完整 provider error 或 credentials，也不自動更改配置。
+
+模型輸入超限時只刪完整舊訊息組，保留 system／developer、最新使用者輸入、task goal／criteria、批准及其工具配對；hook feedback 排在完整工具結果後。壓縮資料保持 user 權限，不提升為 system 指令。無法在上限內保留必要內容則拒絕，權威 checkpoint 不被裁剪。未知副作用與完整交付品質仍分別依 T08／T10 處理；共享 workspace 的子代理衝突、durable coordinator 與 reviewer 收斂待 T12／T13。
+
+完整驗證（Docker／Chromium 開啟）：444 passed、1 skipped（外部 provider）、7 subtests passed；新增預算與上下文測試包含真實 SDK 的 HTTP 429 無隱藏重試、root deadline 取消 Windows host 程序與 blocked stream、併發扣额、重啟與子代理額度／checkpoint。實際部署模型能力及費率未由這些 fixture 驗證。

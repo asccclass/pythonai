@@ -271,7 +271,8 @@ Please output your decision strictly in JSON format with keys:
 - "feedback": concise explanation of what was achieved or what failed / was missed.
 """
         try:
-            response = self.client.chat.completions.create(
+            from agent_execution.budgets import budget_client
+            response = budget_client(self.client).chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a JSON-only evaluation judge."},
@@ -286,6 +287,8 @@ Please output your decision strictly in JSON format with keys:
                 return bool(data.get("success", False)), float(data.get("score", 0.0)), str(data.get("feedback", ""))
             return True, 1.0, "LLM Judge 回傳非標準格式，預設通過。"
         except Exception as e:
+            from agent_execution.budgets import BudgetExhausted
+            if isinstance(e,BudgetExhausted):raise
             return True, 1.0, f"LLM Judge 呼叫失敗，降級略過: {e}"
 
     # ---------------------------------------------------------

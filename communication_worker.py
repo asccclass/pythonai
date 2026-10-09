@@ -74,6 +74,7 @@ class CommunicationWorker:
         self.session_clearer = session_clearer
         self._threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
+        self._admission_lock = threading.Lock()
 
     def _send_reply(self, command: AgentCommand, text: str, is_error: bool = False) -> None:
         key = self.store.queue_delivery(command, text, self.store.reply_context(command.source_message_id), is_error)
@@ -94,8 +95,20 @@ class CommunicationWorker:
                 print(f"Delivery requires verification: id={row['id']} error={type(error).__name__}")
 
     def process_next(self) -> AgentCommand | None:
+        with self._admission_lock:
+            return self._process_next()
+
+    def _process_next(self) -> AgentCommand | None:
         self.recover_tasks()
-        pending = self.store.pending_commands(limit=1)
+        from agent_execution.budgets import numeric
+        limit=int(numeric('AGENT_TASK_CONCURRENCY',4))
+        with self._threads_lock:
+            busy=len(self._threads)>=limit
+        pending = self.store.pending_commands(limit=64 if busy else 1)
+        if busy:
+            # Control commands remain reachable while ordinary jobs wait durably.
+            pending=[command for command in pending if command.text.strip().split(maxsplit=1)[0:1]
+                and command.text.strip().split(maxsplit=1)[0] in {'/status','/cancel','/clear','/reset','/approvals','/approve','/deny'}]
         if not pending:
             return None
         command = pending[0]

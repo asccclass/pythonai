@@ -15,6 +15,7 @@ from memory import MemoryStore
 from request_budget import foreground_memory_budget
 from retrieval import build_combined_memory_context, build_memory_context, inject_memory_context
 from working_memory import compact_messages
+from agent_execution.budgets import budgeted_turn, active_budget
 
 
 DOCUMENT_CONTENT_ACTION_RE = re.compile(
@@ -107,6 +108,7 @@ def should_skip_laya_for_user_request(user_input: str) -> bool:
     )
 
 
+@budgeted_turn
 def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any] | tuple[Any, ...] | None = None) -> AgentTurnResult:
     turn_budget = foreground_memory_budget()
     episode_id = safe_memory_call(runtime.memory.start_episode) if runtime.memory is not None else None
@@ -197,10 +199,14 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
             *agent_messages,
         ]
         log_episode_event(runtime.memory, episode_id, "skill_guidance", content=skill_context)
-    compacted_messages, working_summary, preservation_decision = compact_messages(
-        agent_messages,
-        preservation_classifier=None if skip_laya_for_turn else getattr(runtime.guard, "_agent", None),
-    )
+    if active_budget():
+        # Model-time token governance preserves authoritative pending checkpoints.
+        compacted_messages, working_summary, preservation_decision = agent_messages, None, None
+    else:
+        compacted_messages, working_summary, preservation_decision = compact_messages(
+            agent_messages,
+            preservation_classifier=None if skip_laya_for_turn else getattr(runtime.guard, "_agent", None),
+        )
     if working_summary is not None:
         agent_messages = compacted_messages
         log_episode_event(runtime.memory, episode_id, "working_memory_summary", content=working_summary)
@@ -476,6 +482,7 @@ def log_retrieval_stats(
         return
     log_episode_event(memory, episode_id, "memory_retrieval_stats", metadata={"stats": stats})
 
+@budgeted_turn
 def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, episode_id: int | None = None) -> AgentTurnResult:
     from agent_execution.policy import current_context
     from agent_execution.tasks import TaskStore, task_owner

@@ -99,6 +99,12 @@ def _audit_denial(name: str, reason: str) -> None:
 
 def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any]) -> Any:
     from .approvals import ApprovalStore, ApprovalRequired, canonical
+    from .budgets import active_budget, BudgetExhausted
+    budget=active_budget()
+    if budget is not None:
+        budget.check()
+        if current_context().check_cancelled and current_context().check_cancelled():
+            raise BudgetExhausted('Task cancelled before tool execution')
     values = dict(arguments)
     approval_id = values.pop("approval_id", None)
     authorization = None

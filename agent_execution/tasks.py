@@ -285,7 +285,9 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
             # A tool started checkpoint survives an exception as uncertain; never blindly replay.
             row = store.get(owner,key)
             if row['state'] != 'cancelled':
-                store.finish(owner,key,token,'uncertain' if row['phase'] in {'tool_started','skill_started'} else 'pending',str(error))
+                from .budgets import BudgetExhausted
+                state='uncertain' if row['phase'] in {'tool_started','skill_started'} else 'failed' if isinstance(error,BudgetExhausted) else 'pending'
+                store.finish(owner,key,token,state,str(error))
         raise
     finally:
         stop.set()
@@ -309,6 +311,19 @@ def dispatch_task_input(text, runtime):
         return AgentTurnResult('Session cleared; suspended tasks will not be resumed.',None)
     if command == '/tasks':
         return AgentTurnResult(json.dumps(store.list(owner),ensure_ascii=False),None)
+    if command == '/budget':
+        from .budgets import TaskBudget
+        try:
+            key=parts[1] if len(parts)>1 else context.task_id
+            row=store.get(owner,key)
+            budget=TaskBudget(owner,key)
+            snapshot=budget.snapshot()
+            snapshot['limits']=json.loads(snapshot['limits'])
+            snapshot['cost_enforced']=bool(budget.max_cost)
+            snapshot['remaining_seconds']=budget.remaining_seconds()
+            return AgentTurnResult(json.dumps(snapshot,ensure_ascii=False),row['episode'])
+        except (KeyError,ValueError) as error:
+            return AgentTurnResult(f'Error: {error}',None)
     if command in {'/resume','/resolve','/cancel-task','/steps'}:
         try:
             if len(parts) < 2:

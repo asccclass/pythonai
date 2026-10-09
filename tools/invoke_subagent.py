@@ -39,7 +39,14 @@ def subagent_worker(agent_id: str, persona: str, task: str):
             {"role": "user", "content": f"Task:\n{task}"}
         ]
         
-        result = run_agent(messages, max_retries=3)
+        from agent_execution.budgets import child_scope
+        from agent_execution.policy import execution_scope, current_context
+        from agent_execution.tasks import durable_invoke
+        with child_scope(), execution_scope(source='subagent',task_id=f'subagent:{agent_id}'):
+            def invoke(saved):
+                return run_agent(messages,max_retries=3,resume_state=saved,
+                    check_cancelled=current_context().check_cancelled)
+            result = durable_invoke(invoke,messages,None)
         
         state_file.write_text(json.dumps({
             "status": "completed",
@@ -60,6 +67,10 @@ def invoke_subagent(persona: str, task: str) -> str:
     
     if persona not in PERSONAS:
         return f"Error: persona must be one of {list(PERSONAS.keys())}"
+    from agent_execution.budgets import active_budget, _depth
+    budget=active_budget()
+    if budget is not None:
+        budget.reserve_child(_depth.get())
         
     agent_id = str(uuid.uuid4())[:8]
     state_file = resolve_workspace_path(f"subagents/{agent_id}.json")

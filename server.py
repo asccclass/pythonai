@@ -13,6 +13,7 @@ from exceptions import TaskSuspendedException
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
 from openai import OpenAI
+from agent_execution.budgets import budget_client, active_budget, BudgetExhausted
 
 from agent_runtime import AgentRuntime, format_guard_notice, run_agent_turn, should_skip_laya_for_user_request
 from base import TOOLS_SCHEMAS, load_dotenv, run_skill, run_tool_with_context
@@ -47,6 +48,8 @@ def create_ollama_client() -> OpenAI:
     return OpenAI(
         base_url=OLLAMA_BASE_URL,
         api_key=OLLAMA_API_KEY,
+        max_retries=0,
+        timeout=60,
     )
 
 
@@ -57,7 +60,7 @@ def get_client() -> OpenAI:
     global client
     if client is None:
         client = create_ollama_client()
-    return client
+    return budget_client(client)
 
 
 def format_authentication_error(error: AuthenticationError) -> str:
@@ -231,12 +234,16 @@ def run_agent(
                     if event_callback is not None:
                         from agent_execution.streaming import streamed_completion
                         event_callback("model.start", {"iteration": iteration, "model": OLLAMA_MODEL})
-                        assistant_message = streamed_completion(get_client(), OLLAMA_MODEL, messages,
+                        assistant_message = streamed_completion(budget_client(get_client()), OLLAMA_MODEL, messages,
                                                                 TOOLS_SCHEMAS, event_callback, check_cancelled)
                     else:
-                        response = get_client().chat.completions.create(model=OLLAMA_MODEL, messages=messages, tools=TOOLS_SCHEMAS)
+                        response = budget_client(get_client()).chat.completions.create(model=OLLAMA_MODEL, messages=messages, tools=TOOLS_SCHEMAS)
                         assistant_message = response.choices[0].message
                     break
+                except BudgetExhausted as error:
+                    if event_callback:
+                        event_callback('error',{'code':'budget_exhausted','message':str(error),'retryable':False})
+                    return f'Error: {error}'
                 except InterruptedError:
                     return "Task was cancelled by the user."
                 except (APIStatusError, APIConnectionError, APITimeoutError) as error:
@@ -262,7 +269,7 @@ def run_agent(
                 
                     status_str = f"HTTP {status_code}" if status_code else type(error).__name__
                     print(f"\nRemote service returned {status_str}; retrying in {delay:g} seconds.")
-                    if event_callback and check_cancelled:
+                    if (event_callback or active_budget()) and check_cancelled:
                         end = time.monotonic() + delay
                         while time.monotonic() < end:
                             if check_cancelled():
