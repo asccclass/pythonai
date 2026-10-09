@@ -48,3 +48,26 @@ users. Trusted project-to-workspace mappings are carried by ContextVar rather th
 mutating process environment. Cancellation, status and suspended job queries are
 owner-scoped, and atomic claims prevent duplicate starts. API approvals also bind
 project. WebSocket devices/outboxes/proactive routing are owner-scoped.
+
+## Persistent budgets and token governance (T09)
+
+budgets.py reserves root task tokens, requests and optional configured cost in the
+task database; child agents share that budget and have separate checkpoints.
+context.py governs model input by conservative UTF-8 byte estimates, retaining
+instructions, task acceptance, approval and complete tool pairs. Model capabilities
+are operator-configured; model_probe.py offers opt-in bounded provider checks.
+See the root README for limits, output parameter compatibility and usage caveats.
+
+## Observable completion contracts (T10)
+
+results.py normalizes execution facts (success, exit_code, error, output, artifacts,
+side_effects and evidence) without treating successful prose as verification.
+acceptance.py validates versioned, frozen contracts and checks files or actual tests.
+Configure AGENT_ACCEPTANCE_FILE to a workspace-local JSON file before starting a
+task; the default is .agent/acceptance.json. examples/acceptance.json demonstrates
+the schema. No checks means an answer can complete, but cannot be verified_completed.
+Test tools require process success and nonempty passing JUnit cases. Python scripts
+without a report retain their execution status but are not proof of passing tests.
+Skill execution and verification are separate checkpoints, preventing effect replay
+when the process fails after execution. Judge errors fail closed and do not trigger
+automatic repair of code when the actual issue is unavailable verification.

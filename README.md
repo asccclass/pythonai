@@ -2,7 +2,7 @@
 
 PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Agent，提供本機 CLI、Telegram long polling，以及整合 webhook、管理網頁、REST API、WebSocket 的 FastAPI 服務。核心包含工具呼叫、Skills、長期記憶、背景維護、排程、任務驗收及可擴充 Hooks。
 
-以下盤點以 **2026-10-09 的程式與測試**為準。「已實作」表示有可追溯程式路徑，不代表已通過所有外部服務或正式環境驗證；「基礎實作」表示尚有整合、隔離或可靠性限制。後續改善及驗收條件見 [papers/todo.md](papers/todo.md)。
+以下盤點以 **2026-10-09 的初始盤點及 2026-10-10 的增修**為準。「已實作」表示有可追溯程式路徑，不代表已通過所有外部服務或正式環境驗證；「基礎實作」表示尚有整合、隔離或可靠性限制。後續改善及驗收條件見 [papers/todo.md](papers/todo.md)。
 
 ## 現有功能表
 
@@ -29,7 +29,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG、API Bearer 登入 | 已實作共用政策；遠端缺角色配置預設 viewer，管理 API 寫入限 admin；Laya 不可用仍可繼續 | `laya_guard.py`, `permissions.py`, `agent_execution/api.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
-| 任務驗收與自修正 | 檔案／Python 語法、測試輸出、Git 前後狀態、LLM Judge、Critic feedback | 已實作；預設最多 2 次驗收修正；規則／文字輸出及 Judge 有侷限，人工交接不等於完整審批 UI | `task_evaluator.py`, `tests/test_task_evaluator.py` |
+| 任務驗收與自修正 | 凍結驗收契約、結構化工具結果、檔案／語法、JUnit／process、Judge 與 Critic | 明確條件及證據才能 verified_completed；Judge 無效／失效拒絕、不可修正失敗直接交人工；直接 Skill 亦驗收 | `task_evaluator.py`, `agent_execution/acceptance.py`, `agent_execution/results.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
 | 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 繼承角色／身份及父取消、共享根預算、独立 checkpoint；仍共享 workspace／工具，worktree、DAG、durable coordinator 及結果合併待增修 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
@@ -51,7 +51,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
 | 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算 | 已有循序步驟／checkpoint、lease 與保守副作用恢復；跨代理 DAG／結果收斂待 T13 |
-| 完成度驗證／通用 Agentic | 已有 Critic loop 與來源事件 | 補使用者驗收條件、結構化工具結果、端到端測試、獨立 Reviewer 與任務品質評測 |
+| 完成度驗證／通用 Agentic | 已有驗收契約、結構化結果、Critic loop 與來源事件 | 補獨立 Reviewer／結果收斂及端到端品質評測；僅以通過的明確檢查作為驗收範圍 |
 | 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
 | 擴充／整合 | Skills、動態工具、stdio MCP | 補 schema／結果驗證、受審核工具發布、remote MCP／OAuth、健康檢查、版本相容與故障恢復 |
@@ -423,9 +423,9 @@ WebSocket 可靠事件在傳送前存 SQLite，seq 單調遞增，ACK 原子刪�
 
 ## 持久化任務與 crash 恢復（T08）
 
-CLI、通訊 runtime、WebSocket 以 transport 指定的 task ID 保存 goal、criteria（目前為原始目標）、messages、episode、模型迭代／Critic 次數、驗收 pre-state、循序工具輸入／結果／依賴及 checkpoint。`AGENT_TASK_DB` 預設 `%LOCALAPPDATA%/PythonAI/tasks.db`（其他 OS 為 ~/.local/share/PythonAI），按 source／identity／project／session 授權。新工具任務不直接重播舊對話中未配對的 tool call。
+CLI、通訊 runtime、WebSocket 以 transport 指定的 task ID 保存 goal、criteria（原始目標及 T10 起始驗收契約）、messages、episode、模型迭代／Critic 次數、驗收 pre-state、循序工具輸入／結果／依賴及 checkpoint。`AGENT_TASK_DB` 預設 `%LOCALAPPDATA%/PythonAI/tasks.db`（其他 OS 為 ~/.local/share/PythonAI），按 source／identity／project／session 授權。新工具任務不直接重播舊對話中未配對的 tool call。
 
-checkpoint 包含 model_pending／model_received、tool_started／tool_done、evaluation_pending／evaluation_done、waiting_user、skill_started／skill_done。工具結果保存後恢復會略過已完成 call；驗收結果保存後不重跑 Judge／測試。程序在 tool_started／skill_started 階段消失時，可能已產生副作用，任務轉 uncertain；通訊 job 顯示 recovery_required，不自動重做寫入。完整直接 Skill 結果亦持久化，恢復／快取維持乾淨 stdout；Skill 中途 crash 需人工確認，不能盲目重跑整段。
+checkpoint 包含 model_pending／model_received、tool_started／tool_done、evaluation_pending／evaluation_done、waiting_user、skill_started／skill_executed／skill_done。工具結果保存後恢復會略過已完成 call；驗收結果保存後不重跑 Judge／測試。程序在 tool_started／skill_started 階段消失時，可能已產生副作用，任務轉 uncertain；通訊 job 顯示 recovery_required，不自動重做寫入。直接 Skill 在 skill_executed 後 crash 只續驗收，恢復／快取維持乾淨 stdout；Skill 中途 crash 需人工確認，不能盲目重跑整段。
 
 每任務原子 claim、180 秒 lease、20 秒 heartbeat 及 fencing token；過期舊 worker 不能再提交 checkpoint，新 worker 不會接手仍有 lease 的工作。取消檢查亦讀持久狀態；模型連線建立中仍有 T06 所述 timeout 限制。通訊 loop 自動恢復有 checkpoint、lease 已過期的安全 running 工作；未保存任何 task checkpoint 的舊版 running job 不猜測執行狀態，保留人工處理。crash 恢復最多 3 次；正常人類回答不消耗此恢復次數。
 
@@ -440,7 +440,7 @@ checkpoint 包含 model_pending／model_received、tool_started／tool_done、ev
 
 `ask_user` 已列入預設 schema 並經工具政策驗證問題長度。CLI／WebSocket 重啟後，對同一身份／project／session 的普通回答會續接最近的 suspended task；通訊亦沿用持久化問答機制。tool call/result 配對及原 episode ID 保留。CLI `AGENT_SESSION_ID` 預設 local，需分開多個終端時設定不同且穩定的 session ID，重啟使用相同值。未知平台身份不自動合併。
 
-task 最多 10000 筆／256 MiB（`AGENT_TASK_LIMIT`、`AGENT_TASK_STORAGE_BYTES`），單 checkpoint 64 MiB、人類回答／resolve 1 MiB。達上限拒絕新工作／checkpoint，不刪舊資料；管理者須規劃保留與匯出。task completed 表示迴圈已回覆，真正的 verified_completed 條件由 T10 結構化驗收補強；不把 checkpoint 等同任務品質證明。多代理計畫 DAG／worktree 分別由 T13／T12 擴充。
+task 最多 10000 筆／256 MiB（`AGENT_TASK_LIMIT`、`AGENT_TASK_STORAGE_BYTES`），單 checkpoint 64 MiB、人類回答／resolve 1 MiB。達上限拒絕新工作／checkpoint，不刪舊資料；管理者須規劃保留與匯出。task state=completed 表示迴圈已回覆，verification=verified_completed 另要求 T10 契約與證據；`/tasks` 可見 verification，舊資料預設 unverified。多代理計畫 DAG／worktree 分別由 T13／T12 擴充。
 
 驗證包含以子程序 `os._exit` 在實際已提交的 checkpoint 結束、在新執行環境續跑；模型回覆後、工具結果後與驗收前後均不重複檔案寫入，工具開始但未保存結果時停待人工。另測試 lease／舊 token／owner、取消、快取、容量交易、Skill stdout、人類回答與原 episode、WebSocket runtime 重建後問答續接。
 
@@ -471,3 +471,17 @@ SDK `max_retries=0`、單請求 timeout 最多 60 秒且不超過剩餘 deadline
 模型輸入超限時只刪完整舊訊息組，保留 system／developer、最新使用者輸入、task goal／criteria、批准及其工具配對；hook feedback 排在完整工具結果後。壓縮資料保持 user 權限，不提升為 system 指令。無法在上限內保留必要內容則拒絕，權威 checkpoint 不被裁剪。未知副作用與完整交付品質仍分別依 T08／T10 處理；共享 workspace 的子代理衝突、durable coordinator 與 reviewer 收斂待 T12／T13。
 
 完整驗證（Docker／Chromium 開啟）：444 passed、1 skipped（外部 provider）、7 subtests passed；新增預算與上下文測試包含真實 SDK 的 HTTP 429 無隱藏重試、root deadline 取消 Windows host 程序與 blocked stream、併發扣额、重啟與子代理額度／checkpoint。實際部署模型能力及費率未由這些 fixture 驗證。
+
+## 結構化結果與明確驗收（T10）
+
+模型工具、Skill 步驟、task step／checkpoint 與事件使用 `success`、`exit_code`、`error`、`output`、`artifacts`、`side_effects`、`evidence` 紀錄執行事實。CompletedProcess 不再以物件 repr 當工具結果；非零 exit code／明確失敗停止 Skill 後續步驟，presentation hook 不能抹掉已觀察的失敗。legacy 字串仍供相容顯示，成功文字只代表工具回覆，不能證明測試或整體驗收；side_effects 預設 unknown，不捏造外部送達或副作用保證。
+
+在新任務前配置 workspace 內 `.agent/acceptance.json`，或以 `AGENT_ACCEPTANCE_FILE` 指向 workspace 內其他檔案。範例見 [agent_execution/examples/acceptance.json](agent_execution/examples/acceptance.json)：version=1、checks 陣列，可檢查 file_exists、file_contains、file_sha256、tests（target、min_tests）。最多 32 checks、契約 64 KiB、單檔讀取 8 MiB；越界／junction 拒絕。契約與原始目標在 task 建立時保存；執行中改文件或 /resume 不會降低原條件。
+
+`run_test_suite` 使用實際 process status 與暫存 JUnit XML 的 passed／failed／errors／skipped。exit=0 但沒有通過案例、只印「All Tests Passed」、只有普通 Python script 成功，均不能成為測試證據。同一驗收的規則與契約共用一次測試結果。程式檔驗收契約須含 tests；文件編輯不因 write_file 或「撰寫」字詞誤判為必須測程式。
+
+TaskEvaluator 必須通過起始 checks、沒有失敗工具步驟，以及配置的 Judge，才可 verified。Judge JSON 不合法、success 不是 bool、score 非有限 0–1 或呼叫失效均拒絕；不可用的 Judge 直接交人工，不反覆指示模型改程式。一般可修正失敗仍最多 2 次 Critic。驗收使用目前 task goal，而非對話第一個歷史目標；各 project runtime 的 evaluator workspace 亦獨立。
+
+沒有明確 checks 的一般回覆可 completed，但不會因成功文字自動 verified_completed；程式任務缺測試仍需補齊。直接 Skill 接入驗收／事件，skill_executed 保存原結果後才驗收，crash 後不重做整段。state 與 verification 分開保存，unverified 回覆不自動沉澱成已驗證的 procedural memory。通過標記只涵蓋已配置的檢查，測試品質及外部 provider／平台行為仍須另行評測。
+
+完整 Docker／Chromium 驗證：461 passed、1 skipped（外部 provider）、7 subtests passed；後續通訊工廠接入 TaskEvaluator，工廠／結果／project 隔離相關 43 passed。包含真實 pytest 成功／失败／空收集／只打印成功、Skill 非零停止副作用、真正退出後只續驗收、原始 goal、無效 Judge 與成功文字不能覆蓋失敗。

@@ -39,4 +39,10 @@ if __name__ == '__main__':
     with patch.object(tasks,'save_checkpoint',crash),patch('server.get_client',return_value=client), \
          patch.dict(base.TOOLS,{'write_file':append_artifact}), \
          execution_scope(task_id='crash',session='session',workspace=root):
-        tasks.durable_invoke(lambda saved:server.run_agent(messages,task_evaluator=evaluator,resume_state=saved),messages,99)
+        if phase=='skill_executed':
+            def skill(saved):
+                append_artifact('artifact.txt','hit')
+                return {'skill_name':'fixture','success':True,'steps':[{'tool':'run_command','success':True,'output':{'stdout':'hit','returncode':0}}]}
+            tasks.durable_invoke(skill,messages,99,skill=True,verify_skill=lambda result:result)
+        else:
+            tasks.durable_invoke(lambda saved:server.run_agent(messages,task_evaluator=evaluator,resume_state=saved),messages,99)

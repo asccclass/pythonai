@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -17,6 +18,9 @@ class EvaluationResult:
     feedback: str
     criteria_met: dict[str, bool] = field(default_factory=dict)
     side_effects: dict[str, Any] = field(default_factory=dict)
+    verified: bool = False
+    retryable: bool = True
+    evidence: list[dict] = field(default_factory=list)
 
 
 class TaskEvaluator:
@@ -98,28 +102,33 @@ class TaskEvaluator:
     # ---------------------------------------------------------
     def is_code_development_task(self, user_goal: str, messages: list[dict[str, Any]]) -> bool:
         """Heuristic check to determine if this task involves writing or modifying code."""
-        code_keywords = re.compile(
-            r"(程式|程式碼|代碼|function|class|def |test_|pytest|測試|修復|bug|fix|implement|撰寫|重構|語法|\.py\b)",
-            re.IGNORECASE,
-        )
-        if code_keywords.search(user_goal):
+        if re.search(r'pytest|test_[\w.-]+\.py\b',user_goal,re.IGNORECASE) or re.search(
+            r'(修復|fix|implement|撰寫|重構|write|建立|實作).{0,80}(程式|code|function|class|\.py\b|\.go\b|\.tsx?\b|\.jsx?\b)',user_goal,re.IGNORECASE):
             return True
 
         # Check tool calls in messages
-        code_tools = {"write_file", "ast_edit", "edit_file", "run_test_suite", "git_commit", "patch"}
+        from agent_execution.acceptance import CODE_SUFFIXES
         for msg in messages:
             tool_calls = msg.get("tool_calls") or []
             for tc in tool_calls:
                 func_name = getattr(tc, "function", None)
                 name = getattr(func_name, "name", "") if func_name else tc.get("function", {}).get("name", "")
-                if name in code_tools:
+                if name in {'ast_edit','run_test_suite'}:
                     return True
+                if name in {'write_file','edit_file','patch'}:
+                    arguments=getattr(func_name,'arguments','{}') if func_name else tc.get('function',{}).get('arguments','{}')
+                    try:
+                        values=json.loads(arguments)
+                        path=values.get('path',values.get('file_path',''))
+                        if Path(path).suffix.lower() in CODE_SUFFIXES:return True
+                    except (ValueError,TypeError):
+                        pass
         return False
 
     def find_target_test_files(self, user_goal: str, messages: list[dict[str, Any]]) -> list[str]:
         """Locate test targets mentioned in user goal, messages, or existing in workspace."""
         targets: list[str] = []
-        test_pattern = re.compile(r"[\w/\\-]+\btest_[\w-]+\.py\b", re.IGNORECASE)
+        test_pattern = re.compile(r"(?:[\w.-]+[/\\])*test_[\w.-]+\.py\b", re.IGNORECASE)
 
         # 1. From user goal
         for match in test_pattern.findall(user_goal):
@@ -151,6 +160,10 @@ class TaskEvaluator:
         issues = []
         for file_path in file_paths:
             path = self.workspace_root / file_path if not Path(file_path).is_absolute() else Path(file_path)
+            path=path.resolve()
+            if not path.is_relative_to(self.workspace_root.resolve()):
+                issues.append(f'目標檔案超出 workspace: {file_path}')
+                continue
             if not path.exists():
                 issues.append(f"目標檔案不存在: {file_path}")
                 continue
@@ -173,10 +186,12 @@ class TaskEvaluator:
         messages: list[dict[str, Any]],
         side_effects: dict[str, Any] | None = None,
         test_target: str | None = None,
+        test_results: dict | None = None,
     ) -> tuple[bool, dict[str, bool], list[str]]:
         """Execute multi-dimensional rule-based assertions."""
         criteria: dict[str, bool] = {}
         issues: list[str] = []
+        test_results={} if test_results is None else test_results
 
         is_code_task = self.is_code_development_task(user_goal, messages)
         criteria["is_code_task"] = is_code_task
@@ -184,10 +199,23 @@ class TaskEvaluator:
         # 1. 程式開發任務斷言：強制執行測試套件
         if is_code_task:
             test_targets = [test_target] if test_target else self.find_target_test_files(user_goal, messages)
+            from agent_execution.tasks import _active
+            active=_active.get()
+            contract=active[0].get(active[1],active[2])['criteria'] if active else {}
+            for check in contract.get('checks',[]):
+                if check.get('kind')=='tests' and check['target'] not in test_targets:test_targets.append(check['target'])
+            if active:
+                for step in active[0].steps(active[1],active[2]):
+                    if step['name']=='run_test_suite':
+                        target=json.loads(step['input']).get('test_target')
+                        if target and target not in test_targets:test_targets.append(target)
             if test_targets:
                 for target in test_targets:
-                    test_output = self._call_run_test_suite(target)
-                    passed = ("Exit Code: 0" in test_output or "✅ All Tests Passed!" in test_output) and "❌ Tests Failed!" not in test_output
+                    from agent_execution.results import normalize_result
+                    if target not in test_results:test_results[target]=self._call_run_test_suite(target)
+                    execution=normalize_result(test_results[target],'run_test_suite')
+                    test_output=str(execution)
+                    passed=execution.success and execution.exit_code==0 and execution.evidence.get('tests',{}).get('passed',0)>0
                     has_uncaught_exception = "Traceback (most recent call last)" in test_output
                     criteria[f"test_passed:{target}"] = passed and not has_uncaught_exception
                     if has_uncaught_exception:
@@ -197,6 +225,7 @@ class TaskEvaluator:
             else:
                 # If it's a code task but no specific test target found, check all tests in tests/
                 criteria["test_target_specified"] = False
+                issues.append('程式任務未提供可驗證的測試目標。')
 
         # 2. 檔案與工作區狀態檢查
         files_to_check: list[str] = []
@@ -284,12 +313,15 @@ Please output your decision strictly in JSON format with keys:
             json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group(0))
-                return bool(data.get("success", False)), float(data.get("score", 0.0)), str(data.get("feedback", ""))
-            return True, 1.0, "LLM Judge 回傳非標準格式，預設通過。"
+                score=data.get('score')
+                if type(data.get('success')) is not bool or type(score) not in {int,float} or not math.isfinite(score) or not 0<=score<=1 or not isinstance(data.get('feedback'),str):
+                    return False,0.0,'Judge unavailable: invalid response schema'
+                return data['success'],float(score),data['feedback']
+            return False, 0.0, 'Judge unavailable: invalid JSON'
         except Exception as e:
             from agent_execution.budgets import BudgetExhausted
             if isinstance(e,BudgetExhausted):raise
-            return True, 1.0, f"LLM Judge 呼叫失敗，降級略過: {e}"
+            return False, 0.0, f'Judge unavailable: {type(e).__name__}'
 
     # ---------------------------------------------------------
     # Unified Evaluation
@@ -309,12 +341,32 @@ Please output your decision strictly in JSON format with keys:
             side_effects = self.compare_side_effects(pre_state, post_state)
 
         # Track 1: Rule Assertions
+        test_results={}
         rules_passed, criteria, issues = self.evaluate_rules(
             user_goal=user_goal,
             messages=messages,
             side_effects=side_effects,
             test_target=test_target,
+            test_results=test_results,
         )
+        from agent_execution.tasks import _active
+        from agent_execution.acceptance import verify_contract
+        active=_active.get()
+        contract=active[0].get(active[1],active[2])['criteria'] if active else {'version':1,'checks':[]}
+        if 'version' not in contract:contract={'version':1,'checks':[]}
+        def run_once(target):
+            if target not in test_results:test_results[target]=self._call_run_test_suite(target)
+            return test_results[target]
+        checks,contract_issues,evidence=verify_contract(contract,self.workspace_root,run_once)
+        criteria.update(checks)
+        issues.extend(contract_issues)
+        if active:
+            # Executor checkpoints are trusted facts; model prose is never evidence.
+            steps=active[0].steps(active[1],active[2])
+            for step in steps:
+                if step['state']!='completed':
+                    issues.append(f"Tool step not successful: {step['id']}")
+        rules_passed=rules_passed and not issues
 
         # Track 2: LLM-as-a-Judge
         llm_passed, llm_score, llm_feedback = self.evaluate_llm_judge(user_goal, messages, final_reply)
@@ -339,6 +391,9 @@ Please output your decision strictly in JSON format with keys:
             feedback=final_feedback,
             criteria_met=criteria,
             side_effects=side_effects,
+            verified=overall_success and bool(checks) and all(checks.values()),
+            retryable=not llm_feedback.startswith('Judge unavailable:') and not any('PermissionError' in issue for issue in issues),
+            evidence=evidence,
         )
 
     # ---------------------------------------------------------

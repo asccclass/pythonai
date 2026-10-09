@@ -1,68 +1,38 @@
-from agent_execution.process import run_process
-from agent_execution import policy_tool, resolve_path
-import os
-import sys
-import subprocess
+"""Run tests with process status and a machine-readable report."""
 from pathlib import Path
+import tempfile
+import sys
+import xml.etree.ElementTree as ET
 
-# Module-level dictionary to track consecutive test failures for a given target
-_failure_counts = {}
-MAX_RETRIES = 5
+from agent_execution import policy_tool, resolve_path
+from agent_execution.process import run_process
+from agent_execution.results import ToolResult
 
-@policy_tool("run_test_suite")
-def run_test_suite(test_target: str, framework: str = "pytest") -> str:
-    global _failure_counts
-    
-    workspace_dir = Path(os.getcwd())
-    target_path = resolve_path(test_target)
-    
-    if not target_path.exists():
-        return f"Error: Test target '{test_target}' does not exist."
-        
-    cmd = []
-    if framework.lower() == "pytest":
-        cmd = [sys.executable, "-m", "pytest", str(target_path), "--no-header", "-v"]
-    elif framework.lower() == "python":
-        cmd = [sys.executable, str(target_path)]
-    else:
-        return f"Error: Unsupported test framework '{framework}'. Use 'pytest' or 'python'."
-        
+
+@policy_tool('run_test_suite')
+def run_test_suite(test_target: str, framework: str = 'pytest'):
+    target=resolve_path(test_target)
+    if not target.exists():return ToolResult(False,error=f"Test target '{test_target}' does not exist")
+    if framework.lower() not in {'pytest','python'}:
+        return ToolResult(False,error='Unsupported test framework')
     try:
-        # Run safely with timeout
-        result = run_process(cmd, cwd=resolve_path("."), capture_output=True, text=True, timeout=30)
-        
-        output = f"Exit Code: {result.returncode}\n\n"
-        
-        if result.returncode == 0:
-            # Reset failure count on success
-            _failure_counts[test_target] = 0
-            output += "✅ All Tests Passed!\n"
-            output += result.stdout
-            return output
-            
-        # Handle failure
-        _failure_counts[test_target] = _failure_counts.get(test_target, 0) + 1
-        
-        if _failure_counts[test_target] >= MAX_RETRIES:
-            # Reset so human can try again, but interrupt Agent
-            _failure_counts[test_target] = 0
-            return (f"⛔ HITL INTERRUPT: Max retries ({MAX_RETRIES}) reached for {test_target}.\n"
-                    f"The tests are still failing after {MAX_RETRIES} attempts. "
-                    f"You MUST stop trying to fix it yourself, explain the error to the user, and ask for human assistance.\n"
-                    f"Final Output:\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}")
-            
-        output += f"❌ Tests Failed! (Attempt {_failure_counts[test_target]}/{MAX_RETRIES})\n"
-        output += "Please analyze the traceback below and use ast_edit or edit_file to fix the bug, then run this test again.\n\n"
-        
-        if result.stdout:
-            output += "=== STDOUT (Last 2000 chars) ===\n" + result.stdout[-2000:] + "\n"
-        if result.stderr:
-            output += "=== STDERR (Last 2000 chars) ===\n" + result.stderr[-2000:] + "\n"
-            
-        return output
-        
-    except subprocess.TimeoutExpired:
-        _failure_counts[test_target] = _failure_counts.get(test_target, 0) + 1
-        return f"Error: Test execution timed out after 30 seconds. Infinite loop detected? (Attempt {_failure_counts[test_target]}/{MAX_RETRIES})"
-    except Exception as e:
-        return f"Error executing tests: {e}"
+        with tempfile.TemporaryDirectory(prefix='pythonai-tests-') as directory:
+            report=Path(directory)/'junit.xml'
+            command=[sys.executable,'-m','pytest',str(target),'-q',f'--junitxml={report}'] if framework.lower()=='pytest' else [sys.executable,str(target)]
+            process=run_process(command,cwd=resolve_path('.'),capture_output=True,text=True,timeout=30)
+            counts={'passed':0,'failed':0,'errors':0,'skipped':0}
+            if report.exists() and report.stat().st_size<=4*1024*1024:
+                tree=ET.fromstring(report.read_bytes())
+                for case in tree.iter('testcase'):
+                    key='failed' if case.find('failure') is not None else 'errors' if case.find('error') is not None else 'skipped' if case.find('skipped') is not None else 'passed'
+                    counts[key]+=1
+            # A script exit code is evidence of execution, not collected test assertions.
+            success=process.returncode==0 and counts['passed']>0 and not counts['failed'] and not counts['errors']
+            output=(process.stdout or '')+(process.stderr or '')
+            error='' if success else 'Tests failed, were cancelled, or produced no passing test cases'
+            return ToolResult(success,output,process.returncode,error,
+                evidence={'kind':'test_process','framework':framework,'target':test_target,'tests':counts})
+    except Exception as error:
+        from agent_execution.budgets import BudgetExhausted
+        if isinstance(error,BudgetExhausted):raise
+        return ToolResult(False,error=f'Test execution failed ({type(error).__name__})')

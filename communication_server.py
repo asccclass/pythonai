@@ -112,6 +112,7 @@ class TelegramWebhookService(MultiWebhookService):
 
 def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
     import server
+    from base import workspace_root
 
     messages = [{"role": "system", "content": server.build_system_prompt()}]
     guard = server.LayaGuard()
@@ -151,6 +152,8 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
         run_agent=server.run_agent,
         run_skill=server.run_skill,
         async_memory_review=async_memory_review,
+        task_evaluator=server.TaskEvaluator(workspace_root=workspace_root(),
+            client=server.get_client(),model=server.OLLAMA_MODEL),
     )
 
 

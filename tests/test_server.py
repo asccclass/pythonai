@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch
 import tempfile
 import subprocess
@@ -257,7 +258,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([event["event_type"] for event in events], ["tool_result", "tool_call"])
         self.assertEqual(events[1]["metadata"]["name"], "list_files")
         self.assertEqual(events[0]["metadata"]["tool_call_id"], "tool-1")
-        self.assertEqual(events[0]["content"], "['sample.txt']")
+        self.assertEqual(json.loads(events[0]['content']),['sample.txt'])
+        self.assertTrue(events[0]['metadata']['execution']['success'])
 
     def test_run_agent_records_matching_procedure_result(self):
         class Function:

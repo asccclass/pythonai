@@ -55,8 +55,11 @@ class RuntimeSessions:
                 if searcher is not None and hasattr(searcher, "store"):
                     searcher.store = memory
                     searcher.last_stats = {}
+                evaluator=copy.copy(self.template.task_evaluator)
+                if evaluator is not None and hasattr(evaluator,'workspace_root'):
+                    evaluator.workspace_root=project_workspace(key[2])
                 runtime = replace(self.template, messages=copy.deepcopy(self.system_messages), memory=memory,
-                                  memory_searcher=searcher, check_cancelled=None)
+                                  memory_searcher=searcher, check_cancelled=None,task_evaluator=evaluator)
                 self.states[key] = (runtime, threading.Lock())
             return self.states[key]
 

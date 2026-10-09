@@ -65,6 +65,7 @@ class SkillStepResult:
     success: bool
     output: Any = None
     error: str = ""
+    result: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -184,8 +185,15 @@ class SkillExecutor:
                                      episode_id=self.episode_id,
                                      trusted_assets=(skill.path.resolve(),)):
                     output = execute_tool(tool_name, args, self.tools[tool_name])
-                result = SkillStepResult(index, tool_name, args, True, output=output)
+                from agent_execution.results import normalize_result
+                structured=normalize_result(output,tool_name)
+                result = SkillStepResult(index, tool_name, args, structured.success, output=output,
+                    error=structured.error,result=structured.to_dict())
                 steps.append(result)
+                if not structured.success:
+                    self._log('skill_step_result',metadata={'skill':skill.name,'result':result.to_log_dict()})
+                    self._log('skill_result',metadata={'skill':skill.name,'success':False,'error':structured.error})
+                    return SkillResult(skill.name,False,steps,structured.error or 'Tool failed')
                 self._print_status(f"Skill {skill.name} step {index} completed")
                 self._log("skill_step_result", metadata={"skill": skill.name, "result": result.to_log_dict()})
             except Exception as error:
@@ -309,6 +317,8 @@ def render_args(value: Any, inputs: dict[str, Any]) -> Any:
 
 
 def loggable_value(value: Any) -> Any:
+    from agent_execution.results import ToolResult
+    if isinstance(value,ToolResult):return value.to_dict()
     if isinstance(value, subprocess.CompletedProcess):
         return {
             "args": value.args,

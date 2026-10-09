@@ -290,6 +290,8 @@ class CommunicationServerTests(unittest.TestCase):
             runtime = create_agent_runtime()
 
         self.assertEqual(runtime.messages[0], {"role": "system", "content": "system with agents"})
+        from task_evaluator import TaskEvaluator
+        self.assertIsInstance(runtime.task_evaluator,TaskEvaluator)
 
     def test_run_http_server_treats_ctrl_c_as_shutdown(self):
         class Httpd:

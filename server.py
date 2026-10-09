@@ -184,8 +184,10 @@ def run_agent(
     resume_state: dict | None = None,
 ):
     from agent_execution.tasks import save_checkpoint
+    from agent_execution.results import normalize_result
     from openai.types.chat import ChatCompletionMessage
     resume_state = resume_state or {}
+    tool_results = dict(resume_state.get('tool_results',{}))
     iteration = resume_state.get('iteration', 0)
     if resume_state.get('phase') == 'model_pending':
         iteration = max(0,iteration-1)
@@ -194,7 +196,7 @@ def run_agent(
     if pre_state is None and task_evaluator is not None:
         pre_state = task_evaluator.capture_state()
     def checkpoint(phase, **metadata):
-        save_checkpoint(phase,messages,iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,**metadata)
+        save_checkpoint(phase,messages,iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,**metadata)
     def pending_assistant():
         for index in range(len(messages)-1,-1,-1):
             message = messages[index]
@@ -330,6 +332,7 @@ def run_agent(
                     tool_args = hook_context.tool_arguments
                     if hook_result.decision in {HookDecision.BLOCK, HookDecision.RETURN_TOOL_ERROR}:
                         result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} blocked by hook"
+                        tool_results[tool_call.id]=normalize_result('Error: '+str(result),tool_name).to_dict()
                         messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
                         log_episode_event(
                             memory,
@@ -361,9 +364,12 @@ def run_agent(
                 checkpoint('tool_started',step=step)
                 with execution_scope(check_cancelled=check_cancelled):
                     result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                raw_result=normalize_result(result,tool_name)
+                result=raw_result
+                tool_results[tool_call.id]=raw_result.to_dict()
                 save_checkpoint('tool_done',messages+[{'role':'tool','tool_call_id':tool_call.id,'content':str(result)}],
-                    iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,
-                    step={**step,'state':'failed' if str(result).lstrip().startswith('Error:') else 'completed','result':str(result)})
+                    iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,
+                    step={**step,'state':'completed' if raw_result.success else 'failed','result':json.dumps(raw_result.to_dict(),ensure_ascii=False)})
                 if hook_manager is not None:
                     hook_context = HookContext(
                         lifecycle=HookLifecycle.POST_TOOL_EXECUTE,
@@ -384,8 +390,16 @@ def run_agent(
                         result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} rejected by hook"
                     elif hook_result.decision == HookDecision.RETURN_EARLY:
                         return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+                structured=raw_result if result is raw_result else normalize_result(result,tool_name)
+                if result is not raw_result:
+                    from dataclasses import replace
+                    structured=replace(raw_result,success=raw_result.success and structured.success,
+                        output=str(result),error=structured.error if raw_result.success else raw_result.error)
+                # Presentation hooks cannot erase an observed process failure.
+                if not raw_result.success:structured=raw_result
+                tool_results[tool_call.id]=structured.to_dict()
                 if event_callback:
-                    event_callback("tool.result", {"tool_call_id": tool_call.id, "name": tool_name, "result": str(result)})
+                    event_callback("tool.result", {"tool_call_id": tool_call.id, "name": tool_name, "result": str(result), 'execution':structured.to_dict()})
                     if "approval_required:" in str(result):
                         import re
                         match = re.search(r"approval_required: ([a-f0-9]{32})", str(result))
@@ -396,12 +410,12 @@ def run_agent(
                     episode_id,
                     "tool_result",
                     content=str(result),
-                    metadata={"tool_call_id": tool_call.id},
+                    metadata={"tool_call_id": tool_call.id,'execution':structured.to_dict()},
                 )
                 record_tool_procedure_result(memory, episode_id, matched_procedure, result)
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
                 resolved_calls.add(tool_call.id)
-                checkpoint('tool_done',step={**step,'state':'failed' if str(result).lstrip().startswith('Error:') else 'completed','result':str(result)})
+                checkpoint('tool_done',step={**step,'state':'completed' if structured.success else 'failed','result':json.dumps(structured.to_dict(),ensure_ascii=False)})
 
             if suspend_request:
                 tool_call_id, question = suspend_request
@@ -417,6 +431,10 @@ def run_agent(
                     if not content.startswith("【任務驗收未通過"):
                         user_goal = content
                         break
+            from agent_execution.tasks import _active
+            active=_active.get()
+            if active:
+                user_goal=active[0].get(active[1],active[2])['goal']
 
             if resume_state.get('phase') == 'evaluation_done':
                 from task_evaluator import EvaluationResult
@@ -446,14 +464,16 @@ def run_agent(
                     "feedback": eval_res.feedback,
                     "criteria_met": eval_res.criteria_met,
                     "side_effects": eval_res.side_effects,
+                    'verified':getattr(eval_res,'verified',False),
+                    'evidence':getattr(eval_res,'evidence',[]),
                     "eval_retry": eval_retries,
                 },
             )
             if event_callback:
-                event_callback("task.evaluation", {"success": eval_res.success, "score": eval_res.score, "feedback": eval_res.feedback})
+                event_callback("task.evaluation", {"success": eval_res.success, "score": eval_res.score, "feedback": eval_res.feedback,'verified':getattr(eval_res,'verified',False)})
 
             if not eval_res.success:
-                if eval_retries < max_eval_retries:
+                if eval_retries < max_eval_retries and getattr(eval_res,'retryable',True):
                     eval_retries += 1
                     critic_feedback = (
                         f"【任務驗收未通過 (Critic Feedback - 第 {eval_retries}/{max_eval_retries} 次修正)】\n"
@@ -536,7 +556,8 @@ def record_tool_procedure_result(
 
 
 def tool_result_succeeded(result: Any) -> bool:
-    return not str(result).lstrip().lower().startswith("error:")
+    from agent_execution.results import normalize_result
+    return normalize_result(result).success
 
 
 def parse_tool_arguments(arguments: str) -> dict[str, Any]:

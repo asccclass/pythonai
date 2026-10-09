@@ -9,6 +9,7 @@ from memory import MemoryStore
 from memory_review import process_memory_review_candidates
 import server
 from task_evaluator import EvaluationResult, TaskEvaluator
+from agent_execution.results import ToolResult
 
 
 class TaskEvaluatorTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class TaskEvaluatorTests(unittest.TestCase):
     def test_evaluator_code_task_with_passing_tests(self):
         evaluator = TaskEvaluator(
             workspace_root=self.workspace,
-            run_test_suite_fn=lambda target: "Exit Code: 0\n\n✅ All Tests Passed!\n1 passed in 0.05s",
+            run_test_suite_fn=lambda target: ToolResult(True,'1 passed',0,evidence={'tests':{'passed':1}}),
             git_status_fn=lambda: "On branch main\nnothing to commit",
         )
         res = evaluator.evaluate(
@@ -42,7 +43,7 @@ class TaskEvaluatorTests(unittest.TestCase):
     def test_evaluator_code_task_with_failing_tests(self):
         evaluator = TaskEvaluator(
             workspace_root=self.workspace,
-            run_test_suite_fn=lambda target: "Exit Code: 1\n\n❌ Tests Failed!\nAssertionError: 1 != 2",
+            run_test_suite_fn=lambda target: ToolResult(False,'AssertionError: 1 != 2',1,'AssertionError: 1 != 2'),
             git_status_fn=lambda: "On branch main",
         )
         res = evaluator.evaluate(
@@ -59,7 +60,7 @@ class TaskEvaluatorTests(unittest.TestCase):
     def test_evaluator_detects_uncaught_exception(self):
         evaluator = TaskEvaluator(
             workspace_root=self.workspace,
-            run_test_suite_fn=lambda target: "Exit Code: 1\n\nTraceback (most recent call last):\n  NameError: name 'foo' is not defined",
+            run_test_suite_fn=lambda target: ToolResult(False,'Traceback (most recent call last): NameError',1,'Traceback (most recent call last): NameError'),
         )
         res = evaluator.evaluate(
             user_goal="執行 tests/test_err.py",
@@ -188,8 +189,9 @@ class TaskEvaluatorTests(unittest.TestCase):
             git_status_fn=lambda: "clean",
         )
         passed, score, feedback = evaluator.evaluate_llm_judge("user goal", [], "reply")
-        self.assertTrue(passed)
-        self.assertIn("降級略過", feedback)
+        self.assertFalse(passed)
+        self.assertEqual(score,0)
+        self.assertIn('Judge unavailable:',feedback)
 
     # =========================================================
     # 3. Critic-Correction 自省修復迴圈測試 (server.run_agent)

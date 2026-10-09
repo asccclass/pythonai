@@ -179,6 +179,17 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.store.get(self.owner,'crash')['reply'],'中文結果')
         self.assertEqual(dispatch_task_input('/resume crash',self.runtime()).reply,'中文結果')
 
+    def test_actual_process_exit_after_skill_effect_does_not_repeat_skill(self):
+        self.crash('skill_executed')
+        runtime=self.runtime()
+        runtime.run_agent=Mock(side_effect=AssertionError('Skill must not execute again'))
+        saved=self.store.get(self.owner,'crash')
+        result=resume_agent_turn(saved['checkpoint']['messages'],runtime,99)
+        self.assertEqual(result.reply,'hit')
+        self.assertEqual(self.root.joinpath('artifact.txt').read_text(),'hit')
+        runtime.run_agent.assert_not_called()
+        self.assertEqual(self.store.get(self.owner,'crash')['verification'],'unverified')
+
     def test_viewer_cannot_supply_side_effect_resolution(self):
         from permissions import set_current_role
         self.crash('tool_started')

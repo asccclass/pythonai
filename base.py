@@ -384,7 +384,12 @@ def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None)
         if function is None:
             return f"Error: Tool '{name}' not found"
         with execution_scope(memory=memory, episode_id=episode_id):
-            return execute_tool(name, args, function)
+            output=execute_tool(name, args, function)
+            if function is read_file:
+                from agent_execution.results import ToolResult
+                # File content may itself begin with Error:; it is data, not a failure.
+                return ToolResult(True,str(output))
+            return output
     except Exception as error:
         return f"Error: {error}"
 

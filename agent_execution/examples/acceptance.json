@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "checks": [
+    {"kind": "file_exists", "path": "src/calculator.py"},
+    {"kind": "file_contains", "path": "src/calculator.py", "text": "def add("},
+    {"kind": "tests", "target": "tests/test_calculator.py", "min_tests": 1}
+  ]
+}

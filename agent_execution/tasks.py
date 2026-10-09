@@ -42,6 +42,8 @@ class TaskStore:
             columns = {r['name'] for r in conn.execute('PRAGMA table_info(tasks)')}
             if 'recoveries' not in columns:
                 conn.execute('ALTER TABLE tasks ADD COLUMN recoveries INTEGER NOT NULL DEFAULT 0')
+            if 'verification' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN verification TEXT NOT NULL DEFAULT 'unverified'")
 
     def connect(self):
         conn = sqlite3.connect(self.path, timeout=10)
@@ -68,7 +70,7 @@ class TaskStore:
 
     def list(self, owner):
         with closing(self.connect()) as conn:
-            return [dict(row) for row in conn.execute('SELECT id,goal,state,phase,episode,attempts,updated FROM tasks WHERE owner=? ORDER BY updated DESC LIMIT 20', (owner,))]
+            return [dict(row) for row in conn.execute('SELECT id,goal,state,phase,episode,attempts,updated,verification FROM tasks WHERE owner=? ORDER BY updated DESC LIMIT 20', (owner,))]
 
     def claim(self, owner, key, goal, messages, episode=None, criteria=None):
         if not key or len(key)>256:
@@ -132,8 +134,14 @@ class TaskStore:
             conn.execute('BEGIN IMMEDIATE')
             old = conn.execute('SELECT length(CAST(COALESCE(reply,\'\') AS BLOB)) FROM tasks WHERE owner=? AND id=?',(owner,key)).fetchone()
             self.capacity(conn,len((reply or '').encode())-(old[0] if old else 0))
-            if conn.execute('UPDATE tasks SET state=?,reply=?,lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND lease_owner=? AND lease_until>?',
-                (state,reply,time.time(),owner,key,token,time.time())).rowcount != 1:
+            row=conn.execute('SELECT checkpoint,criteria FROM tasks WHERE owner=? AND id=?',(owner,key)).fetchone()
+            data=json.loads(row['checkpoint']) if row else {}
+            criteria=json.loads(row['criteria']) if row else {}
+            evaluation=data.get('evaluation') or data.get('skill_result',{}).get('verification') or {}
+            verified=state=='completed' and bool(criteria.get('checks')) and evaluation.get('verified') is True and bool(evaluation.get('evidence'))
+            quality='verified_completed' if verified else 'unverified'
+            if conn.execute('UPDATE tasks SET state=?,reply=?,verification=?,lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND lease_owner=? AND lease_until>?',
+                (state,reply,quality,time.time(),owner,key,token,time.time())).rowcount != 1:
                 raise TaskBusy('Task lease lost while finishing')
 
     def answer(self, owner, key, answer):
@@ -195,12 +203,13 @@ def save_checkpoint(phase, messages, **metadata):
     store.checkpoint(owner,key,token,phase,{'messages':messages,**metadata},step)
 
 
-def durable_invoke(function, messages, episode, resume=False, skill=False, skill_arguments=None):
+def durable_invoke(function, messages, episode, resume=False, skill=False, skill_arguments=None, verify_skill=None):
     from .policy import current_context, execution_scope
     import threading
     context = current_context()
     if context.task_id is None:
-        return function(None)
+        result=function(None)
+        return verify_skill(result) if skill and verify_skill else result
     store, owner, key = TaskStore(), task_owner(context), context.task_id
     try:
         previous = store.get(owner,key)
@@ -216,7 +225,8 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
     goal = ('\n'.join(p.get('text','') for p in content if isinstance(p,dict)) if isinstance(content,list) else str(content))[:16000]
     if previous and not resume and previous['goal'] != goal:
         raise RecoveryRequired('Task ID cannot be reused with a different goal')
-    token = store.claim(owner,key,goal,messages,episode)
+    from .acceptance import load_contract
+    token = store.claim(owner,key,goal,messages,episode,criteria=load_contract(goal) if previous is None else None)
     if token is None:
         row = store.get(owner,key)
         return row['checkpoint']['skill_result'] if skill else row['reply'] or ''
@@ -255,25 +265,32 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
         return lost.is_set()
     try:
         with execution_scope(check_cancelled=cancelled):
+            is_skill=skill or bool(saved and saved.get('kind')=='skill')
             if saved and saved.get('kind')=='skill' and saved.get('phase')=='skill_done':
-                from agent_runtime import format_skill_reply
-                result = saved['skill_result'] if skill else format_skill_reply(saved['skill_result'])
+                result = saved['skill_result']
             else:
-                if skill:
-                    save_checkpoint('skill_started',messages,kind='skill',step={'id':'skill','name':'run_skill','arguments':skill_arguments or {},'state':'running'})
-                result = function(saved)
-                if skill:
+                if saved and saved.get('kind')=='skill' and saved.get('phase')=='skill_executed':
+                    result=saved['skill_result']
+                else:
+                    if skill:
+                        save_checkpoint('skill_started',messages,kind='skill',step={'id':'skill','name':'run_skill','arguments':skill_arguments or {},'state':'running'})
+                    result = function(saved)
+                if is_skill:
+                    save_checkpoint('skill_executed',messages,kind='skill',skill_result=result,
+                        step={'id':'skill','name':'run_skill','arguments':skill_arguments or {},'state':'completed' if result.get('success') else 'failed','result':json.dumps(result,ensure_ascii=False)})
+                    if verify_skill:
+                        result=verify_skill(result)
                     save_checkpoint('skill_done',messages,kind='skill',skill_result=result,
                         step={'id':'skill','name':'run_skill','arguments':skill_arguments or {},'state':'completed' if result.get('success') else 'failed','result':json.dumps(result,ensure_ascii=False)})
-        if skill:
+        if is_skill:
             from agent_runtime import format_skill_reply
             reply = format_skill_reply(result)
         else:
             reply = str(result)
-        state = 'cancelled' if lost.is_set() or (original_cancel and original_cancel()) else 'failed' if (skill and not result.get('success')) or reply.startswith('Error:') or '已轉交人工審核' in reply or '遠端 LLM 服務發生錯誤' in reply else 'completed'
+        state = 'cancelled' if lost.is_set() or (original_cancel and original_cancel()) else 'failed' if (is_skill and not result.get('success')) or reply.startswith('Error:') or '已轉交人工審核' in reply or '遠端 LLM 服務發生錯誤' in reply else 'completed'
         if store.get(owner,key)['state'] != 'cancelled':
             store.finish(owner,key,token,state,reply)
-        return result
+        return result if skill or not is_skill else reply
     except Exception as error:
         from exceptions import TaskSuspendedException
         if isinstance(error,TaskSuspendedException):

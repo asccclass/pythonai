@@ -84,7 +84,8 @@ def invoke_runtime_agent(runtime, messages, episode_id, resume=False):
         if saved:
             kwargs['resume_state'] = saved
         return runtime.run_agent(messages, **kwargs)
-    return durable_invoke(invoke,messages,episode_id,resume=resume)
+    return durable_invoke(invoke,messages,episode_id,resume=resume,
+        verify_skill=lambda result:verify_skill_result(result,runtime,messages,episode_id))
 
 
 @dataclass(frozen=True)
@@ -155,13 +156,15 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
         if runtime.event_callback:
             runtime.event_callback("tool.start", {"name": "run_skill", "arguments": {"skill_name": selected.name, "inputs": inputs}})
         from agent_execution.tasks import durable_invoke
-        result = durable_invoke(lambda saved:runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id),runtime.messages,episode_id,skill=True,skill_arguments={'skill_name':selected.name,'inputs':inputs})
+        result = durable_invoke(lambda saved:runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id),runtime.messages,episode_id,skill=True,skill_arguments={'skill_name':selected.name,'inputs':inputs},
+            verify_skill=lambda result:verify_skill_result(result,runtime,runtime.messages,episode_id,user_input))
         if runtime.event_callback:
             runtime.event_callback("tool.result", {"name": "run_skill", "result": str(result)})
         reply = format_skill_reply(result)
         runtime.messages.append({"role": "assistant", "content": reply})
         log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
-        finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn)
+        status='failed' if not result.get('success') else 'verified_completed' if result.get('verification',{}).get('verified') else 'completed'
+        finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn,status=status)
         return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
 
     memory_context = (
@@ -362,15 +365,15 @@ def determine_episode_status(reply: str, memory: MemoryStore | None = None, epis
                 meta = event.get("metadata") or {}
                 if not meta.get("success", False):
                     return "needs_review"
-                break
-    return "verified_completed"
+                return 'verified_completed' if meta.get('verified') else 'completed'
+    return 'completed'
 
 
 def finish_turn_memory_review(
     runtime: AgentRuntime,
     episode_id: int | None,
     skip_laya_for_turn: bool,
-    status: str = "verified_completed",
+    status: str = "completed",
 ) -> None:
     finish_episode_safely(runtime.memory, episode_id, status=status)
     if not skip_laya_for_turn and runtime.memory_worker is not None:
@@ -383,6 +386,41 @@ def finish_turn_memory_review(
         )
         if not runtime.async_memory_review:
             runtime.memory_worker.join()
+
+
+def verify_skill_result(result, runtime, messages, episode_id, goal=''):
+    from agent_execution.results import normalize_result
+    from agent_execution.tasks import _active
+    from agent_execution.acceptance import verify_contract
+    from task_evaluator import EvaluationResult
+    from dataclasses import asdict
+    from base import workspace_root
+    from tools.run_test_suite import run_test_suite
+    result=dict(result)
+    failed=not result.get('success')
+    for step in result.get('steps',[]):
+        execution=normalize_result(step.get('output'),step.get('tool',''))
+        if step.get('success') is False or not execution.success:failed=True
+    active=_active.get()
+    row=active[0].get(active[1],active[2]) if active else None
+    goal=row['goal'] if row else goal
+    if failed:
+        evaluation=EvaluationResult(False,0,'Skill contains a failed tool step',retryable=False)
+    elif runtime.task_evaluator is not None:
+        evaluation=runtime.task_evaluator.evaluate(user_goal=goal,messages=messages,
+            final_reply=format_skill_reply(result),post_state=runtime.task_evaluator.capture_state())
+    else:
+        contract=row['criteria'] if row and row['criteria'].get('version')==1 else {'version':1,'checks':[]}
+        checks,errors,evidence=verify_contract(contract,workspace_root(),run_test_suite)
+        evaluation=EvaluationResult(not errors,0 if errors else 1,'; '.join(errors),criteria_met=checks,
+            verified=bool(checks) and not errors,retryable=False,evidence=evidence)
+    result['success']=bool(result.get('success')) and evaluation.success
+    result['verification']=asdict(evaluation)
+    if not evaluation.success:result['error']=evaluation.feedback
+    log_episode_event(runtime.memory,episode_id,'task_evaluation',metadata=asdict(evaluation))
+    if runtime.event_callback:
+        runtime.event_callback('task.evaluation',asdict(evaluation))
+    return result
 
 
 def format_skill_reply(result: dict[str, Any]) -> str:
@@ -406,6 +444,8 @@ def format_skill_reply(result: dict[str, Any]) -> str:
                 outputs.append(stdout)
             elif stderr:
                 outputs.append(stderr)
+            elif isinstance(output.get('output'),str):
+                outputs.append(output['output'])
         elif output not in (None, ""):
             outputs.append(str(output))
     return "\n\n".join(outputs).strip() or f"Skill {result.get('skill_name', '<unknown>')} completed."
@@ -454,7 +494,7 @@ def log_episode_event(
 def finish_episode_safely(
     memory: MemoryStore | None,
     episode_id: int | None,
-    status: str = "verified_completed",
+    status: str = "completed",
     summary: str | None = None,
 ) -> None:
     if memory is None or episode_id is None:

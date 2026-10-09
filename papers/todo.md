@@ -80,15 +80,20 @@
   - 現況：`request_budget.py` 主要限制記憶請求；工作記憶為摘要，所有開發任務主要使用 OLLAMA_MODEL。
   - 工作：task／子代理總 token、成本、deadline、併發與 retry 預算；模型能力探測、文字／視覺／embedding 路由；依 token 壓縮並保留目標、批准、工具呼叫／結果配對。
   - 驗收：連續 429／timeout／子代理遞迴不會突破預算；不支援 vision 時明確降級；壓縮後仍保持驗收條件與合法訊息結構。依賴 T08。
-  - 實作：根任務持久化 token／request／成本／deadline／子代理總數与深度；前景模型、embedding、Judge 與重試扣額，SDK 隱藏重試關閉；全域 SQLite model slots／串流 wall deadline、通訊背景入列上限與控制指令通道。子代理獨立 checkpoint 防止覆寫父任務；仍共享父預算。
+  - 實作（commit `ed5abb8`）：根任務持久化 token／request／成本／deadline／子代理總數与深度；前景模型、embedding、Judge 與重試扣額，SDK 隱藏重試關閉；全域 SQLite model slots／串流 wall deadline、通訊背景入列上限與控制指令通道。子代理獨立 checkpoint 防止覆寫父任務；仍共享父預算。
   - 模型／上下文：文字／視覺／embedding 配置、明確能力拒絕與 opt-in bounded probe；失敗能力標 unknown。UTF-8 bytes 保守 token 估算，整組工具配對裁剪、保留 goal／criteria／approval／最新輸入；不裁剪權威 checkpoint、不將摘要提高權限。
   - 邊界：成本上限預設關閉，啟用須提供受信任費率；保留額度不退還，usage 超估向上記帳後停止後續工作，不是供應商帳單保證。圖片 Base64 保守計入，較大圖片需配置已驗證視窗，超限明確拒絕。真實 provider 能力探測仍受目前 TCP 443 連線逾時限制；不據本機 fixture 宣稱部署模型具備視覺品質。DAG／child crash coordinator 由 T13 處理。
   - 完整驗證（2026-10-09）：`python -m pytest tests agent_execution/tests -q`，開啟實際 Docker／Chromium：444 passed、1 skipped（外部 provider）、7 subtests passed。新增 16 項預算／上下文測試，包含真實 SDK HTTP 429 無隱藏重試、Agent 連續 429 停止、Windows host 程序 deadline、blocked stream 關閉、SQLite 併發扣額與成本／重啟／child checkpoint；語法與 diff 檢查通過。前次相關測試 96 passed、1 skipped、4 subtests passed。
+  - 後續修復（2026-10-10，commit `aee5455`）：完整測試壓力下發現取消與 monotonic deadline 的微小競態，空 EOF 可能誤作正常完成；新增 explicit interrupted flag 與 EOF budget check。預算相關 17 passed，含新取消 EOF 回歸；完整重驗納入 T10。
 
-- [ ] **T10 — 結構化工具結果與明確完成條件**
+- [x] **T10 — 結構化工具結果與明確完成條件**
   - 現況：工具混用字串／dict／CompletedProcess；驗收會解析文字測試輸出，部分 Skill 回傳非零 returncode 未必成為步驟失敗。
   - 工作：統一 success、exit_code、error、artifacts、side_effects；任務起始明確驗收條件，避免只靠關鍵詞或 Judge；Skill 直跑路徑也接入驗收及稽核。
   - 驗收：工具回失敗、測試沒跑、只有成功文字、直接 Skill 失敗等情境不能標為 verified_completed；Critic 只針對可修正失敗重試。依賴 T01、T08。
+  - 實作（2026-10-10）：ToolResult 正規化、實際 exit code／JUnit 測試證據、Skill 失敗停止後續步驟；起始凍結的 versioned file／hash／tests 契約、goal／project evaluator 修正。Judge schema／網路錯誤拒絕，無證據預設 completed／unverified，TaskStore 另存 verification。Skill 執行與驗收分 checkpoint，skill_executed 復原只續驗收；真實退出程序驗證副作用一次。
+  - 相關測試：103 passed、7 subtests passed；新增 crash 與 tool audit 補強 25 passed、4 subtests passed；補上 code 契約必須 tests、文件編輯分類、Judge 不重試及避免重跑同一測試後 31 passed、3 subtests passed。語法與 diff 檢查通過。
+  - 完整驗證首次 451 passed、2 failed（tool JSON 顯示的舊測試期待值、T09 cancel EOF 競態）、1 skipped、7 subtests passed；兩者修正後，Docker／Chromium 完整重驗：461 passed、1 skipped（外部 provider）、7 subtests passed。其後補通訊 runtime 工廠的 TaskEvaluator，工廠／結果／project 隔離相關 43 passed。新增 15 項 results 測試與 1 項真實 Skill 程序退出測試；語法／diff 檢查通過。
+  - 邊界：驗收依部署者配置的 checks，不能證明測試本身品質或未列出的外部行為；舊契約／資料不回溯標 verified。保留 legacy 工具显示 API，但字串不可當測試證據；side_effects 未知時不猜測。獨立 Reviewer、完整 artifacts 與品質 benchmark 分別由 T13／T14／T21 擴充。
 
 - [ ] **T11 — 將 Hook 框架接成可配置政策**
   - 現況：四個 lifecycle 與稽核已有測試，default_hook_manager 尚無內建 hook；Guard／權限／驗收不是全部經由共用 hook。
