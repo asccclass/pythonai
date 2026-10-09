@@ -20,14 +20,14 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 記憶檢索 | embedding／cosine similarity、Hashing fallback、關鍵詞、實體與程序檢索、可選 Laya 排序 | 已實作；本機候選與向量計算，尚無大型資料 ANN 索引 | `retrieval.py`, `retrieval_ranker.py`, `vector_search.py` |
 | 工作記憶與遺忘 | 對話摘要壓縮、保留候選、TTL、矛盾／替代、衝突處理、程序淘汰 | 已實作；壓縮尚非完整 token 預算及無損任務狀態保存 | `working_memory.py`, `forgetting.py` |
 | 背景記憶維護 | 持久化 review／embedding queue、請求預算、跨程序 worker lease、429 cooldown、stale embedding 更新 | 已實作；限制背景記憶流量，非全 Agent 的成本／併發治理 | `memory_worker.py`, `request_budget.py`, `observability.py` |
-| 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險工具以 confirm 參數及提示要求確認，尚無防繞過批准憑證 | `memory_tools.py`, `observability.py`, `web_api.py` |
+| 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險模型工具與 API 更新要求身份／會話／參數綁定的一次性批准 | `memory_tools.py`, `agent_execution/approvals.py`, `web_api.py` |
 | Telegram | webhook／polling、getMe 診斷、訊息去重、佇列、長訊息分段、圖片／document 接收 | 已實作；圖片轉 image_url、文字解碼及截斷；二進位附件以 Base64 文字傳入，非通用 PDF／Office 解析 | `communication_adapters/telegram_adapter.py`, `telegram_polling_worker.py`, `agent_runtime.py` |
 | Discord／LINE | Discord application-command webhook、LINE 文字 webhook、非同步回覆 | 基礎實作；需平台設定；Discord 未裝 PyNaCl 時會略過驗章，未配置 secret 的 adapter 允許請求 | `communication_adapters/discord_adapter.py`, `communication_adapters/line_adapter.py` |
 | 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
 | Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 協定原型；brain_reply_stream 為示範回覆，Telegram fallback 僅記入清單；audio.end 回空字串，未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
 | Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
-| Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG | 基礎實作；Laya 不可用可繼續、未配置角色預設 admin；非完整批准與最小權限框架 | `laya_guard.py`, `permissions.py`, `base.py` |
+| Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG、API Bearer 登入 | 已實作共用政策；遠端缺角色配置預設 viewer，管理 API 寫入限 admin；Laya 不可用仍可繼續 | `laya_guard.py`, `permissions.py`, `agent_execution/api.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
 | 任務驗收與自修正 | 檔案／Python 語法、測試輸出、Git 前後狀態、LLM Judge、Critic feedback | 已實作；預設最多 2 次驗收修正；規則／文字輸出及 Judge 有侷限，人工交接不等於完整審批 UI | `task_evaluator.py`, `tests/test_task_evaluator.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
@@ -117,7 +117,7 @@ Use `communication_server.py` when Telegram should deliver messages to the agent
 - `POST /webhooks/telegram`: verifies and queues Telegram webhook updates, then lets the communication worker process pending commands.
 - `GET /health`: returns a lightweight health response for local checks or tunnel monitoring.
 - `GET /`: serves the memory management web interface from `web/index.html`.
-- `/api/...`: serves dashboard and memory management JSON APIs.
+- `/api/...`: serves authenticated dashboard and memory management JSON APIs (Bearer token required).
 - `WebSocket /ws/v1`: accepts companion protocol connections.
 
 `communication_server.py` creates the same agent runtime used by `server.py`, starts background processing for queued Telegram messages, and can be deployed behind a public tunnel or reverse proxy for webhook and WebSocket traffic.
@@ -348,3 +348,17 @@ python -m pytest tests agent_execution/tests -q
 ```
 
 Docker 實作依據：[Resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)、[tmpfs mounts](https://docs.docker.com/engine/storage/tmpfs/)。
+
+## 遠端登入與批准（T03）
+
+遠端身份未列於 `ROLES_CONFIG` 時為 viewer；本機 CLI 維持 admin。角色檔為 JSON，例如 `{"telegram:123":"admin","api:alice":"admin","api:observer":"viewer"}`。無效／無法讀取的設定不會授予 admin。
+
+管理 API 須配置 `AGENT_API_TOKENS`，內容為 JSON 的「token → 身份名稱」對照；每個 token 至少 32 字元，建議以 `secrets.token_urlsafe(32)` 產生。使用身份 `alice` 時，角色檔的 key 為 `api:alice`。請將真實 token 放在私有環境設定，對外部署以 HTTPS 傳送。Dashboard 的 API Token 欄位支援登入，token 僅存於頁面輸入欄，不寫入 localStorage 或 URL。
+
+API 請求帶 `Authorization: Bearer <token>`；未登入回 401，非 admin 的寫入回 403。`/health` 與 Dashboard HTML 可公開讀取。記憶租戶隔離仍待 T05，角色為 viewer 的 API 使用者目前可讀取管理資料，僅應配置可信任帳號。
+
+`manage_memory` 的 archive／contradict／supersede 不接受模型自行以 `confirm=True` 授權。工具先回 `approval_required` 與 ID，人類可用 `/approvals` 查看原始操作，使用 `/approve <id>` 或 `/deny <id>` 決定，再要求 Agent 以該 `approval_id` 重試相同參數。CLI 會話具有獨立 ID；通訊會話綁定 platform／conversation 及 sender。批准期限 5 分鐘，綁定身份、會話、工具與操作參數，原子消耗一次；變更參數、跨會話、過期及重放均拒絕。此流程不會讀取遠端 stdin；授權後的普通遠端命令仍採非互動執行。
+
+API 修改／封存／還原既有記憶先回 409 與操作內容。Dashboard 顯示確認後呼叫 `POST /api/approvals/<id>/approve`，再帶 `X-Agent-Approval` 重試；拒絕則呼叫 `/deny`。`X-Agent-Session` 綁定本頁會話，`GET /api/approvals` 僅列本身份與會話的 pending 操作。
+
+批准資料及稽核預設保存於 Windows `%LOCALAPPDATA%/PythonAI/approvals.db`，其他 OS 為 `~/.local/share/PythonAI/approvals.db`；可由受信任部署設定 `AGENT_APPROVAL_DB`。請使用 workspace 外的路徑。批准政策限制模型工具入口及 HTTP 請求；具有使用者主機權限的 shell、已安裝 Python／MCP 程式仍是受信任程式，不能以應用層 SQLite 政策對抗它們，須使用 container 並完成 T18 的工具信任管理。

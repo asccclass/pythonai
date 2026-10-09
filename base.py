@@ -545,8 +545,9 @@ TOOLS_SCHEMAS = [
                     },
                     "confirm": {
                         "type": "boolean",
-                        "description": "Set to true only if the user has explicitly confirmed this high-risk action in the chat."
+                        "description": "Legacy metadata only; cannot authorize high-risk changes."
                     },
+                    "approval_id": {"type": "string", "description": "One-use approval ID granted by the human via /approve; bound to identical operation arguments and session."},
                     "reason": {
                         "type": "string",
                         "description": "Reason for the modification."

@@ -540,6 +540,9 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         task_evaluator=task_evaluator,
     )
     print("Mini agent ready. Type 'exit' to quit.")
+    import uuid
+    from agent_execution import execution_scope
+    local_session = uuid.uuid4().hex
 
     try:
         while True:
@@ -547,8 +550,15 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
             if user_input.lower() in ("exit", "quit"):
                 break
 
+            from agent_execution.approvals import human_command
+            decision = human_command(user_input, "local", local_session)
+            if decision is not None:
+                print(decision)
+                continue
+
             try:
-                result = run_agent_turn(user_input, runtime)
+                with execution_scope(session=local_session):
+                    result = run_agent_turn(user_input, runtime)
             except ValueError as e:
                 print(f"\nConfiguration error: {e}")
                 break

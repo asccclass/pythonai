@@ -281,6 +281,8 @@
         <div id="status" class="status">Ready</div>
       </div>
       <div class="stats" id="stats"></div>
+      <label>API Token <input id="api-token" type="password" autocomplete="off" placeholder="輸入管理 Token"></label>
+      <button id="login" type="button">登入</button>
     </div>
   </header>
 
@@ -362,6 +364,7 @@
 
   <script>
     const state = { memories: [] };
+    const session = crypto.randomUUID();
     const $ = id => document.getElementById(id);
 
     function setStatus(message, isError = false) {
@@ -372,10 +375,21 @@
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        ...options
+        ...options,
+        headers: { 'Content-Type': 'application/json',
+          'Authorization': `Bearer ${$('api-token').value}`,
+          'X-Agent-Session': session, ...(options.headers || {}) }
       });
       const payload = await response.json();
+      if (response.status === 409 && payload.error === 'approval_required') {
+        if (!confirm(`批准以下操作？\n${JSON.stringify(payload.operation)}`)) {
+          await api(`/api/approvals/${payload.approval_id}/deny`, { method: 'POST' });
+          throw new Error('操作已取消');
+        }
+        await api(`/api/approvals/${payload.approval_id}/approve`, { method: 'POST' });
+        return api(path, { ...options, headers: { ...(options.headers || {}),
+          'X-Agent-Approval': payload.approval_id } });
+      }
       if (!response.ok) {
         throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
       }
@@ -430,7 +444,6 @@
     }
 
     async function archiveMemory(id) {
-      if (!confirm(`封存記憶 #${id}?`)) return;
       await api(`/api/memories/${id}`, {
         method: 'DELETE',
         body: JSON.stringify({ reason: 'web_management_delete' })
@@ -551,6 +564,7 @@
 
     $('reset-form').addEventListener('click', resetForm);
     $('reload-btn').addEventListener('click', loadAll);
+    $('login').addEventListener('click', () => loadAll().catch(error => setStatus(error.message, true)));
     $('include-archived').addEventListener('change', loadAll);
     $('search').addEventListener('input', renderMemories);
 

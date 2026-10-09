@@ -15,13 +15,12 @@ def get_user_role(sender_id: str) -> str:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 roles = json.load(f)
-                return roles.get(sender_id, ROLE_VIEWER)
+                role = roles.get(sender_id, ROLE_VIEWER)
+                return role if role in {ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN} else ROLE_VIEWER
         except Exception:
             pass
-    # If not configured, default to admin for safety (or viewer? let's follow the prompt which implies operator/viewer but admin allows anything. Locally we want admin default)
-    # The prompt says: 對外部通訊入口建立一致權限模型
-    # We will default to admin if config doesn't exist so it doesn't break local testing.
-    return ROLE_ADMIN if not config_path else ROLE_VIEWER
+    # This lookup is for remote identities. Local execution keeps its ContextVar default.
+    return ROLE_VIEWER
 
 @contextmanager
 def set_current_role(role: str):

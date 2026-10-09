@@ -1,3 +1,7 @@
+from agent_execution import policy_tool
+
+
+@policy_tool("manage_memory")
 def manage_memory(
     action: str,
     memory_id: int,
@@ -10,11 +14,7 @@ def manage_memory(
     if memory is None or episode_id is None:
         return "Error: Memory store is not available."
     
-    # 1. Ask for confirmation for high-risk actions if not confirmed
-    if not confirm and action in ('archive', 'contradict', 'supersede'):
-        return f"Warning: {action} is a high-risk operation. You must ask the user for confirmation first. Do not call this tool again with confirm=True until the user has explicitly agreed to {action} memory #{memory_id}."
-
-    # 2. Perform the action
+    # High-risk decisions are enforced by the common policy; confirm is legacy metadata.
     if action == "confirm":
         memory.add_event(episode_id, "semantic_memory_confirmation", metadata={"semantic_memory_id": memory_id, "reason": reason})
         return f"Success: Memory #{memory_id} confirmation recorded."

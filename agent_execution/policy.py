@@ -20,6 +20,7 @@ class PolicyDenied(PermissionError):
 class ExecutionContext:
     source: str = "local"
     identity: str = "local"
+    session: str = "local"
     memory: Any = None
     episode_id: int | None = None
     trusted_assets: tuple[Path, ...] = ()
@@ -27,6 +28,7 @@ class ExecutionContext:
 
 
 _context: ContextVar[ExecutionContext] = ContextVar("execution_context", default=ExecutionContext())
+_approved: ContextVar[tuple | None] = ContextVar("approved_action", default=None)
 PATH_KEYS = {"path", "file_path", "image_path", "project_path", "project_name", "cwd",
              "env_file", "test_target", "directory", "directory_path", "output_path"}
 
@@ -93,15 +95,34 @@ def _audit_denial(name: str, reason: str) -> None:
 
 
 def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any]) -> Any:
+    from .approvals import ApprovalStore, ApprovalRequired, canonical
+    values = dict(arguments)
+    approval_id = values.pop("approval_id", None)
+    authorization = None
     try:
         if not check_tool_permission(name):
             raise PolicyDenied(f"Role '{current_role()}' cannot execute {name}")
         assets = _context.get().trusted_assets if name == "run_command" else ()
         _validate_paths(arguments, assets)
+        if name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}:
+            values = {"reason": "", "superseded_by": None, **values}
+            context = _context.get()
+            authorization = (context.identity, context.session, name, canonical(values))
+            if _approved.get() != authorization:
+                store = ApprovalStore()
+                if not approval_id:
+                    raise ApprovalRequired(store.request(context.identity, context.session, name, values))
+                store.consume(approval_id, context.identity, context.session, name, values)
     except PermissionError as error:
         _audit_denial(name, str(error))
+        if isinstance(error, ApprovalRequired):
+            raise
         raise PolicyDenied(str(error)) from error
-    return function(**arguments)
+    token = _approved.set(authorization)
+    try:
+        return function(**values)
+    finally:
+        _approved.reset(token)
 
 
 def policy_tool(name: str):
@@ -113,11 +134,16 @@ def policy_tool(name: str):
 
         @wraps(function)
         def wrapped(*args, **kwargs):
+            kwargs = dict(kwargs)
+            approval_id = kwargs.pop("approval_id", None)
             bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
             arguments = dict(bound.arguments)
             for parameter in signature.parameters.values():
                 if parameter.kind == inspect.Parameter.VAR_KEYWORD:
                     arguments.update(arguments.pop(parameter.name, {}))
+            if approval_id:
+                arguments["approval_id"] = approval_id
             return execute_tool(name, arguments, lambda **_values: function(*args, **kwargs))
 
         wrapped._policy_tool_name = name

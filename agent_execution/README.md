@@ -24,3 +24,17 @@ unavailability never falls back to host execution. Built-in trusted host helpers
 use the bounded runner; third-party MCP/generated-code lifecycle remains T18.
 
 Opt-in live tests: PYTHONAI_DOCKER_TEST=1 python -m pytest agent_execution/tests.
+
+## Human approvals and authenticated APIs (T03)
+
+Remote identities default to viewer; explicit ROLES_CONFIG grants are required.
+api.py applies Bearer authentication and role checks to both HTTP transports.
+approvals.py stores exact-action decisions outside the workspace by default,
+with identity/session binding, expiry, atomic one-use consumption and audit events.
+Only human CLI/communication commands or authenticated dashboard actions grant
+decisions. Model confirm=True is never a grant. Host execution and installed
+Python/MCP code remain trusted; application approvals cannot constrain arbitrary
+host code which can access the user's private storage.
+
+Opt-in actual Chromium tests: PYTHONAI_BROWSER_TEST=1 python -m pytest
+agent_execution/tests/test_auth_transport.py.

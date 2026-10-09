@@ -21,6 +21,7 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
         from agent_execution import execution_scope
         with auto_approve_command_runs(), set_current_role(role), execution_scope(
             source="communication", identity=f"{command.platform}:{command.sender_id}",
+            session=f"{command.platform}:{command.conversation_id}",
             check_cancelled=runtime.check_cancelled):
             if resumed_messages is not None:
                 return resume_agent_turn(resumed_messages, runtime)
@@ -69,6 +70,15 @@ class CommunicationWorker:
         self.store.mark_command_running(command.command_id)
 
         text = command.text.strip()
+        from agent_execution.approvals import human_command
+        from permissions import get_user_role, set_current_role
+        identity = f"{command.platform}:{command.sender_id}"
+        with set_current_role(get_user_role(identity)):
+            decision = human_command(text, identity, f"{command.platform}:{command.conversation_id}")
+        if decision is not None:
+            self.store.complete_command(command.command_id, decision)
+            self._send_reply(command, decision)
+            return self.store.command_by_id(command.command_id)
         if text.startswith("/status"):
             jobs = self.store.query_jobs_status(limit=5)
             lines = ["📋 Recent Jobs:"]

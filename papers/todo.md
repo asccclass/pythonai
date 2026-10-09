@@ -18,14 +18,17 @@
   - 現況：`sandbox.py` Docker 可寫掛載 workspace，fallback 是主機 subprocess；`run_command` 未設通用 timeout。
   - 工作：明確區分 container 與 host 模式；需要隔離時無 Docker 應拒絕執行；加入唯讀／可寫範圍、secret 排除、網路政策、CPU／記憶體／磁碟限制、timeout、子程序終止及 artifacts 匯出。
   - 驗收：容器不能讀取主機 secret／未授權路徑；超時與取消可終止整棵程序樹；隔離失效不可靜默退回主機；Windows 與 Docker 實測分別記錄。
-  - 完成（2026-10-09）：Docker-only sandbox、唯讀 secret-filtered snapshot、禁網路、256 MiB／1 CPU／64 PID、16 MiB tmpfs 暫存及 32 MiB artifacts；安全 tar 匯出及拒絕覆寫。明確 host/container 模式、60 秒預設命令期限、2 MiB／stream 輸出上限、取消、Windows Job Object／程序樹清理。
+  - 完成（2026-10-09，commit `a95bb7e`）：Docker-only sandbox、唯讀 secret-filtered snapshot、禁網路、256 MiB／1 CPU／64 PID、16 MiB tmpfs 暫存及 32 MiB artifacts；安全 tar 匯出及拒絕覆寫。明確 host/container 模式、60 秒預設命令期限、2 MiB／stream 輸出上限、取消、Windows Job Object／程序樹清理。
   - 驗證：完整 pytest（開啟 Docker integration）366 passed；Windows 原生成功／取消／超時／輸出超限／子程序清理，以及 Docker 網路、secret、唯讀掛載、資源上限、artifact 匯出與超時後容器移除均實測通過。
   - 使用限制：container 適用 Linux 指令及唯讀 workspace，產出寫至 /artifacts；不轉交 env_file 中的 provider credentials。內建應用 helper 仍是受信任 Python host 程式，子程序統一使用有界 runner；第三方 MCP 與動態工具的可信發布流程由 T18 處理。
 
-- [ ] **T03 — 遠端身份驗證與不可偽造的批准流程**
+- [x] **T03 — 遠端身份驗證與不可偽造的批准流程**
   - 現況：`permissions.py` 未設定 ROLES_CONFIG 時預設 admin；通訊命令自動批准；`manage_memory(confirm=True)` 依賴模型遵守提示；REST 管理 API 未整合身份／角色。
   - 工作：遠端預設最小權限、API 登入／授權、綁定身份與操作內容的 approval ID、到期／一次性使用及稽核；保留遠端非互動執行，透過通訊／UI 批准，不使用 stdin。
   - 驗收：未登入不能修改記憶；模型自行傳 confirm=True 不足以批准；批准只適用原始身份／參數，跨會話、重放及過期操作皆拒絕。
+  - 完成（2026-10-09）：遠端預設 viewer、API Bearer token 驗證／RBAC（ASGI 與 HTTP）、SQLite 人類批准紀錄、5 分鐘 TTL、身份／會話／參數綁定、原子一次性消耗與稽核。CLI／通訊支援 /approvals、/approve、/deny；Dashboard 登入與操作批准流程。模型 confirm=True 無法授權。
+  - 驗證：完整 pytest 開啟 Docker／Chromium integration：377 passed；補強已批准後過期及 malformed UTF-8 後相關測試 11 passed、1 skipped（browser 已另以實際 Chromium 3 passed）。身份／會話／參數變更、重放、併發、拒絕及 API 無登入寫入均有回歸測試；語法與 diff 檢查通過。
+  - 邊界：批准 SQLite 預設存 workspace 外；任意 host 程式與第三方 MCP 仍須視為受信任程式，應用層批准不能對抗使用者 OS 權限。API 租戶隔離待 T05；通訊批准測試使用 adapter stub，尚未真實平台 round trip。
 
 - [ ] **T04 — Webhook 驗證缺失時拒絕與平台回覆完整性**
   - 現況：未配置 Telegram／LINE secret 或 Discord public key 可接受請求；Discord 缺 PyNaCl 會略過驗章；Discord command 路徑尚需確認符合 interaction 回覆時限。

@@ -19,7 +19,7 @@ from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_store import CommunicationStore
 from scheduler import SchedulerWorker
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
-from web_api import handle_api_request
+from agent_execution.api import authenticated_api
 from websocket_server import ws_endpoint
 
 
@@ -312,10 +312,11 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
             return self.rfile.read(content_length)
 
         def _handle_api(self, method: str) -> None:
-            status_code, payload = handle_api_request(
+            status_code, payload = authenticated_api(
                 self.path,
                 method=method,
                 body=self._read_body() if method in ("POST", "PUT", "DELETE") else None,
+                headers=self.headers,
             )
             self._send_json(status_code, payload)
 
@@ -383,10 +384,11 @@ def create_asgi_app(service: MultiWebhookService | None = None) -> FastAPI:
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def api(path: str, request: Request) -> JSONResponse:
         body = await request.body() if request.method in ("POST", "PUT", "DELETE") else None
-        status_code, payload = handle_api_request(
+        status_code, payload = authenticated_api(
             str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
             method=request.method,
             body=body,
+            headers=request.headers,
         )
         return JSONResponse(payload, status_code=status_code)
 
