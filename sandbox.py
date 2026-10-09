@@ -135,8 +135,9 @@ class SandboxExecution:
 
     def _remove_container(self):
         if self.has_docker:
-            result = subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True,
-                                    text=True, timeout=5)
+            # Cleanup must run even after the task's cancellation token was set.
+            result = run_process(["docker", "rm", "-f", self.container_name], capture_output=True,
+                                 text=True, timeout=20, check_cancelled=lambda:False)
             if result.returncode != 0 and "No such container" not in result.stderr:
                 raise RuntimeError(f"Sandbox cleanup failed for {self.container_name}: {result.stderr}")
 

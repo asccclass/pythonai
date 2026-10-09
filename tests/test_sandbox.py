@@ -9,6 +9,17 @@ from sandbox import SandboxExecution, is_docker_available
 
 
 class SandboxExecutionTests(unittest.TestCase):
+    def test_cleanup_uses_bounded_tree_runner_even_after_task_cancellation(self):
+        from agent_execution import execution_scope
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch('sandbox.is_docker_available',return_value=True):
+            sandbox=SandboxExecution(Path(directory))
+            with execution_scope(check_cancelled=lambda:True), patch('sandbox.run_process',return_value=subprocess.CompletedProcess([],0,'','')) as run:
+                sandbox._remove_container()
+            self.assertEqual(run.call_args.args[0],['docker','rm','-f',sandbox.container_name])
+            self.assertEqual(run.call_args.kwargs['timeout'],20)
+            self.assertFalse(run.call_args.kwargs['check_cancelled']())
+
     def test_is_docker_available_returns_false_when_command_fails(self):
         with patch("shutil.which", return_value="/usr/bin/docker"):
             with patch("subprocess.run", side_effect=Exception("daemon down")):
