@@ -84,6 +84,22 @@ class CommunicationStore:
             connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN state TEXT")
         if "suspended_tool_call_id" not in columns:
             connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN suspended_tool_call_id TEXT")
+        if "delivery_ready" not in columns:
+            connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN delivery_ready INTEGER NOT NULL DEFAULT 1")
+
+    def release_discord_interaction(self, interaction_id):
+        with closing(self.connect()) as connection, connection:
+            connection.execute("UPDATE agent_command_jobs SET delivery_ready=1 WHERE platform='discord' AND source_message_id IN (SELECT id FROM comm_messages WHERE platform='discord' AND platform_message_id=? AND direction='inbound')",
+                               (str(interaction_id),))
+
+    def reply_context(self, source_message_id: int | None) -> dict[str, Any]:
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT raw_payload FROM comm_messages WHERE id=? AND platform='discord' AND direction='inbound'",
+                                     (source_message_id,)).fetchone()
+        if row is None:
+            return {}
+        payload = json.loads(row["raw_payload"])
+        return {key: payload[key] for key in ("token", "application_id", "interaction_id", "received_at") if key in payload}
 
     def record_inbound_message(self, message: InboundMessage) -> tuple[int, bool]:
         with closing(self.connect()) as connection:
@@ -127,9 +143,9 @@ class CommunicationStore:
             connection.execute(
                 """
                 INSERT OR IGNORE INTO agent_command_jobs (
-                    command_id, platform, conversation_id, sender_id, text, source_message_id
+                    command_id, platform, conversation_id, sender_id, text, source_message_id, delivery_ready
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     command_id,
@@ -138,6 +154,7 @@ class CommunicationStore:
                     message.sender_id,
                     message.text,
                     source_message_id,
+                    0 if message.platform == "discord" else 1,
                 ),
             )
             connection.commit()
@@ -155,7 +172,7 @@ class CommunicationStore:
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
                        requires_confirmation, source_message_id
                 FROM agent_command_jobs
-                WHERE status = 'pending'
+                WHERE status = 'pending' AND delivery_ready=1
                 ORDER BY id ASC
                 LIMIT ?
                 """,

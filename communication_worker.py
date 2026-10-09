@@ -53,6 +53,7 @@ class CommunicationWorker:
                 conversation_id=command.conversation_id,
                 text=text,
                 reply_to_message_id=str(command.source_message_id) if command.source_message_id is not None else None,
+                reply_context=self.store.reply_context(command.source_message_id),
             )
         )
         self.store.record_outbound_message(
@@ -214,6 +215,11 @@ def enqueue_adapter_events(
 ) -> list[AgentCommand]:
     if not adapter.verify_request(headers, body, query):
         raise PermissionError(f"{adapter.platform} request verification failed")
+    return _enqueue_verified_events(store, adapter, headers, body, query, allowed_senders)
+
+
+def _enqueue_verified_events(store, adapter, headers, body, query=None, allowed_senders=None):
+    """Trusted transport only: webhook verification or authenticated Bot API polling."""
     commands = []
     allowed = normalize_allowed_senders(allowed_senders)
     for inbound in adapter.parse_events(headers, body, query):

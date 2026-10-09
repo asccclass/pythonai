@@ -24,6 +24,11 @@ def telegram_update(text="hello", update_id=100, message_id=7, sender_id=123):
 
 
 class TelegramPollingWorkerTests(unittest.TestCase):
+    def setUp(self):
+        mode = patch.dict("os.environ", {"COMM_WEBHOOK_MODE": "development"})
+        mode.start()
+        self.addCleanup(mode.stop)
+
     def test_adapter_get_updates_calls_telegram_api(self):
         calls = []
 

@@ -7,6 +7,7 @@ import base64
 from typing import Any, Callable
 from urllib import request
 from communication_models import InboundMessage, OutboundMessage
+from .security import development_mode, fresh_timestamp, validate_api_result
 
 class LineAdapter:
     platform = "line"
@@ -23,7 +24,7 @@ class LineAdapter:
 
     def verify_request(self, headers: dict[str, str], body: bytes, query: dict[str, str] | None = None) -> bool:
         if not self.channel_secret:
-            return True
+            return development_mode()
         normalized_headers = {key.lower(): value for key, value in headers.items()}
         signature = normalized_headers.get("x-line-signature")
         if not signature:
@@ -36,7 +37,7 @@ class LineAdapter:
         ).digest()
         expected_signature = base64.b64encode(hash_val).decode('utf-8')
         
-        return hmac.compare_digest(signature, expected_signature)
+        return hmac.compare_digest(signature.encode(), expected_signature.encode())
 
     def parse_events(
         self,
@@ -57,6 +58,8 @@ class LineAdapter:
         for event in events:
             if event.get("type") != "message":
                 continue
+            if not fresh_timestamp(event.get("timestamp"), milliseconds=True):
+                raise PermissionError("LINE event is missing a valid timestamp or is expired")
             message = event.get("message", {})
             if message.get("type") != "text":
                 continue
@@ -75,7 +78,9 @@ class LineAdapter:
                 continue
                 
             reply_token = event.get("replyToken")
-            platform_message_id = message.get("id", "")
+            platform_message_id = event.get("webhookEventId") or message.get("id", "")
+            if not platform_message_id:
+                continue
             
             # Storing replyToken in raw_payload to be able to use reply API later if needed
             inbound_messages.append(
@@ -95,14 +100,18 @@ class LineAdapter:
             raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is required to send messages")
         
         # In LINE, we use push message API because we might reply asynchronously long after the replyToken expires
-        self.http_post(
+        for index in range(0, max(len(message.text), 1), 5000):
+            self._push(message.conversation_id, message.text[index:index + 5000])
+
+    def _push(self, conversation_id, text):
+        result = self.http_post(
             "https://api.line.me/v2/bot/message/push",
             {
-                "to": message.conversation_id,
+                "to": conversation_id,
                 "messages": [
                     {
                         "type": "text",
-                        "text": message.text
+                        "text": text
                     }
                 ]
             },
@@ -110,6 +119,7 @@ class LineAdapter:
                 "Authorization": f"Bearer {self.channel_access_token}"
             }
         )
+        validate_api_result(result, "LINE")
 
 def _json_post_with_headers(url: str, payload: dict[str, Any], headers: dict[str, str]) -> Any:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")

@@ -40,6 +40,11 @@ def telegram_update(text="hello", update_id=100, message_id=7):
 
 
 class CommunicationServerTests(unittest.TestCase):
+    def setUp(self):
+        mode = patch.dict("os.environ", {"COMM_WEBHOOK_MODE": "development"})
+        mode.start()
+        self.addCleanup(mode.stop)
+
     def test_health_endpoint_returns_ok(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self._running_server(self._service(temp_dir=temp_dir)) as address:

@@ -11,7 +11,7 @@ from agent_runtime import AgentRuntime
 from communication_adapters.telegram_adapter import TelegramAdapter
 from communication_server import create_agent_runtime, parse_allowed_senders
 from communication_store import CommunicationStore
-from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
+from communication_worker import CommunicationWorker, agent_runtime_command_runner, _enqueue_verified_events
 from scheduler import SchedulerWorker
 
 
@@ -36,7 +36,7 @@ class TelegramPollingWorker:
             if isinstance(update_id, int):
                 self.offset = max(self.offset or 0, update_id + 1)
             body = json.dumps(update, ensure_ascii=False).encode("utf-8")
-            commands = enqueue_adapter_events(
+            commands = _enqueue_verified_events(
                 self.store,
                 self.adapter,
                 {},

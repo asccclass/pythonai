@@ -55,6 +55,7 @@ class OutboundMessage:
     conversation_id: str
     text: str
     reply_to_message_id: str | None = None
+    reply_context: dict[str, Any] = field(default_factory=dict)
 
 
 class CommunicationAdapter(Protocol):

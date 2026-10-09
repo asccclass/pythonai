@@ -39,6 +39,11 @@ def telegram_document_update(caption="read this", update_id=101, message_id=8):
 
 
 class CommunicationTests(unittest.TestCase):
+    def setUp(self):
+        mode = patch.dict("os.environ", {"COMM_WEBHOOK_MODE": "development"})
+        mode.start()
+        self.addCleanup(mode.stop)
+
     def test_telegram_adapter_parses_text_message(self):
         adapter = TelegramAdapter(bot_token="token", webhook_secret="")
         body = json.dumps(telegram_update("run status")).encode("utf-8")

@@ -26,7 +26,7 @@
   - 現況：`permissions.py` 未設定 ROLES_CONFIG 時預設 admin；通訊命令自動批准；`manage_memory(confirm=True)` 依賴模型遵守提示；REST 管理 API 未整合身份／角色。
   - 工作：遠端預設最小權限、API 登入／授權、綁定身份與操作內容的 approval ID、到期／一次性使用及稽核；保留遠端非互動執行，透過通訊／UI 批准，不使用 stdin。
   - 驗收：未登入不能修改記憶；模型自行傳 confirm=True 不足以批准；批准只適用原始身份／參數，跨會話、重放及過期操作皆拒絕。
-  - 完成（2026-10-09）：遠端預設 viewer、API Bearer token 驗證／RBAC（ASGI 與 HTTP）、SQLite 人類批准紀錄、5 分鐘 TTL、身份／會話／參數綁定、原子一次性消耗與稽核。CLI／通訊支援 /approvals、/approve、/deny；Dashboard 登入與操作批准流程。模型 confirm=True 無法授權。
+  - 完成（2026-10-09，commit `b87d1ce`）：遠端預設 viewer、API Bearer token 驗證／RBAC（ASGI 與 HTTP）、SQLite 人類批准紀錄、5 分鐘 TTL、身份／會話／參數綁定、原子一次性消耗與稽核。CLI／通訊支援 /approvals、/approve、/deny；Dashboard 登入與操作批准流程。模型 confirm=True 無法授權。
   - 驗證：完整 pytest 開啟 Docker／Chromium integration：377 passed；補強已批准後過期及 malformed UTF-8 後相關測試 11 passed、1 skipped（browser 已另以實際 Chromium 3 passed）。身份／會話／參數變更、重放、併發、拒絕及 API 無登入寫入均有回歸測試；語法與 diff 檢查通過。
   - 邊界：批准 SQLite 預設存 workspace 外；任意 host 程式與第三方 MCP 仍須視為受信任程式，應用層批准不能對抗使用者 OS 權限。API 租戶隔離待 T05；通訊批准測試使用 adapter stub，尚未真實平台 round trip。
 
@@ -34,6 +34,10 @@
   - 現況：未配置 Telegram／LINE secret 或 Discord public key 可接受請求；Discord 缺 PyNaCl 會略過驗章；Discord command 路徑尚需確認符合 interaction 回覆時限。
   - 工作：分開開發與對外模式，對外缺 secret／驗證依賴拒絕啟動或請求；補 timestamp／重放限制、Discord deferred response／follow-up 與 LINE 回覆策略。
   - 驗收：缺少或錯誤簽章、過期／重放請求不能入列；Discord／LINE 真實帳號 round trip 成功；平台依賴及配置寫入安裝文件。
+  - 實作完成（2026-10-09，外部驗收待辦）：production 缺配置拒絕，development 明確豁免；真實 Ed25519 與 event timestamp 驗證、持久化去重、單次解析／附件下載、Discord deferred ACK 後放行 job／follow-up／過期 channel fallback、LINE push 與分段、API delivery error 檢查。新增 PyNaCl 依賴及部署設定。
+  - 相關測試：`python -m pytest tests/test_webhook_security.py tests/test_communication.py tests/test_communication_server.py tests/test_telegram_polling_worker.py -q`：53 passed；包含真實密碼學簽章驗證及缺套件拒絕，平台 HTTP POST 使用 stub。語法／diff 檢查通過。
+  - 保持未勾選：Discord／LINE 正式帳號 round trip 尚未驗證，須有配置完成的測試帳號與對外 HTTPS webhook。實作可供 T05 後續隔離工作使用，不能將本機協定測試等同正式平台交付。
+  - 完整驗證：開啟 Docker／Chromium integration 的 pytest：388 passed；其後補原始 Discord 回覆 PATCH 與原生 HTTP ACK 測試：相關 11 passed。無外部平台訊息傳送。
 
 - [ ] **T05 — 會話、使用者、專案與取消狀態隔離**
   - 現況：`CommunicationWorker` 背景 threads 共用 runtime.messages／check_cancelled；記憶 scope 欄位尚非端到端隔離；/status、/cancel、/clear 需完整身份範圍。

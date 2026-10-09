@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 
 from agent_runtime import AgentRuntime
 from communication_adapters.telegram_adapter import TelegramAdapter
@@ -45,11 +46,6 @@ class MultiWebhookService:
         if not adapter:
             raise KeyError(f"Adapter not found: {adapter_name}")
             
-        for message in adapter.parse_events(headers, body):
-            print(
-                f"{adapter_name.capitalize()} message received: "
-                f"conversation={message.conversation_id} sender={message.sender_id} text={message.text}"
-            )
         commands = enqueue_adapter_events(
             self.store,
             adapter,
@@ -57,6 +53,9 @@ class MultiWebhookService:
             body,
             allowed_senders=self.allowed_senders,
         )
+        for command in commands:
+            print(f"{adapter_name.capitalize()} message received: "
+                  f"conversation={command.conversation_id} sender={command.sender_id} text={command.text}")
         return {"ok": True, "queued": len(commands)}
 
     def process_pending_once(self) -> int:
@@ -276,7 +275,12 @@ def create_request_handler(service: MultiWebhookService) -> type[BaseHTTPRequest
             except Exception as error:
                 self._send_json(500, {"ok": False, "error": str(error)})
                 return
-            self._send_json(202, result)
+            if adapter_name == "discord":
+                self._send_json(200, {"type": 5})
+                self.wfile.flush()
+                service.store.release_discord_interaction(payload.get("id"))
+            else:
+                self._send_json(200 if adapter_name == "line" else 202, result)
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
@@ -413,7 +417,9 @@ def create_asgi_app(service: MultiWebhookService | None = None) -> FastAPI:
             return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
         except Exception as error:
             return JSONResponse({"ok": False, "error": str(error)}, status_code=500)
-        return JSONResponse(result, status_code=202)
+        if adapter_name == "discord":
+            return JSONResponse({"type": 5}, background=BackgroundTask(service.store.release_discord_interaction, payload.get("id")))
+        return JSONResponse(result, status_code=200 if adapter_name == "line" else 202)
 
     return app
 

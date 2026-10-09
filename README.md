@@ -22,7 +22,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 背景記憶維護 | 持久化 review／embedding queue、請求預算、跨程序 worker lease、429 cooldown、stale embedding 更新 | 已實作；限制背景記憶流量，非全 Agent 的成本／併發治理 | `memory_worker.py`, `request_budget.py`, `observability.py` |
 | 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險模型工具與 API 更新要求身份／會話／參數綁定的一次性批准 | `memory_tools.py`, `agent_execution/approvals.py`, `web_api.py` |
 | Telegram | webhook／polling、getMe 診斷、訊息去重、佇列、長訊息分段、圖片／document 接收 | 已實作；圖片轉 image_url、文字解碼及截斷；二進位附件以 Base64 文字傳入，非通用 PDF／Office 解析 | `communication_adapters/telegram_adapter.py`, `telegram_polling_worker.py`, `agent_runtime.py` |
-| Discord／LINE | Discord application-command webhook、LINE 文字 webhook、非同步回覆 | 基礎實作；需平台設定；Discord 未裝 PyNaCl 時會略過驗章，未配置 secret 的 adapter 允許請求 | `communication_adapters/discord_adapter.py`, `communication_adapters/line_adapter.py` |
+| Discord／LINE | 簽章與時效驗證、去重、Discord deferred response／回覆閘門／原始回覆更新與 follow-up、LINE push／分段 | 已實作本機協定測試；production 缺配置／PyNaCl 拒絕，正式帳號 round trip 尚待驗證 | `communication_adapters/`, `communication_server.py`, `tests/test_webhook_security.py` |
 | 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
 | Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 協定原型；brain_reply_stream 為示範回覆，Telegram fallback 僅記入清單；audio.end 回空字串，未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
@@ -362,3 +362,22 @@ API 請求帶 `Authorization: Bearer <token>`；未登入回 401，非 admin 的
 API 修改／封存／還原既有記憶先回 409 與操作內容。Dashboard 顯示確認後呼叫 `POST /api/approvals/<id>/approve`，再帶 `X-Agent-Approval` 重試；拒絕則呼叫 `/deny`。`X-Agent-Session` 綁定本頁會話，`GET /api/approvals` 僅列本身份與會話的 pending 操作。
 
 批准資料及稽核預設保存於 Windows `%LOCALAPPDATA%/PythonAI/approvals.db`，其他 OS 為 `~/.local/share/PythonAI/approvals.db`；可由受信任部署設定 `AGENT_APPROVAL_DB`。請使用 workspace 外的路徑。批准政策限制模型工具入口及 HTTP 請求；具有使用者主機權限的 shell、已安裝 Python／MCP 程式仍是受信任程式，不能以應用層 SQLite 政策對抗它們，須使用 container 並完成 T18 的工具信任管理。
+
+## Webhook 驗證與平台回覆（T04）
+
+`COMM_WEBHOOK_MODE` 預設 `production`，未知值亦不允許跳過驗證。Telegram 缺 webhook secret、LINE 缺 channel secret、Discord 缺 public key／PyNaCl 時，請求回 403，不能入列。只有明確設定 `COMM_WEBHOOK_MODE=development` 才允許缺 secret 的本機測試；此模式不可用於公開部署。已有 secret 的 development 入口仍會檢查 secret／簽章。
+
+```env
+COMM_WEBHOOK_MODE=production
+COMM_WEBHOOK_MAX_AGE_SECONDS=300
+LINE_CHANNEL_ACCESS_TOKEN=<private-token>
+LINE_CHANNEL_SECRET=<private-secret>
+DISCORD_BOT_TOKEN=<private-token>
+DISCORD_PUBLIC_KEY=<application-public-key>
+```
+
+`requirements.txt` 包含 `PyNaCl==1.6.2`。Discord 檢查真實 Ed25519 簽章與 timestamp；Telegram 的 message／edit_date 與 LINE 的 event timestamp 檢查預設 300 秒，容許最多 30 秒時鐘超前。較舊 LINE redelivery 會受此期限拒絕，可由部署者依業務需要調整上限；不宜以 development 模式繞過。各平台使用持久化 event ID 去重，重新送達可取得 ACK，但不能重複建立 job。Telegram polling 是獨立的已驗證 Bot API 入口，無需 webhook secret；Webhook 不會共用其驗證豁免。
+
+Discord PING 回 `{"type":1}`，application command 回 `{"type":5}` deferred response；任務由送出 ACK 後的持久化 delivery gate 放行，避免先送 follow-up。interaction 的 application ID／token 保存於原始訊息，只供 adapter 回覆；14 分鐘內以 PATCH 更新原始回覆，後續分段使用 follow-up webhook，逾時採 Bot channel fallback，長訊息分成最多 2000 字元並停用自動 mentions。LINE 非同步任務使用 push API 回覆，避免過期 reply token，最多 5000 字元分段；需確保官方帳號有向使用者／群組 push 的資格及額度。平台拒絕／無效 JSON 回覆會視為傳送失敗。
+
+本機已有實際 Ed25519 簽章、HTTP deferred response、重放去重、重啟後 follow-up metadata、polling 與 webhook 邊界測試；正式 Discord／LINE 帳號 round trip 尚待部署驗證。協定依據：[Discord interactions](https://docs.discord.com/developers/interactions/receiving-and-responding)、[LINE Messaging API](https://developers.line.biz/en/reference/messaging-api/)、[Telegram Bot API](https://core.telegram.org/bots/api)。

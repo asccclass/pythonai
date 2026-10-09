@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import hmac
 from pathlib import PurePosixPath
 from typing import Any, Callable
 from urllib import request
 
 from communication_models import InboundAttachment, InboundMessage, OutboundMessage
+from .security import development_mode, fresh_timestamp, validate_api_result
 
 
 TELEGRAM_MESSAGE_LIMIT = 4096
@@ -32,9 +34,9 @@ class TelegramAdapter:
 
     def verify_request(self, headers: dict[str, str], body: bytes, query: dict[str, str] | None = None) -> bool:
         if not self.webhook_secret:
-            return True
+            return development_mode()
         normalized = {key.lower(): value for key, value in headers.items()}
-        return normalized.get("x-telegram-bot-api-secret-token") == self.webhook_secret
+        return hmac.compare_digest(normalized.get("x-telegram-bot-api-secret-token", "").encode(), self.webhook_secret.encode())
 
     def parse_events(
         self,
@@ -46,6 +48,8 @@ class TelegramAdapter:
         message = payload.get("message") or payload.get("edited_message")
         if not isinstance(message, dict):
             return []
+        if not fresh_timestamp(message.get("edit_date") or message.get("date")):
+            raise PermissionError("Telegram event is missing a valid timestamp or is expired")
         text = message.get("text") or message.get("caption") or ""
         attachments = self._extract_attachments(message)
         if not text and not attachments:
@@ -137,13 +141,14 @@ class TelegramAdapter:
         if not self.bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required to send messages")
         for chunk in split_telegram_message(message.text):
-            self.http_post(
+            result = self.http_post(
                 f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
                 {
                     "chat_id": message.conversation_id,
                     "text": chunk,
                 },
             )
+            validate_api_result(result, "Telegram")
 
     def get_updates(
         self,
