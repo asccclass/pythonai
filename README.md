@@ -1,16 +1,75 @@
-# Python AI Mini Agent
+# PythonAI Agent
 
-A small command-line agent that connects to a remote Ollama-compatible LiteLLM endpoint using the OpenAI Python client. The agent can call a few local file and command helper tools through model tool calls.
+PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Agent，提供本機 CLI、Telegram long polling，以及整合 webhook、管理網頁、REST API、WebSocket 的 FastAPI 服務。核心包含工具呼叫、Skills、長期記憶、背景維護、排程、任務驗收及可擴充 Hooks。
+
+以下盤點以 **2026-10-09 的程式與測試**為準。「已實作」表示有可追溯程式路徑，不代表已通過所有外部服務或正式環境驗證；「基礎實作」表示尚有整合、隔離或可靠性限制。後續改善及驗收條件見 [papers/todo.md](papers/todo.md)。
+
+## 現有功能表
+
+| 功能領域 | 現有能力 | 狀態與限制 | 實作依據 |
+| --- | --- | --- | --- |
+| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；預設最多 15 次迭代，規劃主要靠提示，尚無持久化任務 DAG | `server.py`, `agent_runtime.py` |
+| Provider 相容與重試 | OpenAI-compatible endpoint、模型／embedding 設定、暫時性 API 錯誤重試與 Retry-After | 已實作；主要使用 Chat Completions，未建立多 provider 路由及總成本上限 | `server.py`, `request_budget.py` |
+| 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；核心工具檢查 workspace 路徑，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
+| Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
+| 動態工具 | 載入 tools/*.py + JSON schema、create_dynamic_tool 建立並重新載入 | 基礎實作；載入會執行 Python 模組，尚無發布前測試、版本審核及撤回流程 | `base.py`, `tools/` |
+| MCP | stdio JSON-RPC 子程序、初始化、工具發現、schema 轉換、呼叫路由與 shutdown | 已實作；啟動失敗記於 skipped_servers；未見 remote HTTP/OAuth 與自動重連管理 | `mcp_manager.py`, `mcp_config.json` |
+| Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；一般 Agent 對話仍以 runtime 記憶體持有，事件紀錄不等於完整任務續跑 | `memory.py`, `agent_runtime.py` |
+| Semantic memory | 主詞／關係／受詞、user_profile／agent_persona 等類型、scope、信心、來源、實體關聯 | 已實作；具資料 scope，尚非端到端使用者／專案隔離機制 | `semantic_extractor.py`, `memory_update.py`, `memory.py` |
+| Procedural memory | 重用工作流程、相似度比對、成功／失敗計數、驗收狀態控制保存 | 已實作；不代表模型訓練或任意任務成功保證 | `memory_review.py`, `procedure_similarity.py`, `server.py` |
+| 記憶檢索 | embedding／cosine similarity、Hashing fallback、關鍵詞、實體與程序檢索、可選 Laya 排序 | 已實作；本機候選與向量計算，尚無大型資料 ANN 索引 | `retrieval.py`, `retrieval_ranker.py`, `vector_search.py` |
+| 工作記憶與遺忘 | 對話摘要壓縮、保留候選、TTL、矛盾／替代、衝突處理、程序淘汰 | 已實作；壓縮尚非完整 token 預算及無損任務狀態保存 | `working_memory.py`, `forgetting.py` |
+| 背景記憶維護 | 持久化 review／embedding queue、請求預算、跨程序 worker lease、429 cooldown、stale embedding 更新 | 已實作；限制背景記憶流量，非全 Agent 的成本／併發治理 | `memory_worker.py`, `request_budget.py`, `observability.py` |
+| 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險工具以 confirm 參數及提示要求確認，尚無防繞過批准憑證 | `memory_tools.py`, `observability.py`, `web_api.py` |
+| Telegram | webhook／polling、getMe 診斷、訊息去重、佇列、長訊息分段、圖片／document 接收 | 已實作；圖片轉 image_url、文字解碼及截斷；二進位附件以 Base64 文字傳入，非通用 PDF／Office 解析 | `communication_adapters/telegram_adapter.py`, `telegram_polling_worker.py`, `agent_runtime.py` |
+| Discord／LINE | Discord application-command webhook、LINE 文字 webhook、非同步回覆 | 基礎實作；需平台設定；Discord 未裝 PyNaCl 時會略過驗章，未配置 secret 的 adapter 允許請求 | `communication_adapters/discord_adapter.py`, `communication_adapters/line_adapter.py` |
+| 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
+| 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
+| Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 協定原型；brain_reply_stream 為示範回覆，Telegram fallback 僅記入清單；audio.end 回空字串，未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
+| Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，command 直接 shell 執行且無 timeout | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
+| Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG | 基礎實作；Laya 不可用可繼續、未配置角色預設 admin；非完整批准與最小權限框架 | `laya_guard.py`, `permissions.py`, `base.py` |
+| Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
+| 任務驗收與自修正 | 檔案／Python 語法、測試輸出、Git 前後狀態、LLM Judge、Critic feedback | 已實作；預設最多 2 次驗收修正；規則／文字輸出及 Judge 有侷限，人工交接不等於完整審批 UI | `task_evaluator.py`, `tests/test_task_evaluator.py` |
+| Sandbox | AGENT_USE_SANDBOX 啟用 Docker，無 Docker 時複製至暫存目錄執行 | 基礎實作；Docker 可寫掛載 workspace，未限制網路／資源；fallback 使用主機 subprocess，不能當作安全邊界 | `sandbox.py`, `tests/test_sandbox.py` |
+| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 基礎實作；共享 workspace／工具，無 worktree、依賴 DAG、取消、重啟恢復及結果合併治理 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
+| 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
+| 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；部分 tools 直接使用 cwd／Path，未統一 workspace 邊界 | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
+| 開發工具 | Git status／diff／commit／rollback、pytest／Python 測試 runner、venv／pip／npm、四種 scaffold | 基礎實作；Git rollback 具破壞性，尚無 PR／CI／worktree 全流程；測試 runner timeout 為 30 秒 | `tools/git_*.py`, `tools/run_test_suite.py`, `tools/env_manager.py`, `tools/project_scaffold.py` |
+| IDE 整合 | VS Code Inline Chat、Ghost Text、HTTP 串流替換選取程式碼 | 原型；獨立 ide_server.py，非完整 Agent 任務 UI，尚無修改預覽、驗收與 robust cancellation | `ide_server.py`, `vscode-extension/` |
+| 觀測與診斷 | episodes／hooks／Skills／記憶健康 CLI、Skill Doctor 產生 agent_persona 建議 | 已實作；Doctor --apply 可寫記憶，尚無品質 A/B 評測及完整分散式 tracing／成本報表 | `observability.py`, `skill_doctor.py` |
+
+附帶資源包括 `skills/story/` 的敘事分析／motion 程式與測試，以及 `skills/security_audit/` 的安全審查指引及 Node 報告驗證器。它們是個別工作流程或應用；目錄存在不表示全部已註冊為可執行 Skill。`patch*.py`、`fix*.py`、`drill.py`、`demo_scenario.py` 等維護／示範腳本也不視為 Agent 正式入口。
+
+## 與 Codex、通用 Agentic Agent 的差距
+
+「Agentic Agent」在此指能規劃、使用工具、驗證、保存狀態並持續完成任務的通用自主代理架構，不是特定產品。Codex 比較以官方文件的工作流程為基準；帳號、平台與版本可影響可用功能。本次是實作盤點，不是模型品質或成功率 benchmark。
+
+| 比較面向 | PythonAI 現況 | 相對差距與下一步 |
+| --- | --- | --- |
+| 編碼交付／Codex | 已有編輯、Git、測試與 Judge | 補 worktree、diff 審查、patch 套用、PR／CI、範圍控制及可回復交付；不能把 Git commit 工具視為完整開發流程 |
+| 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
+| 執行安全／Codex | 路徑檢查、RBAC、可選 sandbox／Guard | 補所有工具一致的政策、真正環境隔離、網路控制、遠端最小權限及不可偽造批准紀錄 |
+| 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
+| 長任務／通用 Agentic | 有多輪、摘要、通訊暫停／續跑 | 補持久化計畫與 checkpoint、程序重啟恢復、冪等副作用、deadline／token／成本預算及重規劃 |
+| 完成度驗證／通用 Agentic | 已有 Critic loop 與來源事件 | 補使用者驗收條件、結構化工具結果、端到端測試、獨立 Reviewer 與任務品質評測 |
+| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | 優先將 WebSocket 串接真實 runtime，隔離會話並補即時工具事件、附件持久化、批准 UI |
+| 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 保留此設計，補租戶／專案隔離、檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
+| 擴充／整合 | Skills、動態工具、stdio MCP | 補 schema／結果驗證、受審核工具發布、remote MCP／OAuth、健康檢查、版本相容與故障恢復 |
+
+建議依序完成：**執行政策與會話隔離 → 真實串流與持久任務 → worktree／多代理交付 → 評測、整合與多模態**。可直接開工的清單見 [papers/todo.md](papers/todo.md)。
+
+官方比較來源（查核日期：2026-10-09）：[Git worktrees](https://learn.chatgpt.com/docs/environments/git-worktrees)、[Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)、[Scheduled tasks](https://learn.chatgpt.com/docs/automations?surface=app)、[Agent approvals & security](https://learn.chatgpt.com/docs/agent-approvals-security)。
 
 ## Requirements
 
 - Python 3.11 or newer
-- `openai` Python package
+- Dependencies in `requirements.txt` (FastAPI, Uvicorn, croniter, OpenAI client and optional workflow libraries)
 
 Install dependencies:
 
 ```powershell
-python -m pip install openai
+python -m pip install -r requirements.txt
+# Optional: download the local Laya checkpoint
 python download_model.py
 ```
 
@@ -149,24 +208,6 @@ curl.exe "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/getWebhookInfo"
 If you need your Telegram sender id before enabling `COMM_ALLOWED_SENDERS`, temporarily leave it empty, send a message to the bot, then inspect the communication database or recent inbound rows. After confirming the id, set `COMM_ALLOWED_SENDERS` and restart the server.
 
 
-## New Features (v0.2+)
-
-- **Web Management Interface**: A beautiful, modern Agent Observatory dashboard is served at the root / of communication_server.py. It displays system health, active memories, and task queues.
-- **Cronjob Scheduling**: Background tasks are handled by scheduler.py with an SQLite backend. It includes a built-in maintenance.summary job that generates a markdown report using the local LLM.
-- **Memory Natural Language Correction**: The agent has a manage_memory tool to directly correct, supersede, contradict, or archive memories when instructed. High-risk memory operations require a two-stage user confirmation.
-- **Skill Management CLI**: Use python .\skills_cli.py to list, inspect, enable, disable, and validate local skills.
-- **Multi-Platform Communication**: In addition to Telegram, the communication_server.py now supports Discord and LINE webhook integrations.
-- **Role-Based Access Control (RBAC)**: Support for iewer, operator, and dmin roles. Set the ROLES_CONFIG environment variable to point to a JSON file mapping sender IDs to roles to restrict access to tools and skills.
-
-## Advanced Agentic Features (v0.3+)
-
-- **Plan, Execute & Reflect**: ReAct / Plan-and-Solve architecture, automatic task decomposition, self-reflection and background retries.
-- **Code Interpreter Sandbox**: Secure Python execution (via `execute_python_script` and `run_command`) for data analysis and debugging.
-- **Multi-Agent Orchestration**: Task delegation to dynamically generated Sub-Agents (e.g., Researcher, Coder).
-- **Human-in-the-Loop (HITL)**: Task suspension and resume state machine, allowing the agent to ask for permission on high-risk actions.
-- **Web Browsing & Vision**: Headless browser integration, RAG web search API, and multi-modal image understanding.
-- **Self-Evolution & Dynamic Tools**: Automatic Python Skill generation, hot-reloading, and dynamic tool creation without restart.
-
 ## Memory
 
 The agent records episodic memory in a local SQLite database at `memory\memory.db`. This file is ignored by Git. Set `MEMORY_DB_PATH` to use a different database location.
@@ -237,14 +278,18 @@ python .\add_default_jobs.py
 
 ## Tools
 
-The agent exposes these local tools to the model:
+Core tools exposed to the model (additional tools are loaded from `tools/*.py` and matching JSON schemas):
 
 - `read_file`: read a text file
 - `list_files`: list files in a directory
 - `write_file`: write text to a file
-- `run_command`: run a command after interactive confirmation
+- `edit_file`, `delete_file`: replace text or delete a workspace file
+- `run_command`: run a command with conditional local confirmation; communication turns use automatic approval
 - `fetch_url`: fetch a URL using `curl`
 - `run_skill`: run a local registered Skill
+- `manage_memory`: confirm, contradict, archive or supersede memory
+- `search_web`, `browse_webpage`, `analyze_image`: web search, browser text and image analysis
+- `create_dynamic_tool`: create and reload a Python tool with its schema
 
 ## Skills
 
@@ -271,16 +316,3 @@ Run syntax checks:
 ```powershell
 python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py request_budget.py retrieval.py retrieval_ranker.py semantic_extractor.py skills.py vector_search.py working_memory.py tests\test_base.py tests\test_forgetting.py tests\test_laya_guard.py tests\test_memory.py tests\test_memory_classifier.py tests\test_memory_review.py tests\test_observability.py tests\test_procedure_similarity.py tests\test_retrieval.py tests\test_retrieval_ranker.py tests\test_semantic_extractor.py tests\test_skills.py tests\test_vector_search.py tests\test_server.py tests\test_working_memory.py
 ```
-## Advanced Agentic Capabilities (Next-Generation)
-
-- **Multi-Agent Orchestration**: Asynchronous task delegation to dynamically generated Sub-Agents (e.g., Planner, Coder, Reviewer).
-- **Browser & Visual Perception**: Headless browser integration (Playwright) and visual analysis tools (VLMs) enabling the agent to autonomously browse, click, and verify UI elements visually.
-- **Docker & Sandbox Execution**: Containerized command execution and isolated environments for safe and consistent agent testing.
-- **Deep Web Research & Dynamic RAG**: Web-search sub-agents and web scraping capabilities for on-the-fly API documentation learning and issue resolution.
-- **Project Bootstrapping & Dependency Management**: Autonomous environment setups (venv), scaffolding of full directory trees, and conflict resolution in package dependencies.
-- **Model Context Protocol (MCP) Integration**: Full lifecycle management, client communication, dynamic tool schema translation, and request routing for third-party MCP servers.
-- **Task Success Verification & Self-Correction**: Multi-dimensional assertions, LLM-as-a-Judge evaluators, and a self-healing Critic-Correction loop that ensures tasks are fully completed and verified before persisting into procedural memory.
-- **Compliance Hook Pipeline & Middleware ReAct Lifecycle**: The ReAct loop supports a shared Hook pipeline with `PreModelCall`, `PostModelCall`, `PreToolExecute`, and `PostToolExecute` lifecycle events. Hooks use `HookContext`, `HookResult`, `HookDecision`, and `HookManager` to inspect or mutate messages, model requests and responses, tool calls, tool arguments, tool results, memory, episode IDs, and audit metadata.
-- **Short-Circuiting and Context Mutation**: Hooks can continue, block, return early, return a standard tool error, or append feedback for the next model iteration. They can also mutate model input messages, tool names, tool arguments, tool results, and final responses while recording mutation summaries for traceability.
-- **Auditable Hook Execution**: Hook execution records include hook name, lifecycle, decision, mutation summary, elapsed time, errors, and blocked reasons. These are written to episode events and can be inspected through observability commands such as `python .\observability.py hooks`.
-- **Configurable Hook Registration**: Built-in and project-specific hooks can be registered with priority ordering, enabled/disabled state, fail-open/fail-closed behavior, and optional filters by tool name, model stage, or task type.
