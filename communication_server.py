@@ -373,6 +373,7 @@ def create_asgi_app(service: MultiWebhookService | None = None) -> FastAPI:
                 memory_worker.stop()
 
     app = FastAPI(title="PythonAI Communication", lifespan=lifespan)
+    app.state.agent_runtime = service.runtime
     app.websocket("/ws/v1")(ws_endpoint)
 
     @app.get("/health")

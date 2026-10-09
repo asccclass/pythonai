@@ -177,6 +177,7 @@ def run_agent(
     task_evaluator: TaskEvaluator | None = None,
     max_eval_retries: int = 2,
     hook_manager: HookManager | None = None,
+    event_callback: Callable[[str, dict], None] | None = None,
 ):
     iteration = 0
     eval_retries = 0
@@ -201,13 +202,20 @@ def run_agent(
         attempts = 0
         while True:
             try:
-                response = get_client().chat.completions.create(
-                    model = OLLAMA_MODEL,
-                    messages = messages,
-                    tools = TOOLS_SCHEMAS
-                )
+                if event_callback is not None:
+                    from agent_execution.streaming import streamed_completion
+                    event_callback("model.start", {"iteration": iteration, "model": OLLAMA_MODEL})
+                    assistant_message = streamed_completion(get_client(), OLLAMA_MODEL, messages,
+                                                            TOOLS_SCHEMAS, event_callback, check_cancelled)
+                else:
+                    response = get_client().chat.completions.create(model=OLLAMA_MODEL, messages=messages, tools=TOOLS_SCHEMAS)
+                    assistant_message = response.choices[0].message
                 break
+            except InterruptedError:
+                return "Task was cancelled by the user."
             except (APIStatusError, APIConnectionError, APITimeoutError) as error:
+                if check_cancelled and check_cancelled():
+                    return "Task was cancelled by the user."
                 is_transient = True
                 status_code = getattr(error, 'status_code', None)
                 if isinstance(error, APIStatusError) and status_code not in TRANSIENT_STATUS_CODES:
@@ -216,6 +224,9 @@ def run_agent(
                 if not is_transient or attempts >= max_retries:
                     err_msg = f"⚠️ 遠端 LLM 服務發生錯誤 (連線失敗或伺服器過載)。已達最大重試次數，請稍後再試。\n詳細錯誤: {error}"
                     print(err_msg)
+                    if event_callback:
+                        event_callback("error", {"code": "provider_error", "message": "Model provider request failed", "retryable": is_transient})
+                        return "Error: Model provider request failed"
                     return err_msg
                     
                 attempts += 1
@@ -225,8 +236,14 @@ def run_agent(
                 
                 status_str = f"HTTP {status_code}" if status_code else type(error).__name__
                 print(f"\nRemote service returned {status_str}; retrying in {delay:g} seconds.")
-                sleep(delay)
-        assistant_message = response.choices[0].message
+                if event_callback and check_cancelled:
+                    end = time.monotonic() + delay
+                    while time.monotonic() < end:
+                        if check_cancelled():
+                            return "Task was cancelled by the user."
+                        sleep(min(.1, max(0, end - time.monotonic())))
+                else:
+                    sleep(delay)
         messages.append(assistant_message_to_dict(assistant_message))
         if hook_manager is not None:
             hook_context = HookContext(
@@ -301,6 +318,10 @@ def run_agent(
                     tool_call = mutable_tool_call(tool_call, tool_name, tool_args)
 
                 from agent_execution import execution_scope
+                if check_cancelled and check_cancelled():
+                    return "Task was cancelled by the user."
+                if event_callback:
+                    event_callback("tool.start", {"tool_call_id": tool_call.id, "name": tool_name, "arguments": tool_args})
                 with execution_scope(check_cancelled=check_cancelled):
                     result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
                 if hook_manager is not None:
@@ -323,6 +344,13 @@ def run_agent(
                         result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} rejected by hook"
                     elif hook_result.decision == HookDecision.RETURN_EARLY:
                         return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+                if event_callback:
+                    event_callback("tool.result", {"tool_call_id": tool_call.id, "name": tool_name, "result": str(result)})
+                    if "approval_required:" in str(result):
+                        import re
+                        match = re.search(r"approval_required: ([a-f0-9]{32})", str(result))
+                        if match:
+                            event_callback("approval.required", {"approval_id": match.group(1), "name": tool_name, "arguments": tool_args})
                 log_episode_event(
                     memory,
                     episode_id,
@@ -370,6 +398,8 @@ def run_agent(
                     "eval_retry": eval_retries,
                 },
             )
+            if event_callback:
+                event_callback("task.evaluation", {"success": eval_res.success, "score": eval_res.score, "feedback": eval_res.feedback})
 
             if not eval_res.success:
                 if eval_retries < max_eval_retries:

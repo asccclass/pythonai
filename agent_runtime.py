@@ -5,6 +5,7 @@ from exceptions import TaskSuspendedException
 from dataclasses import dataclass
 import base64
 import mimetypes
+import inspect
 import re
 import subprocess
 from typing import Any, Callable
@@ -55,6 +56,22 @@ class AgentRuntime:
     check_cancelled: Callable[[], bool] | None = None
     task_evaluator: Any | None = None
     hook_manager: HookManager | None = None
+    event_callback: Callable[[str, dict], None] | None = None
+
+
+def invoke_runtime_agent(runtime, messages, episode_id):
+    values = {"memory": runtime.memory, "episode_id": episode_id,
+              "check_cancelled": runtime.check_cancelled, "task_evaluator": getattr(runtime, "task_evaluator", None),
+              "hook_manager": getattr(runtime, "hook_manager", None)}
+    callback = getattr(runtime, "event_callback", None)
+    if callback is not None:
+        values["event_callback"] = callback
+    signature = inspect.signature(runtime.run_agent)
+    if not any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        if callback is not None and "event_callback" not in signature.parameters:
+            raise TypeError("Agent runner does not support streaming callbacks")
+        values = {key: value for key, value in values.items() if key in signature.parameters}
+    return runtime.run_agent(messages, **values)
 
 
 @dataclass(frozen=True)
@@ -121,7 +138,11 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
     if len(skill_matches) == 1 and executable_skill_matches and runtime.run_skill is not None:
         selected = skill_matches[0].skill
         inputs = {"question": user_input} if "question" in selected.inputs.get("properties", {}) else {}
+        if runtime.event_callback:
+            runtime.event_callback("tool.start", {"name": "run_skill", "arguments": {"skill_name": selected.name, "inputs": inputs}})
         result = runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id)
+        if runtime.event_callback:
+            runtime.event_callback("tool.result", {"name": "run_skill", "result": str(result)})
         reply = format_skill_reply(result)
         runtime.messages.append({"role": "assistant", "content": reply})
         log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
@@ -179,22 +200,7 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
             )
 
     try:
-        try:
-            reply = runtime.run_agent(
-                agent_messages,
-                memory=runtime.memory,
-                episode_id=episode_id,
-                check_cancelled=runtime.check_cancelled,
-                task_evaluator=getattr(runtime, "task_evaluator", None),
-                hook_manager=getattr(runtime, "hook_manager", None),
-            )
-        except TypeError:
-            reply = runtime.run_agent(
-                agent_messages,
-                memory=runtime.memory,
-                episode_id=episode_id,
-                check_cancelled=runtime.check_cancelled,
-            )
+        reply = invoke_runtime_agent(runtime, agent_messages, episode_id)
     except TaskSuspendedException as error:
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
@@ -459,22 +465,7 @@ def log_retrieval_stats(
 
 def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, episode_id: int | None = None) -> AgentTurnResult:
     try:
-        try:
-            reply = runtime.run_agent(
-                messages,
-                memory=runtime.memory,
-                episode_id=episode_id,
-                check_cancelled=runtime.check_cancelled,
-                task_evaluator=getattr(runtime, "task_evaluator", None),
-                hook_manager=getattr(runtime, "hook_manager", None),
-            )
-        except TypeError:
-            reply = runtime.run_agent(
-                messages,
-                memory=runtime.memory,
-                episode_id=episode_id,
-                check_cancelled=runtime.check_cancelled,
-            )
+        reply = invoke_runtime_agent(runtime, messages, episode_id)
     except TaskSuspendedException as error:
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)

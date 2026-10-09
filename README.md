@@ -25,7 +25,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Discord／LINE | 簽章與時效驗證、去重、Discord deferred response／回覆閘門／原始回覆更新與 follow-up、LINE push／分段 | 已實作本機協定測試；production 缺配置／PyNaCl 拒絕，正式帳號 round trip 尚待驗證 | `communication_adapters/`, `communication_server.py`, `tests/test_webhook_security.py` |
 | 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
-| Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 協定原型；brain_reply_stream 為示範回覆，Telegram fallback 僅記入清單；audio.end 回空字串，未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
+| Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 真實 AgentRuntime／模型 delta、工具、驗收、批准事件及模型／程序取消；owner-targeted Telegram adapter fallback；provider／實際送達驗收待辦，audio.end 尚未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
 | Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG、API Bearer 登入 | 已實作共用政策；遠端缺角色配置預設 viewer，管理 API 寫入限 admin；Laya 不可用仍可繼續 | `laya_guard.py`, `permissions.py`, `agent_execution/api.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
@@ -52,7 +52,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
 | 長任務／通用 Agentic | 有多輪、摘要、通訊暫停／續跑 | 補持久化計畫與 checkpoint、程序重啟恢復、冪等副作用、deadline／token／成本預算及重規劃 |
 | 完成度驗證／通用 Agentic | 已有 Critic loop 與來源事件 | 補使用者驗收條件、結構化工具結果、端到端測試、獨立 Reviewer 與任務品質評測 |
-| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | 優先將 WebSocket 串接真實 runtime，隔離會話並補即時工具事件、附件持久化、批准 UI |
+| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；尚需附件／可靠事件持久化與完整 UI |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 保留此設計，補租戶／專案隔離、檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
 | 擴充／整合 | Skills、動態工具、stdio MCP | 補 schema／結果驗證、受審核工具發布、remote MCP／OAuth、健康檢查、版本相容與故障恢復 |
 
@@ -391,3 +391,16 @@ Discord PING 回 `{"type":1}`，application command 回 `{"type":5}` deferred re
 遠端記憶保存於 `%LOCALAPPDATA%/PythonAI/tenants/<scope-hash>/memory.db`（其他 OS 為 `~/.local/share/PythonAI/tenants/`）。`AGENT_TENANT_ROOT` 可指定受信任 storage 根目錄。通訊 DB 範圍包含穩定的 conversation；REST 管理 DB 依 API 身份與 project 分配，Dashboard 重新登入仍可讀自己的記憶。`X-Agent-Project`／Dashboard 專案欄預設 default；批准亦綁定 project。舊 `MEMORY_DB_PATH` 仍屬本機資料，未自動复制給遠端使用者；不同平台身份不自動合併。
 
 WebSocket session／outbox key 包含 user、project、device，使用者不能以同名 device 讀取他人事件；proactive 選擇限原 user／project。同一裝置重連會關閉舊連線，舊連線退出不會清除新連線。未配置 WebSocket tokens 時拒絕登入，沒有通用預設密碼。任務專用 worktree 仍待 T12。
+
+
+## 真實 WebSocket Agent 串流（T06）
+
+`/ws/v1` 使用服務的 AgentRuntime 模板，按 user／project／device 建立獨立對話與記憶。`chat.send` 呼叫模型 `stream=True`，組裝分段 function calls；收到完整 finish_reason 才執行工具，不執行截斷的參數。回傳 `model.start`、`chat.delta`、`tool.start`、`tool.result`、`task.evaluation`、`approval.required`、`error` 與 `chat.end`，工具仍經共用政策及 Hooks。直接 Skill 執行亦回傳工具事件；不產生虛構模型 delta。
+
+同一 session 執行中再次 chat.send 回 chat_busy。`chat.interrupt`／斷線將取消傳入模型串流與有界程序 runner；清理完成才結束任務。已建立的模型串流會關閉；建立連線中的 SDK 請求有最長 60 秒 timeout，尚不能保證立即取消 DNS／connect。發送事件 timeout 為 5 秒，內部事件 queue 上限 128，避免慢客戶端無限堆積。音訊仍是協定 placeholder。
+
+批准可用人類 `/approvals`、`/approve <id>`、`/deny <id>`，或 `approval.decide` payload `{"approval_id":"...","decision":"approve"}`。身份、project／device session 與角色均由 transport 決定；操作仍須以相同參數及 approval_id 重試。
+
+高優先 proactive 在無在線裝置時呼叫 Telegram adapter，部署者须設定 `COMPANION_TELEGRAM_TARGETS={"alice:default":"<authorized-chat-id>"}` 並配置 Bot token。缺明確 owner／project 對照即拒絕，不將訊息送到其他帳號；API 失敗不記為成功 fallback。
+
+驗證分開紀錄：SDK 本機 HTTP SSE 整合、完整 Agent 讀檔、分段工具參數、截斷拒絕、模型／實際 host 程序取消、批准隔離與忙碌拒絕測試通過；真實 provider opt-in 測試於 2026-10-09 因配置端點 TCP 443 連線逾時失敗（DNS 成功），外部 provider 與 Telegram 實際送達尚未驗收。重現 provider 測試：設定 `PYTHONAI_PROVIDER_TEST=1` 後執行 `python -m pytest agent_execution/tests/test_streaming.py -q`。串流參數依據 [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)。

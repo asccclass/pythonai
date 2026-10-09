@@ -35,7 +35,7 @@ def remote_memory_path():
     context = current_context()
     if context.identity == "local" and context.source not in {"api", "communication", "websocket"}:
         return None
-    conversation = context.session if context.source == "communication" else ""
+    conversation = context.session if context.source in {"communication", "websocket"} else ""
     return tenant_memory_path(context.identity, context.project, conversation)
 
 

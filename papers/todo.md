@@ -43,7 +43,7 @@
   - 現況：`CommunicationWorker` 背景 threads 共用 runtime.messages／check_cancelled；記憶 scope 欄位尚非端到端隔離；/status、/cancel、/clear 需完整身份範圍。
   - 工作：以 platform + conversation + identity + project 分配 runtime／鎖／記憶查詢範圍；每個 job 保存獨立取消 token，管理指令依身份授權。
   - 驗收：兩使用者同時發送、取消或清除任務時互不影響；不可查看／取消他人 job；記憶檢索與管理 API 不會跨租戶洩漏。
-  - 完成（2026-10-09）：獨立 runtime／messages／search state／會話 lock、身份／會話／專案分庫、可信 workspace map／ContextVar 根目錄；保存 command project、原子 claim／cancel、禁止取消狀態被完成覆寫，status／cancel／clear／resume owner filter。API 資料、任務計數及批准隔離到身份／project。WebSocket device／outbox／proactive key 加入 owner／project，移除預設 token，修正舊 socket 清除新連線。
+  - 完成（2026-10-09，commit `be2dcd4`）：獨立 runtime／messages／search state／會話 lock、身份／會話／專案分庫、可信 workspace map／ContextVar 根目錄；保存 command project、原子 claim／cancel、禁止取消狀態被完成覆寫，status／cancel／clear／resume owner filter。API 資料、任務計數及批准隔離到身份／project。WebSocket device／outbox／proactive key 加入 owner／project，移除預設 token，修正舊 socket 清除新連線。
   - 驗證：完整 pytest 開啟 Docker／Chromium integration：395 passed；後續 workspace 與 WebSocket 補強相關測試 33 passed（含 8 項 sessions 測試），Chromium 登入／批准實測相關 27 passed。語法與 diff 檢查通過。
   - 邊界：legacy 本機記憶不自動複製到遠端，新租戶由空 DB 開始；不同平台身份不自動合併。對話 runtime 仍是程序記憶體，重啟續跑由 T08 處理；各 task 的專用 worktree 由 T12 處理。自訂 runner 須實作 scoped clear callback。
 
@@ -53,6 +53,9 @@
   - 現況：`brain_reply_stream` 是示範 echo，主 Agent 使用非串流 Chat Completions；Telegram fallback 僅 append 到清單。
   - 工作：/ws/v1 使用獨立 AgentRuntime，輸出模型 delta、工具開始／結果、驗收、批准及錯誤事件；實作真正平台 fallback 與 interrupt 傳遞。
   - 驗收：一個需要工具的請求可串流執行並回實際結果；中斷可停止模型／工具工作；fallback 真正送達；協定測試、真實 provider 測試分開紀錄。依賴 T02、T05。
+  - 實作完成（2026-10-09，外部驗收待辦）：真實 Chat Completions stream、分段工具呼叫組裝、隔離 AgentRuntime、模型／工具／驗收／批准事件、busy 保護、取消與清理、owner-targeted Telegram adapter fallback；SDK 關閉串流並限制 timeout，慢 consumer 有界 queue。
+  - 驗證：server／hooks／streaming 49 passed、1 skipped；新增 SDK 本機 HTTP SSE、批准 project／device 與 busy 測試後相關 23 passed、1 skipped。包含實際檔案讀取與 host 子程序取消；語法／diff 檢查通過。
+  - 保持未勾選：真實 provider opt-in 測試失敗，2026-10-09 配置 endpoint DNS 成功但 TCP 443 連線逾時；尚需恢復 provider 後驗收工具串流。Telegram fallback 以 adapter stub 驗證路由與送出，正式帳號實際送達未驗收。建立模型連線中取消仍受最長 60 秒 timeout 約束。
 
 - [ ] **T07 — 附件與可靠訊息持久化**
   - 現況：`communication_store.py` 的附件 bytes 存於 _PENDING_ATTACHMENTS，WebSocket outbox／sessions 存於記憶體。

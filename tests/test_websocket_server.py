@@ -93,7 +93,10 @@ class WebSocketServerTests(unittest.TestCase):
         self.assertEqual(list(session.outbox), [])
 
     def test_chat_send_streams_start_delta_and_end(self):
-        with patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False):
+        async def fixture_stream(text, session):
+            yield "model.delta", {"text": text}
+            yield "end", {"text": text}
+        with patch("websocket_server.brain_reply_stream", side_effect=fixture_stream), patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False):
             with TestClient(app).websocket_connect("/ws/v1") as ws:
                 ws.send_json({"type": "hello", "payload": {"token": "token-1", "device_id": "web-1"}})
                 ws.receive_json()
