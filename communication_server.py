@@ -60,6 +60,7 @@ class MultiWebhookService:
 
     def process_pending_once(self) -> int:
         processed = 0
+        self.worker.deliver_pending()
         while self.worker.process_next() is not None:
             processed += 1
         return processed

@@ -53,14 +53,18 @@
   - 現況：`brain_reply_stream` 是示範 echo，主 Agent 使用非串流 Chat Completions；Telegram fallback 僅 append 到清單。
   - 工作：/ws/v1 使用獨立 AgentRuntime，輸出模型 delta、工具開始／結果、驗收、批准及錯誤事件；實作真正平台 fallback 與 interrupt 傳遞。
   - 驗收：一個需要工具的請求可串流執行並回實際結果；中斷可停止模型／工具工作；fallback 真正送達；協定測試、真實 provider 測試分開紀錄。依賴 T02、T05。
-  - 實作完成（2026-10-09，外部驗收待辦）：真實 Chat Completions stream、分段工具呼叫組裝、隔離 AgentRuntime、模型／工具／驗收／批准事件、busy 保護、取消與清理、owner-targeted Telegram adapter fallback；SDK 關閉串流並限制 timeout，慢 consumer 有界 queue。
+  - 實作完成（2026-10-09，commit `d8c6257`，外部驗收待辦）：真實 Chat Completions stream、分段工具呼叫組裝、隔離 AgentRuntime、模型／工具／驗收／批准事件、busy 保護、取消與清理、owner-targeted Telegram adapter fallback；SDK 關閉串流並限制 timeout，慢 consumer 有界 queue。
   - 驗證：server／hooks／streaming 49 passed、1 skipped；新增 SDK 本機 HTTP SSE、批准 project／device 與 busy 測試後相關 23 passed、1 skipped。包含實際檔案讀取與 host 子程序取消；語法／diff 檢查通過。
   - 保持未勾選：真實 provider opt-in 測試失敗，2026-10-09 配置 endpoint DNS 成功但 TCP 443 連線逾時；尚需恢復 provider 後驗收工具串流。Telegram fallback 以 adapter stub 驗證路由與送出，正式帳號實際送達未驗收。建立模型連線中取消仍受最長 60 秒 timeout 約束。
 
-- [ ] **T07 — 附件與可靠訊息持久化**
+- [x] **T07 — 附件與可靠訊息持久化**
   - 現況：`communication_store.py` 的附件 bytes 存於 _PENDING_ATTACHMENTS，WebSocket outbox／sessions 存於記憶體。
   - 工作：附件落地或物件儲存、雜湊／MIME／大小與存取檢查、TTL；可靠事件持久化、去重、容量限制、backpressure、過期補送政策。
   - 驗收：入列後重啟仍能處理圖檔及文件；斷線／重啟補送無重複副作用；未授權附件不可讀，過期資料可清理。依賴 T05。
+  - 完成（2026-10-09）：附件 bytes／雜湊／MIME／大小／期限 SQLite、原子 inbound/job/attachment ingest、owner 範圍讀取與過期拒絕；可靠事件持久化 seq／ACK／TTL floor、容量拒絕／backpressure、chat ID 去重與 crash 後 uncertain；平台 delivery intent／原子 claim／lease，未知送達不盲目重送。
+  - 完整驗證：`python -m pytest tests agent_execution/tests -q`（Docker／Chromium 開啟）414 passed、1 skipped（外部 provider opt-in）、3 subtests passed；語法及 diff 檢查通過。相關驗證：67 passed、1 skipped；新增 8 項持久化測試通過，包含新 Python 程序讀回圖檔及中文文件、竄改／越權／到期、容量不覆寫、重啟 ACK 與輸入不重複執行。
+  - 邊界：平台回覆沒有 exactly-once 承諾；uncertain 需人工查詢，不會重跑 Agent。WS 對話 messages／執行 checkpoint 由 T08 處理。MIME magic 不是惡意文件掃描；服務 DB 仍受主機 OS 權限控制。過期 bytes 可清理，附件 metadata tombstone 達配置上限後須依管理保留政策整理。
+
 
 - [ ] **T08 — 持久化任務計畫、checkpoint 與重啟恢復**
   - 現況：ReAct 規劃靠提示與 15 次迭代上限；通訊已有 ask_user 暫停／恢復，未涵蓋任意執行點，且 ask_user 未列入預設工具 schema。
@@ -144,6 +148,10 @@
 3. 每次程式變更增加／更新相關測試；執行相關驗證與 `git diff --check`，完成後建立範圍明確的 commit。
 4. 勾選完成前記錄 commit、測試命令與結果、外部驗證限制，並同步 README；不以 mock 通過宣稱正式服務可用。
 
+## 後續驗證環境備註
+
+- 2026-10-09：直接從根目錄 `pytest -q` 會收集到忽略於 Git 的 `temp/test_vision.py` 舊實驗檔，因舊 import 名称而 collection 失敗。正式驗證依 README 使用 `python -m pytest tests agent_execution/tests -q`。T21 應補 testpaths／排除實驗目錄，並處理已列出的 patch_server.py 語法問題。
+
 ## 比較來源
 
 OpenAI 官方文件，查核日期 2026-10-09；來源提供能力基準，本檔的優先序與待辦為本專案程式分析所得：
@@ -153,7 +161,7 @@ OpenAI 官方文件，查核日期 2026-10-09；來源提供能力基準，本�
 - [Scheduled tasks](https://learn.chatgpt.com/docs/automations?surface=app)：背景任務、會話追蹤、Skills 與執行結果管理。
 - [Agent approvals & security](https://learn.chatgpt.com/docs/agent-approvals-security)：sandbox、approval 與網路存取政策。
 
-## 本次盤點驗證
+## 原始盤點驗證（文件基線）
 
 - 僅修改 README.md 及新增本檔，未修改程式或新增測試。
 - `venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`：325 tests，OK。

@@ -23,9 +23,9 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險模型工具與 API 更新要求身份／會話／參數綁定的一次性批准 | `memory_tools.py`, `agent_execution/approvals.py`, `web_api.py` |
 | Telegram | webhook／polling、getMe 診斷、訊息去重、佇列、長訊息分段、圖片／document 接收 | 已實作；圖片轉 image_url、文字解碼及截斷；二進位附件以 Base64 文字傳入，非通用 PDF／Office 解析 | `communication_adapters/telegram_adapter.py`, `telegram_polling_worker.py`, `agent_runtime.py` |
 | Discord／LINE | 簽章與時效驗證、去重、Discord deferred response／回覆閘門／原始回覆更新與 follow-up、LINE push／分段 | 已實作本機協定測試；production 缺配置／PyNaCl 拒絕，正式帳號 round trip 尚待驗證 | `communication_adapters/`, `communication_server.py`, `tests/test_webhook_security.py` |
-| 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
-| 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
-| Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 真實 AgentRuntime／模型 delta、工具、驗收、批准事件及模型／程序取消；owner-targeted Telegram adapter fallback；provider／實際送達驗收待辦，audio.end 尚未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
+| 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；角色／會話／記憶及取消已隔離，附件與 delivery intent 已持久化；一般執行 checkpoint 待 T08 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
+| 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由具 Bearer／角色／資料隔離及人類批准；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
+| Companion WebSocket | hello token 驗證、seq／ack、SQLite 重啟補送、ping、chat interrupt、裝置事件及主動訊息路由 | 真實 AgentRuntime／模型 delta、工具、驗收、批准事件及模型／程序取消；owner-targeted Telegram adapter fallback；provider／實際送達驗收待辦，audio.end 尚未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
 | Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG、API Bearer 登入 | 已實作共用政策；遠端缺角色配置預設 viewer，管理 API 寫入限 admin；Laya 不可用仍可繼續 | `laya_guard.py`, `permissions.py`, `agent_execution/api.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
@@ -48,12 +48,12 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | --- | --- | --- |
 | 編碼交付／Codex | 已有編輯、Git、測試與 Judge | 補 worktree、diff 審查、patch 套用、PR／CI、範圍控制及可回復交付；不能把 Git commit 工具視為完整開發流程 |
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
-| 執行安全／Codex | 路徑檢查、RBAC、可選 sandbox／Guard | 補所有工具一致的政策、真正環境隔離、網路控制、遠端最小權限及不可偽造批准紀錄 |
+| 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
 | 長任務／通用 Agentic | 有多輪、摘要、通訊暫停／續跑 | 補持久化計畫與 checkpoint、程序重啟恢復、冪等副作用、deadline／token／成本預算及重規劃 |
 | 完成度驗證／通用 Agentic | 已有 Critic loop 與來源事件 | 補使用者驗收條件、結構化工具結果、端到端測試、獨立 Reviewer 與任務品質評測 |
-| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；尚需附件／可靠事件持久化與完整 UI |
-| 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 保留此設計，補租戶／專案隔離、檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
+| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
+| 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
 | 擴充／整合 | Skills、動態工具、stdio MCP | 補 schema／結果驗證、受審核工具發布、remote MCP／OAuth、健康檢查、版本相容與故障恢復 |
 
 建議依序完成：**執行政策與會話隔離 → 真實串流與持久任務 → worktree／多代理交付 → 評測、整合與多模態**。可直接開工的清單見 [papers/todo.md](papers/todo.md)。
@@ -404,3 +404,18 @@ WebSocket session／outbox key 包含 user、project、device，使用者不能�
 高優先 proactive 在無在線裝置時呼叫 Telegram adapter，部署者须設定 `COMPANION_TELEGRAM_TARGETS={"alice:default":"<authorized-chat-id>"}` 並配置 Bot token。缺明確 owner／project 對照即拒絕，不將訊息送到其他帳號；API 失敗不記為成功 fallback。
 
 驗證分開紀錄：SDK 本機 HTTP SSE 整合、完整 Agent 讀檔、分段工具參數、截斷拒絕、模型／實際 host 程序取消、批准隔離與忙碌拒絕測試通過；真實 provider opt-in 測試於 2026-10-09 因配置端點 TCP 443 連線逾時失敗（DNS 成功），外部 provider 與 Telegram 實際送達尚未驗收。重現 provider 測試：設定 `PYTHONAI_PROVIDER_TEST=1` 後執行 `python -m pytest agent_execution/tests/test_streaming.py -q`。串流參數依據 [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)。
+
+
+## 附件與可靠訊息持久化（T07）
+
+通訊附件已移除 process-local `_PENDING_ATTACHMENTS`，圖檔與一般文件的 bytes、SHA-256、MIME、檔名、platform file ID 及 TTL 保存於 communication SQLite。正式 ingest 將原始訊息、job 與附件寫在同一交易中；重複 event 不新增工作或覆寫附件。worker 在執行前載入原 job 的附件，驗證 owner／conversation／project、大小與 SHA-256；過期附件明確失敗，不能默默改成無附件請求。檔名拒絕路徑／NUL，MIME 檢查格式及常見 PNG／JPEG／GIF／WebP／PDF magic；這不是惡意文件掃描器，附件不會以其檔名寫到主機路徑。
+
+預設每檔 20 MiB、每工作 16 檔／32 MiB，總附件 128 MiB／10000 筆，TTL 7 天。`COMM_ATTACHMENT_MAX_BYTES`、`COMM_ATTACHMENT_TOTAL_BYTES`、`COMM_ATTACHMENT_COUNT`、`COMM_ATTACHMENT_TTL` 可由部署者調整。Telegram下載亦按檔案及讀取上限拒絕過大資料。`cleanup_expired()` 清掉過期 bytes，保留過期 metadata 防止缺檔後悄悄執行；metadata 達上限須由管理者依保留政策整理。DB 是受信任服務資料，主機 OS 帳號仍可存取它，不提供模型可任意指定路徑的附件讀取 API。
+
+WebSocket 可靠事件在傳送前存 SQLite，seq 單調遞增，ACK 原子刪除已確認事件。新程序以相同 user／project／device 回放未 ACK 事件；client 依穩定 event id／seq 去重，補送只回傳事件，不重跑工具。`chat.send` 須有 1–128 字元穩定 id；相同內容與 id 於保留期間不執行第二次，換內容則拒絕。crash 後未結束的 input 標為 uncertain，不能推測工具是否已完成。`welcome` 提供 last_seq／history_floor；TTL 造成歷史缺口時 resumed=false，client 須顯示缺口並以 history_floor 重新同步。
+
+`COMPANION_EVENT_DB` 預設 workspace 外 `%LOCALAPPDATA%/PythonAI/companion.db`（其他 OS 為 ~/.local/share/PythonAI）。`COMPANION_EVENT_TTL=86400`、`COMPANION_INPUT_TTL=604800`、`COMPANION_OUTBOX_LIMIT=200`、`COMPANION_EVENT_BYTES=134217728`、`COMPANION_INPUT_LIMIT=10000`、`COMPANION_MAX_SESSIONS=10000`。可靠 outbox 額滿拒絕新事件並取消工作／關閉 4429，不靜默丟棄舊事件。單事件上限 2 MiB、單 session 20 MiB；client 輸入上限 1 MiB。audio metadata／client tool result 亦有記憶體筆數上限。
+
+通訊回覆有持久化 delivery intent、原子 claim、120 秒 lease、內容去重及身份範圍。重啟可送出尚未 claim 的 pending；傳送逾時或 lease 過期記為 uncertain，保留模型成果且不自動重送，以免平台已收件但 response 遺失時重複送達。送達成功才寫 outbound sent；pending 超过 `COMM_DELIVERY_TTL`（預設 7 天）不再發送，成功紀錄亦依期限清理。`COMM_DELIVERY_LIMIT=10000`、`COMM_DELIVERY_BYTES=134217728` 限制儲存。正式平台沒有通用 exactly-once 契約，uncertain 需人工查平台後處理；不以模型成功代表送達成功。
+
+相關測試涵蓋真正新程序讀回圖檔／中文文件、身份／專案／會話越界、竄改與到期、交易回滾、工作成果與傳送失敗分離、claim／重啟、WebSocket seq／ACK／歷史缺口與不重複執行。對話 runtime／模型執行 checkpoint 的恢復另由 T08 處理。

@@ -5,13 +5,15 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import hashlib
+import re
+import time
 from typing import Any
 
 from communication_models import AgentCommand, InboundAttachment, InboundMessage
 
 
 DEFAULT_COMMUNICATION_DB = Path(__file__).resolve().parent / "communication" / "communication.db"
-_PENDING_ATTACHMENTS: dict[str, tuple[InboundAttachment, ...]] = {}
 
 
 def communication_db_path() -> Path:
@@ -73,7 +75,78 @@ class CommunicationStore:
                 """
             )
             self._ensure_agent_command_job_columns(connection)
+            connection.executescript('''
+                CREATE TABLE IF NOT EXISTS comm_attachments (
+                    command_id TEXT NOT NULL, ordinal INTEGER NOT NULL, owner TEXT NOT NULL,
+                    filename TEXT NOT NULL, mime TEXT NOT NULL, file_id TEXT, data BLOB NOT NULL,
+                    digest TEXT NOT NULL, size INTEGER NOT NULL, expires REAL NOT NULL,
+                    PRIMARY KEY(command_id,ordinal));
+                CREATE TABLE IF NOT EXISTS comm_deliveries (
+                    id TEXT PRIMARY KEY, platform TEXT NOT NULL, conversation TEXT NOT NULL,
+                    sender TEXT NOT NULL, project TEXT NOT NULL, text TEXT NOT NULL,
+                    reply_context TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+                    lease REAL, error TEXT, expires REAL NOT NULL);
+            ''')
             connection.commit()
+
+    @staticmethod
+    def attachment_owner(owner):
+        return json.dumps([owner.platform, owner.sender_id, owner.conversation_id, owner.project], separators=(',', ':'))
+
+    def save_attachments(self, connection, message):
+        from agent_execution.delivery import positive_limit, CapacityError
+        attachments = message.attachments
+        if len(attachments) > 16 or sum(a.size_bytes for a in attachments) > 32*1024*1024:
+            raise CapacityError('Attachment batch exceeds count/size limit')
+        for attachment in attachments:
+            if not isinstance(attachment.data, bytes) or attachment.size_bytes > positive_limit('COMM_ATTACHMENT_MAX_BYTES',20*1024*1024):
+                raise CapacityError('Attachment exceeds file size limit')
+            if not re.fullmatch(r'[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+', attachment.content_type):
+                raise ValueError('Attachment MIME type is invalid')
+            signatures = {'image/png':b'\x89PNG\r\n\x1a\n','image/jpeg':b'\xff\xd8\xff','image/gif':b'GIF', 'application/pdf':b'%PDF-'}
+            signature = signatures.get(attachment.content_type)
+            if signature and not attachment.data.startswith(signature):
+                raise ValueError('Attachment content does not match declared MIME type')
+            if attachment.content_type == 'image/webp' and not (attachment.data.startswith(b'RIFF') and attachment.data[8:12] == b'WEBP'):
+                raise ValueError('Attachment content does not match declared MIME type')
+            if not attachment.filename or len(attachment.filename) > 255 or any(c in attachment.filename for c in '/\\\x00') or attachment.filename in {'.','..'}:
+                raise ValueError('Attachment filename is invalid')
+        if connection.execute('SELECT 1 FROM comm_attachments WHERE command_id=?', (message.idempotency_key,)).fetchone():
+            return
+        if connection.execute('SELECT COUNT(*) FROM comm_attachments').fetchone()[0]+len(attachments) > positive_limit('COMM_ATTACHMENT_COUNT',10000):
+            raise CapacityError('Attachment metadata capacity reached')
+        used = connection.execute('SELECT COALESCE(SUM(size),0) FROM comm_attachments').fetchone()[0]
+        if used + sum(a.size_bytes for a in attachments) > positive_limit('COMM_ATTACHMENT_TOTAL_BYTES',128*1024*1024):
+            raise CapacityError('Attachment storage capacity reached')
+        for index, attachment in enumerate(attachments):
+            connection.execute('INSERT INTO comm_attachments VALUES(?,?,?,?,?,?,?,?,?,?)',
+                (message.idempotency_key,index,self.attachment_owner(message),attachment.filename,attachment.content_type,
+                 attachment.platform_file_id,attachment.data,hashlib.sha256(attachment.data).hexdigest(),attachment.size_bytes,
+                 time.time()+positive_limit('COMM_ATTACHMENT_TTL',7*86400)))
+
+    def load_attachments(self, command_id, owner):
+        with closing(self.connect()) as connection:
+            job = connection.execute('SELECT platform,sender_id,conversation_id,project FROM agent_command_jobs WHERE command_id=?', (command_id,)).fetchone()
+            if job is None or self.attachment_owner(owner) != json.dumps([job['platform'],job['sender_id'],job['conversation_id'],job['project']], separators=(',', ':')):
+                raise PermissionError('Attachment belongs to another identity/session/project')
+            rows = connection.execute('SELECT * FROM comm_attachments WHERE command_id=? AND owner=? ORDER BY ordinal',
+                                      (command_id,self.attachment_owner(owner))).fetchall()
+        result = []
+        for row in rows:
+            if row['expires'] <= time.time():
+                raise ValueError('Attachment expired; upload it again')
+            data = bytes(row['data'])
+            if len(data) != row['size'] or hashlib.sha256(data).hexdigest() != row['digest']:
+                raise ValueError('Attachment integrity check failed')
+            result.append(InboundAttachment(row['filename'],row['mime'],data,row['file_id']))
+        return tuple(result)
+
+    def cleanup_expired(self):
+        with closing(self.connect()) as connection, connection:
+            # Preserve expired attachment metadata as a tombstone, never silently run without a file.
+            connection.execute("UPDATE comm_attachments SET data=X'', size=0 WHERE expires<=? AND size<>0", (time.time(),))
+            connection.execute("UPDATE comm_deliveries SET state='uncertain', error='Delivery lease expired; verify platform before retry' WHERE state='sending' AND lease<=?", (time.time(),))
+            connection.execute('DELETE FROM comm_deliveries WHERE expires<=? AND state IN (\'sent\',\'pending\')', (time.time(),))
 
     def _ensure_agent_command_job_columns(self, connection: sqlite3.Connection) -> None:
         columns = {
@@ -151,9 +224,9 @@ class CommunicationStore:
 
     def enqueue_command(self, message: InboundMessage, source_message_id: int) -> AgentCommand:
         command_id = message.idempotency_key
-        if message.attachments:
-            _PENDING_ATTACHMENTS[command_id] = tuple(message.attachments)
-        with closing(self.connect()) as connection:
+        with closing(self.connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            self.save_attachments(connection, message)
             connection.execute(
                 """
                 INSERT OR IGNORE INTO agent_command_jobs (
@@ -173,12 +246,23 @@ class CommunicationStore:
                 ),
             )
             connection.commit()
-        return self.command_by_id(command_id)
+        return self.command_by_id(command_id, include_attachments=True)
 
     def ingest_inbound_message(self, message: InboundMessage) -> tuple[AgentCommand, bool]:
-        message_id, inserted = self.record_inbound_message(message)
-        command = self.enqueue_command(message, message_id)
-        return command, inserted
+        with closing(self.connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            old = connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?', (message.idempotency_key,)).fetchone()
+            if old is not None:
+                if self.attachment_owner(message) != self.attachment_owner(_command_from_row(old)):
+                    raise PermissionError('Duplicate event belongs to another identity/session/project')
+                return _command_from_row(old), False
+            self.save_attachments(connection, message)
+            connection.execute("INSERT OR IGNORE INTO comm_messages(platform,platform_message_id,conversation_id,sender_id,direction,text,raw_payload) VALUES(?,?,?,?,'inbound',?,?)",
+                (message.platform,message.platform_message_id,message.conversation_id,message.sender_id,message.text,json.dumps(raw_payload_with_attachment_metadata(message),ensure_ascii=False)))
+            message_id = connection.execute("SELECT id FROM comm_messages WHERE platform=? AND platform_message_id=? AND direction='inbound'", (message.platform,message.platform_message_id)).fetchone()[0]
+            connection.execute('INSERT INTO agent_command_jobs(command_id,platform,conversation_id,sender_id,text,source_message_id,delivery_ready,project) VALUES(?,?,?,?,?,?,?,?)',
+                (message.idempotency_key,message.platform,message.conversation_id,message.sender_id,message.text,message_id,0 if message.platform=='discord' else 1,message.project))
+        return self.command_by_id(message.idempotency_key, include_attachments=True), True
 
     def pending_commands(self, limit: int = 10) -> list[AgentCommand]:
         with closing(self.connect()) as connection:
@@ -195,7 +279,7 @@ class CommunicationStore:
             ).fetchall()
         return [_command_from_row(row) for row in rows]
 
-    def command_by_id(self, command_id: str) -> AgentCommand:
+    def command_by_id(self, command_id: str, include_attachments=False) -> AgentCommand:
         with closing(self.connect()) as connection:
             row = connection.execute(
                 """
@@ -208,7 +292,11 @@ class CommunicationStore:
             ).fetchone()
         if row is None:
             raise KeyError(command_id)
-        return _command_from_row(row)
+        command = _command_from_row(row)
+        if include_attachments:
+            from dataclasses import replace
+            command = replace(command, attachments=self.load_attachments(command_id, command))
+        return command
 
     def mark_command_running(self, command_id: str) -> bool:
         with closing(self.connect()) as connection, connection:
@@ -312,6 +400,45 @@ class CommunicationStore:
             connection.commit()
             return int(cursor.lastrowid)
 
+    def queue_delivery(self, command, text, reply_context, is_error=False):
+        from agent_execution.delivery import CapacityError, positive_limit
+        # Include content in the key: a suspended question and its final reply are separate deliveries.
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        key = f"{command.command_id}:{'error' if is_error else 'outbound'}:{digest}"
+        with closing(self.connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            if connection.execute('SELECT 1 FROM comm_deliveries WHERE id=?', (key,)).fetchone():
+                return key
+            if len(text.encode()) > 2*1024*1024 or connection.execute('SELECT COUNT(*) FROM comm_deliveries').fetchone()[0] >= positive_limit('COMM_DELIVERY_LIMIT',10000):
+                raise CapacityError('Platform delivery capacity reached')
+            used = connection.execute('SELECT COALESCE(SUM(length(CAST(text AS BLOB))+length(CAST(reply_context AS BLOB))),0) FROM comm_deliveries').fetchone()[0]
+            if used+len(text.encode())+len(json.dumps(reply_context).encode()) > positive_limit('COMM_DELIVERY_BYTES',128*1024*1024):
+                raise CapacityError('Platform delivery storage capacity reached')
+            connection.execute('INSERT INTO comm_deliveries(id,platform,conversation,sender,project,text,reply_context,expires) VALUES(?,?,?,?,?,?,?,?)',
+                (key,command.platform,command.conversation_id,command.sender_id,command.project,text,json.dumps(reply_context),time.time()+positive_limit('COMM_DELIVERY_TTL',7*86400)))
+        return key
+
+    def pending_deliveries(self, delivery_id=None):
+        with closing(self.connect()) as connection:
+            return [dict(row) for row in connection.execute("SELECT * FROM comm_deliveries WHERE state='pending' AND expires>? AND (? IS NULL OR id=?) ORDER BY rowid LIMIT 20", (time.time(),delivery_id,delivery_id))]
+
+    def claim_delivery(self, key):
+        with closing(self.connect()) as connection, connection:
+            return connection.execute("UPDATE comm_deliveries SET state='sending',lease=? WHERE id=? AND state='pending' AND expires>?", (time.time()+120,key,time.time())).rowcount == 1
+
+    def finish_delivery(self, key, state, error=None):
+        with closing(self.connect()) as connection, connection:
+            row = connection.execute("SELECT * FROM comm_deliveries WHERE id=? AND state='sending'", (key,)).fetchone()
+            if row is None:
+                return
+            connection.execute('UPDATE comm_deliveries SET state=?,error=?,lease=NULL WHERE id=?', (state,error,key))
+            if state == 'sent':
+                connection.execute("INSERT OR IGNORE INTO comm_messages(platform,platform_message_id,conversation_id,sender_id,direction,text,status) VALUES(?,?,?,'agent','outbound',?,'sent')", (row['platform'],key,row['conversation'],row['text']))
+
+    def delivery_status(self, owner):
+        with closing(self.connect()) as connection:
+            return [dict(row) for row in connection.execute('SELECT id,state,error,expires FROM comm_deliveries WHERE platform=? AND conversation=? AND sender=? AND project=? ORDER BY rowid DESC LIMIT 20', (owner.platform,owner.conversation_id,owner.sender_id,owner.project))]
+
     def recent_messages(self, limit: int = 20) -> list[dict[str, Any]]:
         with closing(self.connect()) as connection:
             rows = connection.execute(
@@ -368,7 +495,6 @@ def _command_from_row(row: sqlite3.Row) -> AgentCommand:
         status=str(row["status"]),
         requires_confirmation=bool(row["requires_confirmation"]),
         source_message_id=int(row["source_message_id"]) if row["source_message_id"] is not None else None,
-        attachments=_PENDING_ATTACHMENTS.get(command_id, ()),
         project=str(row["project"]),
     )
 

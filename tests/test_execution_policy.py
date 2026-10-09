@@ -1,5 +1,5 @@
 """Include the policy package tests in the legacy unittest discovery command."""
-from agent_execution.tests import test_policy, test_process, test_approvals, test_auth_transport, test_sessions, test_streaming
+from agent_execution.tests import test_policy, test_process, test_approvals, test_auth_transport, test_sessions, test_streaming, test_delivery
 
 
 def load_tests(loader, tests, pattern):
@@ -9,4 +9,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_auth_transport))
     tests.addTests(loader.loadTestsFromModule(test_sessions))
     tests.addTests(loader.loadTestsFromModule(test_streaming))
+    tests.addTests(loader.loadTestsFromModule(test_delivery))
     return tests

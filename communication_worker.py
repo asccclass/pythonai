@@ -63,22 +63,22 @@ class CommunicationWorker:
         self._threads_lock = threading.Lock()
 
     def _send_reply(self, command: AgentCommand, text: str, is_error: bool = False) -> None:
-        adapter = self.adapters[command.platform]
-        adapter.send_message(
-            OutboundMessage(
-                platform=command.platform,
-                conversation_id=command.conversation_id,
-                text=text,
-                reply_to_message_id=str(command.source_message_id) if command.source_message_id is not None else None,
-                reply_context=self.store.reply_context(command.source_message_id),
-            )
-        )
-        self.store.record_outbound_message(
-            command.platform,
-            command.conversation_id,
-            text,
-            platform_message_id=f"{command.command_id}:{'error' if is_error else 'outbound'}",
-        )
+        key = self.store.queue_delivery(command, text, self.store.reply_context(command.source_message_id), is_error)
+        self.deliver_pending(key)
+
+    def deliver_pending(self, delivery_id=None):
+        self.store.cleanup_expired()
+        for row in self.store.pending_deliveries(delivery_id):
+            if not self.store.claim_delivery(row['id']):
+                continue
+            try:
+                import json
+                self.adapters[row['platform']].send_message(OutboundMessage(row['platform'], row['conversation'], row['text'], reply_context=json.loads(row['reply_context'])))
+                self.store.finish_delivery(row['id'], 'sent')
+            except Exception as error:
+                # A timeout may occur after the platform accepted a message. Do not blindly retry.
+                self.store.finish_delivery(row['id'], 'uncertain', type(error).__name__)
+                print(f"Delivery requires verification: id={row['id']} error={type(error).__name__}")
 
     def process_next(self) -> AgentCommand | None:
         pending = self.store.pending_commands(limit=1)
@@ -146,8 +146,10 @@ class CommunicationWorker:
 
         def background_run():
             try:
+                from dataclasses import replace
+                loaded_command = replace(command, attachments=self.store.load_attachments(command.command_id, command))
                 resumed_messages = None
-                target_command = command
+                target_command = loaded_command
                 
                 if suspended_job:
                     suspended_id, state_json, tool_call_id = suspended_job

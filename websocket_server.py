@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from agent_execution.delivery import EventStore, CapacityError
 
 
 PROTOCOL_VERSION = 1
@@ -52,7 +53,7 @@ class Session:
     caps: set[str] = field(default_factory=set)
     ws: WebSocket | None = None
     seq: int = 0
-    outbox: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=200))
+    outbox: deque[dict[str, Any]] = field(default_factory=deque)
     last_active: float = field(default_factory=time.time)
     focused: bool = False
     current_chat_task: asyncio.Task | None = None
@@ -63,6 +64,11 @@ class Session:
     runtime: Any = None
     runtime_factory: Any = None
     cancel_chat: threading.Event | None = None
+    event_store: Any = None
+
+    @property
+    def owner(self):
+        return EventStore.owner(self.user_id, self.project, self.device_id)
 
     async def send(self, type_: str, payload: dict[str, Any], ref: str | None = None) -> dict[str, Any]:
         message: dict[str, Any] = {
@@ -74,8 +80,22 @@ class Session:
             "payload": payload,
         }
         if type_ in RELIABLE_TYPES:
-            self.seq += 1
-            message["seq"] = self.seq
+            if self.event_store is not None:
+                try:
+                    message = self.event_store.append(self.owner, message)
+                except CapacityError:
+                    if self.cancel_chat is not None:
+                        self.cancel_chat.set()
+                    if self.ws is not None:
+                        await self.ws.close(code=4429, reason="Reliable outbox full; ACK required")
+                        self.ws = None
+                    raise
+                self.seq = message['seq']
+            else:
+                if len(self.outbox) >= 200:
+                    raise CapacityError('Reliable outbox full; ACK required')
+                self.seq += 1
+                message["seq"] = self.seq
             self.outbox.append(message)
         if self.ws is not None:
             try:
@@ -87,20 +107,33 @@ class Session:
         return message
 
     def ack(self, seq: int) -> None:
+        if self.event_store is not None:
+            self.event_store.ack(self.owner, seq)
         while self.outbox and int(self.outbox[0].get("seq") or 0) <= seq:
             self.outbox.popleft()
 
 
 class Hub:
-    def __init__(self) -> None:
+    def __init__(self, event_store=None) -> None:
         self.sessions: dict[tuple[str, str, str], Session] = {}
         self.telegram_fallbacks: list[str] = []
+        self.event_store = event_store
 
     def get(self, device_id: str, device_type: str = "web", user_id: str = "user", project="default") -> Session:
         key = (user_id, project, device_id)
         session = self.sessions.get(key)
         if session is None:
-            session = Session(device_id=device_id, device_type=device_type, user_id=user_id, project=project)
+            from agent_execution.delivery import positive_limit
+            if len(self.sessions) >= positive_limit('COMPANION_MAX_SESSIONS',10000):
+                idle = [key for key,value in self.sessions.items() if value.ws is None and (value.current_chat_task is None or value.current_chat_task.done())]
+                if not idle:
+                    raise CapacityError('Companion session capacity reached')
+                del self.sessions[min(idle,key=lambda key:self.sessions[key].last_active)]
+            if self.event_store is None:
+                self.event_store = EventStore()
+            session = Session(device_id=device_id, device_type=device_type, user_id=user_id, project=project, event_store=self.event_store)
+            session.seq, _, events = self.event_store.snapshot(session.owner)
+            session.outbox.extend(events)
             self.sessions[key] = session
         session.device_type = device_type or session.device_type
         return session
@@ -268,7 +301,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
         session.runtime_factory = runtime_factory
         session.caps = {str(capability) for capability in payload.get("capabilities", [])}
         last_seq = int(payload.get("last_seq") or 0)
-        resumable = not session.outbox or int(session.outbox[0]["seq"]) <= last_seq + 1
+        session.seq, floor, events = session.event_store.snapshot(session.owner)
+        session.outbox.clear()
+        session.outbox.extend(events)
+        resumable = floor <= last_seq <= session.seq
+        if resumable:
+            session.ack(last_seq)
 
         await session.send(
             "welcome",
@@ -277,6 +315,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "server_time": now_ms(),
                 "resumed": resumable,
                 "features": DEFAULT_FEATURES,
+                "last_seq": session.seq,
+                "history_floor": floor,
             },
         )
         if resumable:
@@ -299,6 +339,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
             await handle_client_message(session, data)
     except (WebSocketDisconnect, asyncio.TimeoutError):
         pass
+    except CapacityError:
+        await ws.close(code=4429, reason='Companion capacity reached; ACK required')
     except ValueError:
         if session is not None:
             await session.send("error", {"code": "bad_message", "message": "invalid JSON", "retryable": False})
@@ -333,6 +375,14 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
         if session.current_chat_task is not None and not session.current_chat_task.done():
             await session.send("error", {"code": "chat_busy", "message": "Wait for the previous chat to finish or interrupt it", "retryable": True}, ref=message_id)
             return
+        if session.event_store is not None:
+            if not isinstance(message_id, str) or not message_id or len(message_id) > 128:
+                await session.send('error', {'code':'bad_message','message':'chat.send requires a stable ID (1..128 characters)','retryable':False})
+                return
+            previous = session.event_store.accept_input(session.owner, message_id, text)
+            if previous is not None:
+                await session.send('notify', {'request_id':message_id,'status':previous,'text':'Duplicate input was not executed; inspect replayed events.'}, ref=message_id)
+                return
         session.cancel_chat = threading.Event()
         session.current_chat_task = asyncio.create_task(handle_chat(session, text, str(message_id or "")))
     elif message_type == "chat.interrupt":
@@ -371,19 +421,24 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
 
 
 async def handle_chat(session: Session, text: str, ref: str) -> None:
-    await session.send("chat.start", {"role": "assistant"}, ref=ref)
     full: list[str] = []
     try:
+        await session.send("chat.start", {"role": "assistant"}, ref=ref)
         async for kind, value in brain_reply_stream(text, session):
             if kind == "model.delta":
                 full.append(value["text"])
                 await session.send("chat.delta", value, ref=ref)
             elif kind == "end":
                 await session.send("chat.end", {**dict(value), "interrupted": bool(session.cancel_chat and session.cancel_chat.is_set())}, ref=ref)
+                if session.event_store is not None:
+                    session.event_store.finish_input(session.owner, ref, 'interrupted' if session.cancel_chat and session.cancel_chat.is_set() else 'failed' if value.get('failed') else 'completed')
             else:
                 await session.send(kind, value, ref=ref)
     except asyncio.CancelledError:
         await session.send("chat.end", {"text": "".join(full), "emotion": "neutral", "action": "none", "interrupted": True}, ref=ref)
+    except CapacityError:
+        # History remains intact and the request stays uncertain; never repeat effects.
+        pass
 
 
 async def handle_event(session: Session, event: dict[str, Any]) -> None:
@@ -400,6 +455,8 @@ async def handle_event(session: Session, event: dict[str, Any]) -> None:
 
 
 def handle_audio_frame(session: Session, data: bytes) -> None:
+    if len(session.audio_frames) >= 256:
+        session.audio_frames.pop(0)
     if len(data) < 9:
         session.audio_frames.append({"error": "short_frame", "size": len(data)})
         return
@@ -415,10 +472,14 @@ def handle_audio_frame(session: Session, data: bytes) -> None:
 
 def handle_tool_result(session: Session, ref: str | None, payload: dict[str, Any]) -> None:
     if ref:
+        if len(session.tool_results) >= 256:
+            session.tool_results.pop(next(iter(session.tool_results)))
         session.tool_results[str(ref)] = payload
 
 
 def parse_text_message(text: str) -> dict[str, Any]:
+    if len(text.encode()) > 1024*1024:
+        raise ValueError('message exceeds 1 MiB')
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
@@ -429,5 +490,11 @@ def parse_text_message(text: str) -> dict[str, Any]:
 
 
 def reset_hub_for_tests() -> None:
+    import tempfile
     hub.sessions.clear()
     hub.telegram_fallbacks.clear()
+    previous = getattr(hub, '_test_storage', None)
+    if previous is not None:
+        previous.cleanup()
+    hub._test_storage = tempfile.TemporaryDirectory()
+    hub.event_store = EventStore(os.path.join(hub._test_storage.name, 'events.db'))

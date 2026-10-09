@@ -121,8 +121,14 @@ class TelegramAdapter:
         if not isinstance(result, dict) or not result.get("file_path"):
             raise RuntimeError(f"Telegram getFile returned invalid result: {payload}")
         file_path = str(result["file_path"])
+        from agent_execution.delivery import positive_limit, CapacityError
+        limit = positive_limit('COMM_ATTACHMENT_MAX_BYTES', 20*1024*1024)
+        if int(result.get('file_size') or 0) > limit:
+            raise CapacityError('Telegram attachment exceeds file size limit')
         download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
         downloaded = self.http_download(download_url)
+        if len(downloaded) > limit:
+            raise CapacityError('Telegram attachment exceeds file size limit')
         final_name = filename or PurePosixPath(file_path).name or file_id
         return InboundAttachment(
             filename=final_name,
@@ -223,4 +229,9 @@ def _json_get(url: str, params: dict[str, Any]) -> Any:
 def _download_bytes(url: str) -> bytes:
     req = request.Request(url, method="GET")
     with request.urlopen(req, timeout=60) as response:
-        return response.read()
+        from agent_execution.delivery import positive_limit, CapacityError
+        limit = positive_limit('COMM_ATTACHMENT_MAX_BYTES', 20*1024*1024)
+        data = response.read(limit+1)
+        if len(data) > limit:
+            raise CapacityError('Telegram download exceeds file size limit')
+        return data
