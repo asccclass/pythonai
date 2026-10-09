@@ -2,11 +2,11 @@
   "type": "function",
   "function": {
     "name": "git_rollback",
-    "description": "Rollback all uncommitted changes. Resets the working directory to HEAD and removes all untracked files.",
+    "description": "Restore selected tracked files to HEAD after one-use human approval; archive edits first. Untracked files are retained.",
     "parameters": {
       "type": "object",
-      "properties": {},
-      "required": []
+      "properties": {"files": {"type": "array", "items": {"type": "string"}}},
+      "required": ["files"]
     }
   }
 }

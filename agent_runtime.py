@@ -407,8 +407,14 @@ def verify_skill_result(result, runtime, messages, episode_id, goal=''):
     if failed:
         evaluation=EvaluationResult(False,0,'Skill contains a failed tool step',retryable=False)
     elif runtime.task_evaluator is not None:
-        evaluation=runtime.task_evaluator.evaluate(user_goal=goal,messages=messages,
-            final_reply=format_skill_reply(result),post_state=runtime.task_evaluator.capture_state())
+        evaluator=runtime.task_evaluator
+        from copy import copy
+        from task_evaluator import TaskEvaluator
+        if isinstance(evaluator,TaskEvaluator):
+            evaluator=copy(evaluator)
+            evaluator.workspace_root=workspace_root()
+        evaluation=evaluator.evaluate(user_goal=goal,messages=messages,
+            final_reply=format_skill_reply(result),post_state=evaluator.capture_state())
     else:
         contract=row['criteria'] if row and row['criteria'].get('version')==1 else {'version':1,'checks':[]}
         checks,errors,evidence=verify_contract(contract,workspace_root(),run_test_suite)

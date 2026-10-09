@@ -95,7 +95,7 @@
   - 完整驗證首次 451 passed、2 failed（tool JSON 顯示的舊測試期待值、T09 cancel EOF 競態）、1 skipped、7 subtests passed；兩者修正後，Docker／Chromium 完整重驗：461 passed、1 skipped（外部 provider）、7 subtests passed。其後補通訊 runtime 工廠的 TaskEvaluator，工廠／結果／project 隔離相關 43 passed。新增 15 項 results 測試與 1 項真實 Skill 程序退出測試；語法／diff 檢查通過。
   - 邊界：驗收依部署者配置的 checks，不能證明測試本身品質或未列出的外部行為；舊契約／資料不回溯標 verified。保留 legacy 工具显示 API，但字串不可當測試證據；side_effects 未知時不猜測。獨立 Reviewer、完整 artifacts 與品質 benchmark 分別由 T13／T14／T21 擴充。
 
-- [x] **T11 — 將 Hook 框架接成可配置政策**
+- [x] **T11 — 將 Hook 框架接成可配置政策**（commit `c083809`）
   - 現況：四個 lifecycle 與稽核已有測試，default_hook_manager 尚無內建 hook；Guard／權限／驗收不是全部經由共用 hook。
   - 工作：加入政策註冊配置與啟動診斷，將參數驗證、身份／預算、結果正規化接入適當事件；補 Skill／排程路徑，避免雙重執行。
   - 驗收：啟停、排序與 fail-closed 設定有效；無政策時明確顯示；每條執行路徑有一致稽核，阻擋不產生副作用。依賴 T01、T03、T10。
@@ -106,10 +106,14 @@
 
 ## P2：縮小與 Codex 的開發交付差距
 
-- [ ] **T12 — 任務專用 Git worktree 與安全交付**
+- [x] **T12 — 任務專用 Git worktree 與安全交付**
   - 現況：有 git status／diff／commit／rollback，但任務與子代理共享 checkout。
   - 工作：建立／回收 task worktree、保留使用者 dirty changes、限定修改／staging 範圍、diff 預覽、選檔回復、commit 與 artifacts；對破壞性 rollback 明確批准。
   - 驗收：兩任務可獨立修改同檔且不互覆；失敗回復不刪使用者既有變更；只有任務檔案入 commit；清理前可恢復成果。依賴 T02、T08。
+  - 實作（2026-10-10）：可選 AGENT_TASK_WORKTREE=1、owner/task detached worktree、TaskStore 固定綁定與 scoped evaluator；選檔獨立 index commit、批准後選檔 rollback 與備份。人類 `/worktree` preview／archive／restore；清理前保存 committed bundle、dirty／ignored／deleted 檔及 digest manifest。來源 dirty changes 不複製進 worktree，保留原 checkout。
+  - 相關測試：底層 8 passed、6 subtests passed；接入任務／驗收後 41 passed、10 subtests passed；增加真正退出程序及防覆寫／ZIP 逃逸／digest 驗證後 worktree 16 passed、6 subtests passed。完整初次 486 passed、1 skipped、13 subtests passed；補強 hook 選檔與 archive limits 後完整重驗另記錄。
+  - 最終 Docker／Chromium 完整驗證：492 passed、1 skipped（外部 provider）、13 subtests passed；新增 19 項 worktree 測試，包含實際 Git hook 添加未選檔案的對照、staged 刪除回復、真正退出程序恢復與 Skill 的 worktree 契約驗收。批准／任務／worktree 相關 40 passed、10 subtests passed；語法／diff 檢查通過。
+  - 邊界：預設支援非 Git workspace 不開啟 worktree；不自動合併任務成果。scoped commit 停用 repository hooks，驗收需先執行；symlink／junction、submodule、nested repo、過大成果拒絕自動清理。封存需無其他編輯者，壞 archive／中途 crash 的殘留保留供人工處理；封存磁碟保留待 T21，合作結果合併待 T13、外部 PR 待 T14。
 
 - [ ] **T13 — 可管理的多代理協作**
   - 現況：planner／coder／reviewer daemon thread 與 JSON 狀態，無 durable coordinator。

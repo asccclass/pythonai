@@ -24,6 +24,7 @@ class ExecutionContext:
     project: str = "default"
     task_id: str | None = None
     workspace: Path | None = None
+    repository_workspace: Path | None = None
     memory: Any = None
     episode_id: int | None = None
     trusted_assets: tuple[Path, ...] = ()
@@ -127,10 +128,10 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
             raise PolicyDenied(f"Role '{current_role()}' cannot execute {name}")
         assets = _context.get().trusted_assets if name == "run_command" else ()
         _validate_paths(arguments, assets)
-        if name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}:
-            values = {"reason": "", "superseded_by": None, **values}
+        if name == 'git_rollback' or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):
+            if name=='manage_memory':values = {"reason": "", "superseded_by": None, **values}
             context = _context.get()
-            action = f"{context.project}:{name}"
+            action = f"{context.project}:{name}" + (f':{context.task_id}' if name=='git_rollback' else '')
             authorization = (context.identity, context.session, action, canonical(values))
             if _approved.get() != authorization:
                 store = ApprovalStore()

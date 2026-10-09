@@ -89,3 +89,15 @@ source, identity, session, project, task ID and role. With a memory episode they
 are persisted there; without one they are available in HookContext.audit_metadata.
 Custom hook code is trusted Python. Existing tool_done recovery does not replay
 custom post-tool hooks; hooks with external effects need their own recovery design.
+
+## Task worktrees and scoped Git delivery (T12)
+
+worktrees.py provides owner/task-specific detached worktrees, immutable durable
+bindings, diff preview, bounded local archives and explicit restoration. Enable
+AGENT_TASK_WORKTREE=1 for a Git repository workspace; non-Git workspaces retain
+the default mode. The source checkout's dirty/index/untracked state is untouched.
+Artifacts live outside that checkout, including history.bundle, files.zip and a
+digest manifest. Archive/restore commands require terminal tasks and human approval.
+Selected commits use a separate index and disable repository hooks to enforce
+scope. Rollback archives selected working/index versions and requires one-use
+approval; untracked files are retained. See root README for commands and limits.

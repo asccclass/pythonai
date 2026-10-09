@@ -186,6 +186,11 @@ def run_agent(
     from agent_execution.tasks import save_checkpoint
     from agent_execution.results import normalize_result
     from openai.types.chat import ChatCompletionMessage
+    if isinstance(task_evaluator,TaskEvaluator):
+        from copy import copy
+        from base import workspace_root
+        task_evaluator=copy(task_evaluator)
+        task_evaluator.workspace_root=workspace_root()
     if hook_manager is None:hook_manager=default_hook_manager()
     resume_state = resume_state or {}
     tool_results = dict(resume_state.get('tool_results',{}))

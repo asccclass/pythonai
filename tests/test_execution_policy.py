@@ -3,6 +3,7 @@ from agent_execution.tests import test_policy, test_process, test_approvals, tes
 from agent_execution.tests import test_budgets
 from agent_execution.tests import test_results
 from agent_execution.tests import test_hook_policies
+from agent_execution.tests import test_worktrees
 
 
 def load_tests(loader, tests, pattern):
@@ -17,4 +18,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_budgets))
     tests.addTests(loader.loadTestsFromModule(test_results))
     tests.addTests(loader.loadTestsFromModule(test_hook_policies))
+    tests.addTests(loader.loadTestsFromModule(test_worktrees))
     return tests

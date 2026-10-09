@@ -31,10 +31,10 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；六項內建政策、可配置啟停／排序／fail-closed、啟動診斷、阻擋／提前回覆／回饋與身份稽核 | 已實作；模型、直接工具、Skill／排程共用政策；核心權限／路徑／批准不受停用 Hook 影響 | `hooks.py`, `agent_execution/hook_policies.py`, `server.py` |
 | 任務驗收與自修正 | 凍結驗收契約、結構化工具結果、檔案／語法、JUnit／process、Judge 與 Critic | 明確條件及證據才能 verified_completed；Judge 無效／失效拒絕、不可修正失敗直接交人工；直接 Skill 亦驗收 | `task_evaluator.py`, `agent_execution/acceptance.py`, `agent_execution/results.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
-| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 繼承角色／身份及父取消、共享根預算、独立 checkpoint；仍共享 workspace／工具，worktree、DAG、durable coordinator 及結果合併待增修 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
+| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 繼承角色／身份及父取消、共享根預算、独立 checkpoint；可選 task worktree 隔離，DAG、durable coordinator 及結果合併待 T13 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
 | 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
-| 開發工具 | Git status／diff／commit／rollback、pytest／Python 測試 runner、venv／pip／npm、四種 scaffold | 基礎實作；Git rollback 具破壞性，尚無 PR／CI／worktree 全流程；測試 runner timeout 為 30 秒 | `tools/git_*.py`, `tools/run_test_suite.py`, `tools/env_manager.py`, `tools/project_scaffold.py` |
+| 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；PR／CI 流程待 T14；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
 | IDE 整合 | VS Code Inline Chat、Ghost Text、HTTP 串流替換選取程式碼 | 原型；獨立 ide_server.py，非完整 Agent 任務 UI，尚無修改預覽、驗收與 robust cancellation | `ide_server.py`, `vscode-extension/` |
 | 觀測與診斷 | episodes／hooks／Skills／記憶健康 CLI、Skill Doctor 產生 agent_persona 建議 | 已實作；Doctor --apply 可寫記憶，尚無品質 A/B 評測及完整分散式 tracing／成本報表 | `observability.py`, `skill_doctor.py` |
 
@@ -46,7 +46,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 比較面向 | PythonAI 現況 | 相對差距與下一步 |
 | --- | --- | --- |
-| 編碼交付／Codex | 已有編輯、Git、測試與 Judge | 補 worktree、diff 審查、patch 套用、PR／CI、範圍控制及可回復交付；不能把 Git commit 工具視為完整開發流程 |
+| 編碼交付／Codex | 已有編輯、選檔 Git、測試、Judge、可選 task worktree 與可回復封存 | 補完整 diff 審查、patch 套用、PR／CI、多代理結果合併；本機交付尚不涵蓋外部發布流程 |
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
@@ -390,7 +390,7 @@ Discord PING 回 `{"type":1}`，application command 回 `{"type":5}` deferred re
 
 遠端記憶保存於 `%LOCALAPPDATA%/PythonAI/tenants/<scope-hash>/memory.db`（其他 OS 為 `~/.local/share/PythonAI/tenants/`）。`AGENT_TENANT_ROOT` 可指定受信任 storage 根目錄。通訊 DB 範圍包含穩定的 conversation；REST 管理 DB 依 API 身份與 project 分配，Dashboard 重新登入仍可讀自己的記憶。`X-Agent-Project`／Dashboard 專案欄預設 default；批准亦綁定 project。舊 `MEMORY_DB_PATH` 仍屬本機資料，未自動复制給遠端使用者；不同平台身份不自動合併。
 
-WebSocket session／outbox key 包含 user、project、device，使用者不能以同名 device 讀取他人事件；proactive 選擇限原 user／project。同一裝置重連會關閉舊連線，舊連線退出不會清除新連線。未配置 WebSocket tokens 時拒絕登入，沒有通用預設密碼。任務專用 worktree 仍待 T12。
+WebSocket session／outbox key 包含 user、project、device，使用者不能以同名 device 讀取他人事件；proactive 選擇限原 user／project。同一裝置重連會關閉舊連線，舊連線退出不會清除新連線。未配置 WebSocket tokens 時拒絕登入，沒有通用預設密碼。Git 專案可依 T12 設定任務專用 worktree。
 
 
 ## 真實 WebSocket Agent 串流（T06）
@@ -468,7 +468,7 @@ SDK `max_retries=0`、單請求 timeout 最多 60 秒且不超過剩餘 deadline
 
 可選的實際 provider 探測（每請求最長 15 秒、無隱藏重試、不傳 workspace 內容）：`python -m agent_execution.model_probe --model <id>`，加 `--vision` 測圖像，或 `--embedding` 測 embedding。成功僅證明請求可接受，不驗證語意品質；任何失敗回報 unknown 與錯誤類別／HTTP status，不洩露完整 provider error 或 credentials，也不自動更改配置。
 
-模型輸入超限時只刪完整舊訊息組，保留 system／developer、最新使用者輸入、task goal／criteria、批准及其工具配對；hook feedback 排在完整工具結果後。壓縮資料保持 user 權限，不提升為 system 指令。無法在上限內保留必要內容則拒絕，權威 checkpoint 不被裁剪。未知副作用與完整交付品質仍分別依 T08／T10 處理；共享 workspace 的子代理衝突、durable coordinator 與 reviewer 收斂待 T12／T13。
+模型輸入超限時只刪完整舊訊息組，保留 system／developer、最新使用者輸入、task goal／criteria、批准及其工具配對；hook feedback 排在完整工具結果後。壓縮資料保持 user 權限，不提升為 system 指令。無法在上限內保留必要內容則拒絕，權威 checkpoint 不被裁剪。未知副作用與完整交付品質仍分別依 T08／T10 處理；可啟用 T12 worktree 避免檔案互覆，durable coordinator、合併衝突治理與 reviewer 收斂待 T13。
 
 完整驗證（Docker／Chromium 開啟）：444 passed、1 skipped（外部 provider）、7 subtests passed；新增預算與上下文測試包含真實 SDK 的 HTTP 429 無隱藏重試、root deadline 取消 Windows host 程序與 blocked stream、併發扣额、重啟與子代理額度／checkpoint。實際部署模型能力及費率未由這些 fixture 驗證。
 
@@ -493,3 +493,17 @@ TaskEvaluator 必須通過起始 checks、沒有失敗工具步驟，以及配�
 模型、直接工具、Skill 子步驟與排程共用 Hook Pipeline，委派不重複執行同一工具；巢狀實際工具各自稽核。停用 Hook 不停用核心角色、workspace、批准與預算限制。參數驗證涵蓋 native signature、基本型別、enum、array items；完整外部 MCP schema 待 T18。PreModel Hook 的 model／tools 修改會傳入實際請求。
 
 稽核含 source、identity、session、project、task_id、role。有 memory episode 時保存 `hook_execution`，無記憶時保留在 HookContext。自訂 Hook 是可信 Python；tool_done 重啟恢復不重播自訂 post-tool Hook，其外部副作用需自行設計恢復。相關完整 Docker／Chromium 驗證：473 passed、1 skipped（外部 provider）、7 subtests passed。
+
+## 任務 Git worktree 與選檔交付（T12）
+
+Git 專案可設定 `AGENT_TASK_WORKTREE=1`，在 durable task 取得 lease 後建立 owner／task 專用 detached worktree。來源必須是配置 workspace 的 repository root；從已提交 HEAD 開始，原 checkout 的 staged、未提交與 untracked 內容保留在原處。預設為 0，以支援一般非 Git workspace。綁定保存於 TaskStore，重啟、更改 storage 設定或關閉開關後，既有任務仍使用原 worktree；Skill、模型工具及驗收均使用該 workspace。
+
+預設 worktree／registry／archives 位於 `%LOCALAPPDATA%/PythonAI/worktrees`，可由部署者設定 `AGENT_WORKTREE_ROOT`，必須在 repository 外。兩任務可修改同一檔案而不互覆；不自動合併成果到來源 checkout。使用 `/worktree <task_id> preview` 查看 base、HEAD、狀態及包含任務提交的 diff；untracked 內容需另外讀取檔案。
+
+`git_commit(message, files=[...])` 只提交明確選中的個別檔案，用獨立 index 保留其他 staged changes；`add_all=true` 拒絕，`create_branch` 限 `codex/` 前綴。為確保選檔範圍，本次 commit 明確停用 repository hooks；測試／驗收須先完成。回傳 commit SHA 與選檔證據。`git_rollback(files=[...])` 需要 `/approve` 的一次性批准，綁定身份、session、project、task 與相同參數；先封存 working-copy bytes、選檔 index.patch、原 HEAD，再只 restore 選中的 tracked files。untracked 檔案不刪除，預設備份在 `%LOCALAPPDATA%/PythonAI/rollback`，可設定 `AGENT_ROLLBACK_ROOT` 至 repository 外。
+
+完成／失敗／取消且 lease 已結束後，可使用 `/worktree <task_id> archive` 或 `restore`，兩者均限 admin，先產生批准 ID；`/approve <id>` 後以相同指令附加該 ID 執行。封存包含 committed history.bundle、working-copy files.zip、SHA-256 manifest、忽略檔及刪除狀態；成功驗證後才由 Git 移除 worktree。restore 恢復 HEAD 與未提交內容。封存失敗保留目錄；損壞的 restore 保留已建立目錄供人工檢查，不覆寫既有目錄。
+
+最多 256 個 active worktree、每次快照 10000 檔／256 MiB、單檔 64 MiB；repository objects 與 history.bundle 上限各 256 MiB。symlink／junction、submodule、嵌套 Git repository 拒絕自動封存，需人工保存。封存保留在本機，不自動刪舊成果；維運者須管理磁碟保留。封存期間須停止其他編輯者，系統會重檢狀態、HEAD 與內容；host 模式的任意程式仍受 T02 已記載的隔離邊界限制。
+
+最終 Docker／Chromium 完整驗證：492 passed、1 skipped（外部 provider）、13 subtests passed；新增 19 項 worktree 測試，涵蓋真實 Git、選檔 hook 防繞過、批准、archive／restore、真正程序退出後恢復與模型／Skill 驗收 workspace。

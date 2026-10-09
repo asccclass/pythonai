@@ -2,24 +2,25 @@
   "type": "function",
   "function": {
     "name": "git_commit",
-    "description": "Commit changes to the git repository. Can optionally add all files and create a new branch.",
+    "description": "Commit selected files while retaining unrelated staged changes. Optional branch must use codex/ prefix.",
     "parameters": {
       "type": "object",
       "properties": {
+        "files": {"type": "array", "items": {"type": "string"}, "description": "Explicit individual workspace-relative files; no directories."},
         "message": {
           "type": "string",
           "description": "Commit message"
         },
         "add_all": {
           "type": "boolean",
-          "description": "If true, runs 'git add .' before committing."
+          "description": "Legacy compatibility only; true is rejected. Select files instead."
         },
         "create_branch": {
           "type": "string",
           "description": "Optional branch name. If provided, creates and checks out this branch before committing (useful for Checkpoints)."
         }
       },
-      "required": ["message"]
+      "required": ["message", "files"]
     }
   }
 }

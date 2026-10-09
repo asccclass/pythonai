@@ -37,6 +37,9 @@ class TaskStore:
                     owner TEXT NOT NULL, task_id TEXT NOT NULL, id TEXT NOT NULL,
                     name TEXT NOT NULL, input TEXT NOT NULL, dependencies TEXT NOT NULL,
                     state TEXT NOT NULL, result TEXT, PRIMARY KEY(owner,task_id,id));
+                CREATE TABLE IF NOT EXISTS task_workspaces (
+                    owner TEXT NOT NULL, task_id TEXT NOT NULL, repository TEXT NOT NULL,
+                    storage TEXT NOT NULL, PRIMARY KEY(owner,task_id));
             ''')
             conn.execute('BEGIN IMMEDIATE')
             columns = {r['name'] for r in conn.execute('PRAGMA table_info(tasks)')}
@@ -55,6 +58,7 @@ class TaskStore:
         from .delivery import positive_limit, CapacityError
         used = conn.execute('SELECT COALESCE(SUM(length(CAST(checkpoint AS BLOB))+length(CAST(criteria AS BLOB))+length(CAST(goal AS BLOB))+length(CAST(COALESCE(reply,\'\') AS BLOB))),0) FROM tasks').fetchone()[0]
         used += conn.execute('SELECT COALESCE(SUM(length(CAST(input AS BLOB))+length(CAST(dependencies AS BLOB))+length(CAST(COALESCE(result,\'\') AS BLOB))),0) FROM task_steps').fetchone()[0]
+        used += conn.execute('SELECT COALESCE(SUM(length(CAST(repository AS BLOB))+length(CAST(storage AS BLOB))),0) FROM task_workspaces').fetchone()[0]
         if used+extra > positive_limit('AGENT_TASK_STORAGE_BYTES',256*1024*1024):
             raise CapacityError('Task storage capacity reached')
 
@@ -71,6 +75,22 @@ class TaskStore:
     def list(self, owner):
         with closing(self.connect()) as conn:
             return [dict(row) for row in conn.execute('SELECT id,goal,state,phase,episode,attempts,updated,verification FROM tasks WHERE owner=? ORDER BY updated DESC LIMIT 20', (owner,))]
+
+    def workspace_binding(self,owner,key):
+        self.get(owner,key)
+        with closing(self.connect()) as conn:
+            row=conn.execute('SELECT repository,storage FROM task_workspaces WHERE owner=? AND task_id=?',(owner,key)).fetchone()
+        return dict(row) if row else None
+
+    def bind_workspace(self,owner,key,token,repository,storage):
+        with closing(self.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row=conn.execute('SELECT state,lease_owner FROM tasks WHERE owner=? AND id=?',(owner,key)).fetchone()
+            if row is None or row['state']!='running' or row['lease_owner']!=token:raise TaskBusy('Lost task lease')
+            if conn.execute('SELECT 1 FROM task_workspaces WHERE owner=? AND task_id=?',(owner,key)).fetchone() is None:
+                self.capacity(conn,len(str(repository).encode())+len(str(storage).encode()))
+            conn.execute('INSERT OR IGNORE INTO task_workspaces VALUES(?,?,?,?)',(owner,key,str(repository),str(storage)))
+        return self.workspace_binding(owner,key)
 
     def claim(self, owner, key, goal, messages, episode=None, criteria=None):
         if not key or len(key)>256:
@@ -264,7 +284,8 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
                 lost.set()
         return lost.is_set()
     try:
-        with execution_scope(check_cancelled=cancelled):
+        from .worktrees import task_workspace
+        with execution_scope(check_cancelled=cancelled), task_workspace(owner,key):
             is_skill=skill or bool(saved and saved.get('kind')=='skill')
             if saved and saved.get('kind')=='skill' and saved.get('phase')=='skill_done':
                 result = saved['skill_result']
@@ -328,6 +349,12 @@ def dispatch_task_input(text, runtime):
         return AgentTurnResult('Session cleared; suspended tasks will not be resumed.',None)
     if command == '/tasks':
         return AgentTurnResult(json.dumps(store.list(owner),ensure_ascii=False),None)
+    if command == '/worktree':
+        from .worktrees import human_worktree_command
+        try:
+            return AgentTurnResult(human_worktree_command(text,store,owner,context),None)
+        except (KeyError,ValueError,PermissionError,RuntimeError) as error:
+            return AgentTurnResult(f'Error: {error}',None)
     if command == '/budget':
         from .budgets import TaskBudget
         try:
