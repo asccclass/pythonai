@@ -28,7 +28,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Companion WebSocket | hello token 驗證、seq／ack、SQLite 重啟補送、ping、chat interrupt、裝置事件及主動訊息路由 | 真實 AgentRuntime／模型 delta、工具、驗收、批准事件及模型／程序取消；owner-targeted Telegram adapter fallback；provider／實際送達驗收待辦，audio.end 尚未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
 | Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG、API Bearer 登入 | 已實作共用政策；遠端缺角色配置預設 viewer，管理 API 寫入限 admin；Laya 不可用仍可繼續 | `laya_guard.py`, `permissions.py`, `agent_execution/api.py` |
-| Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
+| Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；六項內建政策、可配置啟停／排序／fail-closed、啟動診斷、阻擋／提前回覆／回饋與身份稽核 | 已實作；模型、直接工具、Skill／排程共用政策；核心權限／路徑／批准不受停用 Hook 影響 | `hooks.py`, `agent_execution/hook_policies.py`, `server.py` |
 | 任務驗收與自修正 | 凍結驗收契約、結構化工具結果、檔案／語法、JUnit／process、Judge 與 Critic | 明確條件及證據才能 verified_completed；Judge 無效／失效拒絕、不可修正失敗直接交人工；直接 Skill 亦驗收 | `task_evaluator.py`, `agent_execution/acceptance.py`, `agent_execution/results.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
 | 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 繼承角色／身份及父取消、共享根預算、独立 checkpoint；仍共享 workspace／工具，worktree、DAG、durable coordinator 及結果合併待增修 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
@@ -485,3 +485,11 @@ TaskEvaluator 必須通過起始 checks、沒有失敗工具步驟，以及配�
 沒有明確 checks 的一般回覆可 completed，但不會因成功文字自動 verified_completed；程式任務缺測試仍需補齊。直接 Skill 接入驗收／事件，skill_executed 保存原結果後才驗收，crash 後不重做整段。state 與 verification 分開保存，unverified 回覆不自動沉澱成已驗證的 procedural memory。通過標記只涵蓋已配置的檢查，測試品質及外部 provider／平台行為仍須另行評測。
 
 完整 Docker／Chromium 驗證：461 passed、1 skipped（外部 provider）、7 subtests passed；後續通訊工廠接入 TaskEvaluator，工廠／結果／project 隔離相關 43 passed。包含真實 pytest 成功／失败／空收集／只打印成功、Skill 非零停止副作用、真正退出後只續驗收、原始 goal、無效 Judge 與成功文字不能覆蓋失敗。
+
+## 可配置 Hook 政策（T11）
+
+`default_hook_manager()` 預設啟用六項 fail-closed 政策：模型請求驗證、模型預算、模型工具回覆驗證、工具參數驗證、工具准入及結果稽核。CLI／通訊服務啟動列出全部政策、優先序及啟停狀態。`AGENT_HOOK_POLICIES` 接受 JSON object；範例見 `agent_execution/examples/hook_policies.json`。各政策可設 `enabled`、`priority`、`fail_closed`，未知名称／欄位或不合法型別拒絕啟動。
+
+模型、直接工具、Skill 子步驟與排程共用 Hook Pipeline，委派不重複執行同一工具；巢狀實際工具各自稽核。停用 Hook 不停用核心角色、workspace、批准與預算限制。參數驗證涵蓋 native signature、基本型別、enum、array items；完整外部 MCP schema 待 T18。PreModel Hook 的 model／tools 修改會傳入實際請求。
+
+稽核含 source、identity、session、project、task_id、role。有 memory episode 時保存 `hook_execution`，無記憶時保留在 HookContext。自訂 Hook 是可信 Python；tool_done 重啟恢復不重播自訂 post-tool Hook，其外部副作用需自行設計恢復。相關完整 Docker／Chromium 驗證：473 passed、1 skipped（外部 provider）、7 subtests passed。

@@ -255,6 +255,8 @@ class ServerTests(unittest.TestCase):
             events = store.recent_events(limit=10)
 
         self.assertEqual(result, "done")
+        self.assertTrue(any(event['event_type']=='hook_execution' for event in events))
+        events=[event for event in events if event['event_type'] in {'tool_result','tool_call'}]
         self.assertEqual([event["event_type"] for event in events], ["tool_result", "tool_call"])
         self.assertEqual(events[1]["metadata"]["name"], "list_files")
         self.assertEqual(events[0]["metadata"]["tool_call_id"], "tool-1")
@@ -264,7 +266,7 @@ class ServerTests(unittest.TestCase):
     def test_run_agent_records_matching_procedure_result(self):
         class Function:
             name = "run_command"
-            arguments = '{"command": "python -m unittest"}'
+            arguments = '{"command": ["python", "-m", "unittest"]}'
 
         class ToolCall:
             id = "tool-1"
@@ -307,7 +309,7 @@ class ServerTests(unittest.TestCase):
             procedure_id = store.add_procedure(
                 "run_command",
                 "run_command",
-                ['run_command {"command": "python -m unittest"}'],
+                ['run_command {"command": ["python", "-m", "unittest"]}'],
                 source_episode_id=episode_id,
                 success_count=1,
             )

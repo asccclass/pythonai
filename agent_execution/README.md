@@ -71,3 +71,21 @@ without a report retain their execution status but are not proof of passing test
 Skill execution and verification are separate checkpoints, preventing effect replay
 when the process fails after execution. Judge errors fail closed and do not trigger
 automatic repair of code when the actual issue is unavailable verification.
+
+## Configurable hook policies (T11)
+
+hook_policies.py registers six enabled, fail-closed policies by default: model
+request validation/budget, model response validation, tool argument validation,
+tool admission and structured result audit. Set AGENT_HOOK_POLICIES to a JSON
+object like examples/hook_policies.json; each policy accepts enabled, priority
+and fail_closed. Unknown names/options or invalid types reject startup. CLI and
+communication startup print every policy's state, including zero active policies.
+Direct tools, nested Skill actions and scheduler calls use the same pipeline;
+delegation avoids executing or auditing a single call twice. Mandatory authority,
+workspace, approval and budget checks remain enforced when policies are disabled.
+Argument checks cover native signatures, primitive types, enums and array items;
+full external MCP schema validation is deferred to T18. Audit events include
+source, identity, session, project, task ID and role. With a memory episode they
+are persisted there; without one they are available in HookContext.audit_metadata.
+Custom hook code is trusted Python. Existing tool_done recovery does not replay
+custom post-tool hooks; hooks with external effects need their own recovery design.

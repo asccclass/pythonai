@@ -210,9 +210,11 @@ class SkillTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(
-            [event["event_type"] for event in events],
+            [event["event_type"] for event in events if event['event_type']!='hook_execution'],
             ["skill_selected", "skill_step", "skill_step_result", "skill_result"],
         )
+        self.assertEqual([event['metadata']['hook'] for event in events if event['event_type']=='hook_execution'],
+            ['argument_validation','tool_admission','result_audit'])
 
     def test_executor_logs_completed_process_outputs(self):
         with tempfile.TemporaryDirectory() as temp_dir:

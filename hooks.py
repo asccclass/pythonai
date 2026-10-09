@@ -121,7 +121,8 @@ class FunctionHook:
         return True
 
     def run(self, context: HookContext) -> HookResult:
-        return self.func(context) or HookResult.continue_()
+        result=self.func(context)
+        return HookResult.continue_() if result is None else result
 
 
 class HookManager:
@@ -131,6 +132,8 @@ class HookManager:
             self.register(hook)
 
     def register(self, hook: Hook) -> None:
+        if any(item.name==hook.name and item.lifecycle==hook.lifecycle for item in self._hooks):
+            raise ValueError('Duplicate hook name and lifecycle')
         self._hooks.append(hook)
         self._hooks.sort(key=lambda item: (item.priority, item.name))
 
@@ -138,12 +141,14 @@ class HookManager:
         lifecycle = HookLifecycle(lifecycle)
         context.lifecycle = lifecycle
         for hook in list(self._hooks):
-            if not getattr(hook, "enabled", True) or hook.lifecycle != lifecycle or not hook.applies(context):
+            if not getattr(hook, "enabled", True) or hook.lifecycle != lifecycle:
                 continue
             started = time.perf_counter()
             result: HookResult
             try:
+                if not hook.applies(context):continue
                 result = hook.run(context)
+                if not isinstance(result,HookResult):raise TypeError('Hook must return HookResult')
             except Exception as error:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 self._record_audit(
@@ -164,6 +169,11 @@ class HookManager:
                 return result
         return HookResult.continue_()
 
+    def diagnostics(self):
+        return {'active':sum(bool(h.enabled) for h in self._hooks),'hooks':[
+            {'name':h.name,'lifecycle':h.lifecycle.value,'priority':h.priority,
+                'enabled':h.enabled,'fail_closed':h.fail_closed} for h in self._hooks]}
+
     def _record_audit(
         self,
         context: HookContext,
@@ -181,6 +191,11 @@ class HookManager:
             "blocked_reason": result.message if result.decision in {HookDecision.BLOCK, HookDecision.RETURN_TOOL_ERROR} else "",
             "metadata": result.metadata,
         }
+        from agent_execution.policy import current_context
+        from permissions import current_role
+        scope=current_context()
+        audit.update(source=scope.source,identity=scope.identity,session=scope.session,
+            project=scope.project,task_id=scope.task_id,role=current_role())
         if error is not None:
             audit["error"] = error
         context.audit_metadata.setdefault("hook_events", []).append(audit)
@@ -194,5 +209,6 @@ class HookManager:
             pass
 
 
-def default_hook_manager() -> HookManager:
-    return HookManager()
+def default_hook_manager(diagnose=False) -> HookManager:
+    from agent_execution.hook_policies import configured_manager
+    return configured_manager(diagnose)

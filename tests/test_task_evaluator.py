@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+from openai.types.chat import ChatCompletionMessage
 
 from agent_runtime import AgentRuntime, AgentTurnResult, determine_episode_status, run_agent_turn
 from memory import MemoryStore
@@ -212,8 +213,8 @@ class TaskEvaluatorTests(unittest.TestCase):
 
         # Mock LLM completions: turn 1 returns initial answer, turn 2 returns corrected answer
         responses = [
-            MagicMock(choices=[MagicMock(message=MagicMock(tool_calls=None, content="Initial attempt"))]),
-            MagicMock(choices=[MagicMock(message=MagicMock(tool_calls=None, content="Fixed attempt"))]),
+            MagicMock(choices=[MagicMock(message=ChatCompletionMessage(role="assistant", content="Initial attempt"))]),
+            MagicMock(choices=[MagicMock(message=ChatCompletionMessage(role="assistant", content="Fixed attempt"))]),
         ]
 
         mock_client = MagicMock()
@@ -244,7 +245,7 @@ class TaskEvaluatorTests(unittest.TestCase):
             success=False, score=0.2, feedback="持續發生 SyntaxError 無法修復"
         )
 
-        mock_response = MagicMock(choices=[MagicMock(message=MagicMock(tool_calls=None, content="Still broken"))])
+        mock_response = MagicMock(choices=[MagicMock(message=ChatCompletionMessage(role="assistant", content="Still broken"))])
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = mock_response
 

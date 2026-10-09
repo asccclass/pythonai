@@ -17,7 +17,7 @@ from agent_execution.budgets import budget_client, active_budget, BudgetExhauste
 
 from agent_runtime import AgentRuntime, format_guard_notice, run_agent_turn, should_skip_laya_for_user_request
 from base import TOOLS_SCHEMAS, load_dotenv, run_skill, run_tool_with_context
-from hooks import HookContext, HookDecision, HookLifecycle, HookManager
+from hooks import HookContext, HookDecision, HookLifecycle, HookManager, default_hook_manager
 from laya_guard import GuardDecision, LayaGuard
 from memory_classifier import LayaMemoryClassifier, MemoryCandidateDecision
 from procedure_similarity import LLMProcedureSimilarityMatcher, LexicalProcedureSimilarityMatcher, ProcedureCandidate
@@ -186,6 +186,7 @@ def run_agent(
     from agent_execution.tasks import save_checkpoint
     from agent_execution.results import normalize_result
     from openai.types.chat import ChatCompletionMessage
+    if hook_manager is None:hook_manager=default_hook_manager()
     resume_state = resume_state or {}
     tool_results = dict(resume_state.get('tool_results',{}))
     iteration = resume_state.get('iteration', 0)
@@ -217,17 +218,20 @@ def run_agent(
             assistant_message = ChatCompletionMessage(**next(m for m in reversed(messages) if m.get('role')=='assistant'))
         if assistant_message is None:
             iteration += 1
+            request={'model':OLLAMA_MODEL,'tools':TOOLS_SCHEMAS}
             if hook_manager is not None:
                 hook_context = HookContext(
                     lifecycle=HookLifecycle.PRE_MODEL_CALL,
                     messages=messages,
-                    model_request={"model": OLLAMA_MODEL, "tools": TOOLS_SCHEMAS},
+                    model_request=request,
                     memory=memory,
                     episode_id=episode_id,
                     metadata={"iteration": iteration},
                 )
                 hook_result = hook_manager.dispatch(HookLifecycle.PRE_MODEL_CALL, hook_context)
+                request=hook_context.model_request
                 if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                    if hook_result.decision==HookDecision.BLOCK:return 'Error: '+hook_result.message
                     return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
             checkpoint('model_pending')
             attempts = 0
@@ -235,11 +239,11 @@ def run_agent(
                 try:
                     if event_callback is not None:
                         from agent_execution.streaming import streamed_completion
-                        event_callback("model.start", {"iteration": iteration, "model": OLLAMA_MODEL})
-                        assistant_message = streamed_completion(budget_client(get_client()), OLLAMA_MODEL, messages,
-                                                                TOOLS_SCHEMAS, event_callback, check_cancelled)
+                        event_callback("model.start", {"iteration": iteration, "model": request['model']})
+                        assistant_message = streamed_completion(budget_client(get_client()), request['model'], messages,
+                                                                request['tools'], event_callback, check_cancelled)
                     else:
-                        response = budget_client(get_client()).chat.completions.create(model=OLLAMA_MODEL, messages=messages, tools=TOOLS_SCHEMAS)
+                        response = budget_client(get_client()).chat.completions.create(model=request['model'], messages=messages, tools=request['tools'])
                         assistant_message = response.choices[0].message
                     break
                 except BudgetExhausted as error:
@@ -291,6 +295,7 @@ def run_agent(
                 )
                 hook_result = hook_manager.dispatch(HookLifecycle.POST_MODEL_CALL, hook_context)
                 if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                    if hook_result.decision==HookDecision.BLOCK:return 'Error: '+hook_result.message
                     return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
                 if hook_result.decision == HookDecision.APPEND_FEEDBACK:
                     messages.append({"role": "user", "content": hook_result.feedback})
@@ -334,6 +339,9 @@ def run_agent(
                         result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} blocked by hook"
                         tool_results[tool_call.id]=normalize_result('Error: '+str(result),tool_name).to_dict()
                         messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
+                        resolved_calls.add(tool_call.id)
+                        checkpoint('tool_done',step={'id':tool_call.id,'name':tool_name,'arguments':tool_args,
+                            'state':'failed','result':json.dumps(tool_results[tool_call.id],ensure_ascii=False)})
                         log_episode_event(
                             memory,
                             episode_id,
@@ -352,17 +360,32 @@ def run_agent(
                 if event_callback:
                     event_callback("tool.start", {"tool_call_id": tool_call.id, "name": tool_name, "arguments": tool_args})
                 if tool_name == 'ask_user':
-                    question = run_tool_with_context(tool_call,memory=memory,episode_id=episode_id)
+                    with execution_scope(tool_hook_managed=tool_name):
+                        question = run_tool_with_context(tool_call,memory=memory,episode_id=episode_id)
+                    context=HookContext(HookLifecycle.POST_TOOL_EXECUTE,messages=messages,tool_call=tool_call,
+                        tool_name=tool_name,tool_arguments=tool_args,tool_result=question,memory=memory,episode_id=episode_id,
+                        metadata={'iteration':iteration})
+                    result_hook=hook_manager.dispatch(HookLifecycle.POST_TOOL_EXECUTE,context)
+                    question=context.tool_result
+                    if result_hook.decision in {HookDecision.BLOCK,HookDecision.RETURN_TOOL_ERROR}:
+                        question='Error: '+(result_hook.tool_error or result_hook.message)
+                    elif result_hook.decision==HookDecision.RETURN_EARLY:
+                        return str(result_hook.return_value if result_hook.return_value is not None else result_hook.message)
+                    elif result_hook.decision==HookDecision.APPEND_FEEDBACK:
+                        messages.append({'role':'user','content':result_hook.feedback})
+                    tool_results[tool_call.id]=normalize_result(question,tool_name).to_dict()
                     if str(question).startswith('Error:'):
                         messages.append({'role':'tool','tool_call_id':tool_call.id,'content':str(question)})
-                        checkpoint('tool_done')
+                        resolved_calls.add(tool_call.id)
+                        checkpoint('tool_done',step={'id':tool_call.id,'name':tool_name,'arguments':tool_args,
+                            'state':'failed','result':json.dumps(tool_results[tool_call.id],ensure_ascii=False)})
                     elif suspend_request is None:
                         suspend_request = (tool_call.id,question)
                     continue
                 step = {'id':tool_call.id,'name':tool_name,'arguments':tool_args,
                         'dependencies':sorted(resolved_calls),'state':'running'}
                 checkpoint('tool_started',step=step)
-                with execution_scope(check_cancelled=check_cancelled):
+                with execution_scope(check_cancelled=check_cancelled,tool_hook_managed=tool_name):
                     result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
                 raw_result=normalize_result(result,tool_name)
                 result=raw_result
@@ -600,6 +623,7 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
 
 
 def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
+    hook_manager=default_hook_manager(diagnose=True)
     messages = [{"role": "system", "content": build_system_prompt()}]
     guard = LayaGuard()
     memory_classifier_factory = LayaMemoryClassifier
@@ -643,6 +667,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         run_skill=run_skill,
         async_memory_review=async_memory_review,
         task_evaluator=task_evaluator,
+        hook_manager=hook_manager,
     )
     print("Mini agent ready. Type 'exit' to quit.")
     import uuid

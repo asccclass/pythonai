@@ -1,0 +1,8 @@
+{
+  "request_validation": {"enabled": true, "priority": 10, "fail_closed": true},
+  "model_budget": {"enabled": true, "priority": 20, "fail_closed": true},
+  "response_validation": {"enabled": true, "priority": 10, "fail_closed": true},
+  "argument_validation": {"enabled": true, "priority": 10, "fail_closed": true},
+  "tool_admission": {"enabled": true, "priority": 20, "fail_closed": true},
+  "result_audit": {"enabled": true, "priority": 10, "fail_closed": true}
+}

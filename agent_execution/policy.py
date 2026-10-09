@@ -28,10 +28,12 @@ class ExecutionContext:
     episode_id: int | None = None
     trusted_assets: tuple[Path, ...] = ()
     check_cancelled: Callable[[], bool] | None = None
+    tool_hook_managed: str | None = None
 
 
 _context: ContextVar[ExecutionContext] = ContextVar("execution_context", default=ExecutionContext())
 _approved: ContextVar[tuple | None] = ContextVar("approved_action", default=None)
+_delegated_wrapper=ContextVar('delegated_policy_wrapper',default=None)
 PATH_KEYS = {"path", "file_path", "image_path", "project_path", "project_name", "cwd",
              "env_file", "test_target", "directory", "directory_path", "output_path"}
 
@@ -97,18 +99,30 @@ def _audit_denial(name: str, reason: str) -> None:
                                  metadata=metadata)
 
 
-def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any]) -> Any:
+def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any], *, _skip_hooks=False) -> Any:
     from .approvals import ApprovalStore, ApprovalRequired, canonical
     from .budgets import active_budget, BudgetExhausted
     budget=active_budget()
-    if budget is not None:
-        budget.check()
-        if current_context().check_cancelled and current_context().check_cancelled():
-            raise BudgetExhausted('Task cancelled before tool execution')
     values = dict(arguments)
     approval_id = values.pop("approval_id", None)
     authorization = None
+    managed=_skip_hooks or current_context().tool_hook_managed==name
+    manager=None
+    hook_context=None
     try:
+        if not managed:
+            from hooks import default_hook_manager,HookDecision,HookLifecycle
+            from .hook_policies import tool_context
+            manager=default_hook_manager()
+            hook_context=tool_context(name,arguments,function)
+            decision=manager.dispatch(HookLifecycle.PRE_TOOL_EXECUTE,hook_context)
+            if decision.decision!=HookDecision.CONTINUE:
+                if decision.metadata.get('error_type')=='BudgetExhausted':raise BudgetExhausted(decision.message)
+                raise PolicyDenied(decision.tool_error or decision.message or 'Tool blocked by hook')
+        if budget is not None:
+            budget.check()
+            if current_context().check_cancelled and current_context().check_cancelled():
+                raise BudgetExhausted('Task cancelled before tool execution')
         if not check_tool_permission(name):
             raise PolicyDenied(f"Role '{current_role()}' cannot execute {name}")
         assets = _context.get().trusted_assets if name == "run_command" else ()
@@ -129,9 +143,26 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
             raise
         raise PolicyDenied(str(error)) from error
     token = _approved.set(authorization)
+    delegate=_delegated_wrapper.set(function if getattr(function,'_policy_tool_name',None)==name else None)
     try:
-        return function(**values)
+        with execution_scope(tool_hook_managed=None):
+            try:
+                result=function(**values)
+            except Exception as error:
+                if manager is not None:
+                    from .results import ToolResult
+                    hook_context.tool_result=ToolResult(False,error=f'{type(error).__name__}: {error}')
+                    manager.dispatch(HookLifecycle.POST_TOOL_EXECUTE,hook_context)
+                raise
+        if manager is not None:
+            from hooks import HookDecision,HookLifecycle
+            hook_context.tool_result=result
+            decision=manager.dispatch(HookLifecycle.POST_TOOL_EXECUTE,hook_context)
+            if decision.decision!=HookDecision.CONTINUE:
+                raise PolicyDenied(decision.tool_error or decision.message or 'Tool result rejected by hook')
+        return result
     finally:
+        _delegated_wrapper.reset(delegate)
         _approved.reset(token)
 
 
@@ -154,7 +185,14 @@ def policy_tool(name: str):
                     arguments.update(arguments.pop(parameter.name, {}))
             if approval_id:
                 arguments["approval_id"] = approval_id
-            return execute_tool(name, arguments, lambda **_values: function(*args, **kwargs))
+            delegated=_delegated_wrapper.get() is wrapped
+            cleared=_delegated_wrapper.set(None)
+            try:
+                def invoke(**_values):return function(*args,**kwargs)
+                invoke.__signature__=signature
+                return execute_tool(name, arguments, invoke,_skip_hooks=delegated)
+            finally:
+                _delegated_wrapper.reset(cleared)
 
         wrapped._policy_tool_name = name
         return wrapped

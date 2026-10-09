@@ -90,15 +90,19 @@
   - 現況：工具混用字串／dict／CompletedProcess；驗收會解析文字測試輸出，部分 Skill 回傳非零 returncode 未必成為步驟失敗。
   - 工作：統一 success、exit_code、error、artifacts、side_effects；任務起始明確驗收條件，避免只靠關鍵詞或 Judge；Skill 直跑路徑也接入驗收及稽核。
   - 驗收：工具回失敗、測試沒跑、只有成功文字、直接 Skill 失敗等情境不能標為 verified_completed；Critic 只針對可修正失敗重試。依賴 T01、T08。
-  - 實作（2026-10-10）：ToolResult 正規化、實際 exit code／JUnit 測試證據、Skill 失敗停止後續步驟；起始凍結的 versioned file／hash／tests 契約、goal／project evaluator 修正。Judge schema／網路錯誤拒絕，無證據預設 completed／unverified，TaskStore 另存 verification。Skill 執行與驗收分 checkpoint，skill_executed 復原只續驗收；真實退出程序驗證副作用一次。
+  - 實作（2026-10-10，commit `d5f2a0d`）：ToolResult 正規化、實際 exit code／JUnit 測試證據、Skill 失敗停止後續步驟；起始凍結的 versioned file／hash／tests 契約、goal／project evaluator 修正。Judge schema／網路錯誤拒絕，無證據預設 completed／unverified，TaskStore 另存 verification。Skill 執行與驗收分 checkpoint，skill_executed 復原只續驗收；真實退出程序驗證副作用一次。
   - 相關測試：103 passed、7 subtests passed；新增 crash 與 tool audit 補強 25 passed、4 subtests passed；補上 code 契約必須 tests、文件編輯分類、Judge 不重試及避免重跑同一測試後 31 passed、3 subtests passed。語法與 diff 檢查通過。
   - 完整驗證首次 451 passed、2 failed（tool JSON 顯示的舊測試期待值、T09 cancel EOF 競態）、1 skipped、7 subtests passed；兩者修正後，Docker／Chromium 完整重驗：461 passed、1 skipped（外部 provider）、7 subtests passed。其後補通訊 runtime 工廠的 TaskEvaluator，工廠／結果／project 隔離相關 43 passed。新增 15 項 results 測試與 1 項真實 Skill 程序退出測試；語法／diff 檢查通過。
   - 邊界：驗收依部署者配置的 checks，不能證明測試本身品質或未列出的外部行為；舊契約／資料不回溯標 verified。保留 legacy 工具显示 API，但字串不可當測試證據；side_effects 未知時不猜測。獨立 Reviewer、完整 artifacts 與品質 benchmark 分別由 T13／T14／T21 擴充。
 
-- [ ] **T11 — 將 Hook 框架接成可配置政策**
+- [x] **T11 — 將 Hook 框架接成可配置政策**
   - 現況：四個 lifecycle 與稽核已有測試，default_hook_manager 尚無內建 hook；Guard／權限／驗收不是全部經由共用 hook。
   - 工作：加入政策註冊配置與啟動診斷，將參數驗證、身份／預算、結果正規化接入適當事件；補 Skill／排程路徑，避免雙重執行。
   - 驗收：啟停、排序與 fail-closed 設定有效；無政策時明確顯示；每條執行路徑有一致稽核，阻擋不產生副作用。依賴 T01、T03、T10。
+  - 實作（2026-10-10）：六項內建政策及 AGENT_HOOK_POLICIES JSON 設定、啟動診斷；模型 request／response、native signature／基本 schema、角色／路徑／預算、結構化結果稽核。直接工具、Skill／排程與模型路由接共用事件，委派避免雙重執行；核心授權不因停用 Hook 而取消。
+  - 相關驗證：90 passed；checkpoint／結果補強 45 passed、4 subtests passed；型別／enum／array 驗證補強 98 passed、4 subtests passed；修正 SDK 訊息 mock 後相關 35 passed、3 subtests passed。完整重驗另記錄於下。
+  - 完整 Docker／Chromium 重驗：473 passed、1 skipped（外部 provider）、7 subtests passed。首次 470 passed／2 failed 的舊 SDK mock 與第二次 472 passed／1 failed 的舊 command 字串 fixture 均已修正成實際 SDK／工具格式；新增 12 項政策測試，語法／diff 檢查通過。
+  - 邊界：完整外部 MCP schema 仍由 T18 補；有 memory episode 的 Hook 事件持久化於該 episode，無記憶時保留 HookContext 稽核。custom hook 是可信 Python，既有 tool_done 恢復不重播自訂 post-tool hook，不承諾其外部副作用 exactly-once；完整 tracing 由 T21 補。
 
 ## P2：縮小與 Codex 的開發交付差距
 

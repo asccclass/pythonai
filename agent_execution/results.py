@@ -23,6 +23,12 @@ class ToolResult:
 
 def normalize_result(value, tool_name=''):
     if isinstance(value,ToolResult):return value
+    if isinstance(value,tuple) and tool_name=='schedule_job' and len(value)==3:
+        status,output,error=value
+        return ToolResult(status=='completed',str(output),error=str(error) if status!='completed' else '')
+    if isinstance(value,tuple) and tool_name=='maintenance.summary' and len(value)==2:
+        output,error=value
+        return ToolResult(not bool(error),str(output),error=str(error or ''))
     if isinstance(value,subprocess.CompletedProcess):
         stdout=str(value.stdout or '')
         stderr=str(value.stderr or '')
