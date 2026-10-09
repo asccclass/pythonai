@@ -243,10 +243,12 @@ class BudgetStream:
         self.stopped=threading.Event()
         self.lock=threading.Lock()
         self.closed=False
+        self.interrupted=threading.Event()
         self.deadline=time.monotonic()+min(60,budget.remaining_seconds())
         def monitor():
             while not self.stopped.wait(.05):
                 if time.monotonic()>=self.deadline or (cancelled and cancelled()):
+                    self.interrupted.set()
                     self.close()
                     return
         self.thread=threading.Thread(target=monitor,daemon=True)
@@ -260,7 +262,8 @@ class BudgetStream:
                     raise BudgetExhausted('Model stream deadline/cancellation reached')
                 self.budget.reconcile(self.key,getattr(chunk,'usage',None))
                 yield chunk
-            if time.monotonic()>=self.deadline:
+            self.budget.check()
+            if self.interrupted.is_set() or time.monotonic()>=self.deadline:
                 raise BudgetExhausted('Model stream wall deadline exhausted')
         finally:
             self.close()

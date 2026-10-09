@@ -180,6 +180,22 @@ class BudgetTests(unittest.TestCase):
             with closing(budget.connect()) as conn:
                 self.assertEqual(conn.execute('SELECT COUNT(*) FROM model_slots').fetchone()[0],0)
 
+    def test_cancelled_stream_eof_cannot_be_mistaken_for_normal_completion(self):
+        import threading
+        cancelled=threading.Event()
+        class Stream:
+            def __init__(self):self.stop=threading.Event()
+            def __iter__(self):
+                self.stop.wait(5)
+                return
+                yield
+            def close(self):self.stop.set()
+        stream=Stream()
+        with budget_scope(),execution_scope(check_cancelled=cancelled.is_set):
+            result=budget_client(self.client(stream)).chat.completions.create(model='m',messages=[],stream=True)
+            cancelled.set()
+            with self.assertRaises(BudgetExhausted):list(result)
+
     def test_sdk_hidden_retries_disabled_on_real_http_failure(self):
         import httpx
         from openai import OpenAI, APIStatusError
