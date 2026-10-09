@@ -1,6 +1,6 @@
 # PythonAI 功能差距與開發待辦
 
-盤點日期：2026-10-09。現有功能、實作來源與限制見 [README.md](../README.md)。本檔於本次新增；原有 `docs/todos.md` 與其他規劃文件保留。以下皆為**尚待完成的改善**，不將已有 Hooks、記憶、Skills、MCP、排程與驗收重新列成未實作。
+盤點日期：2026-10-09。現有功能、實作來源與限制見 [README.md](../README.md)。本檔於本次新增；原有 `docs/todos.md` 與其他規劃文件保留。以下記錄功能差距及逐項實作／驗收結果；勾選代表完成該項本機驗收，外部驗收未通過的項目仍保留未勾選。不將已有 Hooks、記憶、Skills、MCP、排程與驗收重新列成未實作。
 
 比較基準：Codex 的編碼、worktree、多代理、批准與排程工作流程；「Agentic Agent」為規劃、工具執行、驗收、持久狀態及自主續跑的通用架構，非特定產品。此分析不主張模型品質等同或優於 Codex，也不以文件宣稱代替外部端到端驗證。
 
@@ -61,15 +61,20 @@
   - 現況：`communication_store.py` 的附件 bytes 存於 _PENDING_ATTACHMENTS，WebSocket outbox／sessions 存於記憶體。
   - 工作：附件落地或物件儲存、雜湊／MIME／大小與存取檢查、TTL；可靠事件持久化、去重、容量限制、backpressure、過期補送政策。
   - 驗收：入列後重啟仍能處理圖檔及文件；斷線／重啟補送無重複副作用；未授權附件不可讀，過期資料可清理。依賴 T05。
-  - 完成（2026-10-09）：附件 bytes／雜湊／MIME／大小／期限 SQLite、原子 inbound/job/attachment ingest、owner 範圍讀取與過期拒絕；可靠事件持久化 seq／ACK／TTL floor、容量拒絕／backpressure、chat ID 去重與 crash 後 uncertain；平台 delivery intent／原子 claim／lease，未知送達不盲目重送。
+  - 完成（2026-10-09，commit `6f47254`）：附件 bytes／雜湊／MIME／大小／期限 SQLite、原子 inbound/job/attachment ingest、owner 範圍讀取與過期拒絕；可靠事件持久化 seq／ACK／TTL floor、容量拒絕／backpressure、chat ID 去重與 crash 後 uncertain；平台 delivery intent／原子 claim／lease，未知送達不盲目重送。
   - 完整驗證：`python -m pytest tests agent_execution/tests -q`（Docker／Chromium 開啟）414 passed、1 skipped（外部 provider opt-in）、3 subtests passed；語法及 diff 檢查通過。相關驗證：67 passed、1 skipped；新增 8 項持久化測試通過，包含新 Python 程序讀回圖檔及中文文件、竄改／越權／到期、容量不覆寫、重啟 ACK 與輸入不重複執行。
   - 邊界：平台回覆沒有 exactly-once 承諾；uncertain 需人工查詢，不會重跑 Agent。WS 對話 messages／執行 checkpoint 由 T08 處理。MIME magic 不是惡意文件掃描；服務 DB 仍受主機 OS 權限控制。過期 bytes 可清理，附件 metadata tombstone 達配置上限後須依管理保留政策整理。
 
 
-- [ ] **T08 — 持久化任務計畫、checkpoint 與重啟恢復**
+- [x] **T08 — 持久化任務計畫、checkpoint 與重啟恢復**
   - 現況：ReAct 規劃靠提示與 15 次迭代上限；通訊已有 ask_user 暫停／恢復，未涵蓋任意執行點，且 ask_user 未列入預設工具 schema。
   - 工作：註冊 ask_user schema 並驗證真實暫停／續跑入口；保存 task／plan／steps、依賴、輸入與驗收、執行狀態及 checkpoint；重啟恢復 pending／running；不可重放操作使用 idempotency key 或轉人工確認。
   - 驗收：工具前／後、驗收前／後中斷程序仍可安全續跑；外部寫入不重複；失敗步驟可有限重試或重規劃；保留 episode 關聯。依賴 T01、T05。
+  - 完成（2026-10-09）：TaskStore goal／criteria／step 輸入、結果、依賴、episode 與 checkpoint；原子 lease／heartbeat／fencing、3 次 crash 恢復、模型／工具前後／驗收前後、直接 Skill 結果；CLI／通訊／WS 接入，ask_user schema／持久問答與人類 tasks／steps／resume／cancel／resolve。
+  - 相關驗證：54 passed、1 skipped（外部 provider）、4 subtests passed；使用真正退出的子程序，在 model_received、tool_done、evaluation_pending／done 中斷後仍僅一次寫入。tool_started 中斷會轉 uncertain，不猜測外部副作用；WS runtime 重建後問答成功，episode／tool pairing 保留。
+  - 完整測試首次 421 passed、1 failed（Docker rm 清理的 5 秒 timeout）、1 skipped、7 subtests passed；修復為 20 秒有界 runner 並忽略任務取消，單獨實際 Docker／程序測試 19 passed，修復 commit `dc68d4c`。完整測試重跑（Docker／Chromium 開啟）427 passed、1 skipped（外部 provider）、7 subtests passed；其後 /clear 持久暫停取消補強相關測試 55 passed、1 skipped、4 subtests passed。語法／diff 檢查通過。
+  - 邊界：plan 是現有 ReAct 實際產生的循序步驟與依賴，跨代理 DAG 由 T13 處理；task completed 不等同 verified_completed，T10 補明確條件。Skill 中途副作用須人工查核／取消，不自動重播。舊版無 task checkpoint 的 running job 保留人工處理，安全恢復須等待 180 秒 lease 過期。
+
 
 - [ ] **T09 — 任務總預算、模型路由與上下文治理**
   - 現況：`request_budget.py` 主要限制記憶請求；工作記憶為摘要，所有開發任務主要使用 OLLAMA_MODEL。

@@ -279,6 +279,14 @@ class CommunicationStore:
             ).fetchall()
         return [_command_from_row(row) for row in rows]
 
+    def recoverable_commands(self):
+        with closing(self.connect()) as connection:
+            return [_command_from_row(row) for row in connection.execute("SELECT * FROM agent_command_jobs WHERE status IN ('running','recovery_required') ORDER BY id LIMIT 100")]
+
+    def set_recovery_state(self, command_id, state):
+        with closing(self.connect()) as connection, connection:
+            connection.execute("UPDATE agent_command_jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE command_id=? AND status IN ('running','recovery_required')", (state,command_id))
+
     def command_by_id(self, command_id: str, include_attachments=False) -> AgentCommand:
         with closing(self.connect()) as connection:
             row = connection.execute(

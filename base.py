@@ -341,7 +341,14 @@ def parse_env_lines(lines) -> dict[str, str]:
     return values
 
 
+def ask_user(question: str) -> str:
+    if not isinstance(question, str) or not question.strip() or len(question) > 2000:
+        raise ValueError('ask_user question must contain 1..2000 characters')
+    return question
+
+
 TOOLS = {
+    'ask_user': ask_user,
     "read_file": read_file,
     "list_files": list_files,
     "write_file": write_file,
@@ -383,6 +390,9 @@ def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None)
 
 
 TOOLS_SCHEMAS = [
+    {'type':'function','function':{'name':'ask_user',
+        'description':'Pause the task and ask a human for missing information. Never invent the human answer.',
+        'parameters':{'type':'object','properties':{'question':{'type':'string'}},'required':['question'],'additionalProperties':False}}},
     {
         "type": "function",
         "function": {

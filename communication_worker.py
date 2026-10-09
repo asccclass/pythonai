@@ -35,15 +35,28 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
             session_runtime.check_cancelled = cancelled
             with auto_approve_command_runs(), set_current_role(role), execution_scope(
                 source="communication", identity=key(command)[0], session=key(command)[1],
-                project=command.project, workspace=project_workspace(command.project), check_cancelled=cancelled):
+                project=command.project, task_id=command.command_id, workspace=project_workspace(command.project), check_cancelled=cancelled):
                 if resumed_messages is not None:
                     return resume_agent_turn(resumed_messages, session_runtime)
+                from agent_execution.tasks import dispatch_task_input
+                controlled = dispatch_task_input(command.text,session_runtime)
+                if controlled is not None:
+                    return controlled
+                from agent_execution.tasks import TaskStore, task_owner
+                from agent_execution.policy import current_context
+                try:
+                    previous = TaskStore().get(task_owner(current_context()),command.command_id)
+                except KeyError:
+                    previous = None
+                if previous and previous['state'] not in {'suspended','uncertain'}:
+                    return resume_agent_turn(previous['checkpoint']['messages'],session_runtime,previous['episode'])
                 return run_agent_turn(command.text, session_runtime, attachments=command.attachments)
         finally:
             session_runtime.check_cancelled = None
             lock.release()
 
     run.clear_session = lambda command: sessions.clear(key(command))
+    run.task_store_enabled = True
     return run
 
 
@@ -81,6 +94,7 @@ class CommunicationWorker:
                 print(f"Delivery requires verification: id={row['id']} error={type(error).__name__}")
 
     def process_next(self) -> AgentCommand | None:
+        self.recover_tasks()
         pending = self.store.pending_commands(limit=1)
         if not pending:
             return None
@@ -110,6 +124,10 @@ class CommunicationWorker:
             return self.store.command_by_id(command.command_id)
 
         if text == "/clear" or text == "/reset":
+            if getattr(self.command_runner,'task_store_enabled',False):
+                from agent_execution.tasks import TaskStore, task_owner
+                from agent_execution.policy import ExecutionContext
+                TaskStore().cancel_session(task_owner(ExecutionContext(source='communication',identity=identity,session=f'{command.platform}:{command.conversation_id}',project=command.project)))
             self.store.cancel_session(command)
             if hasattr(self.command_runner, "clear_session"):
                 self.command_runner.clear_session(command)
@@ -214,6 +232,40 @@ class CommunicationWorker:
         thread.start()
         
         return self.store.command_by_id(command.command_id)
+
+    def recover_tasks(self):
+        if not getattr(self.command_runner,'task_store_enabled',False):
+            return
+        from agent_execution.policy import ExecutionContext
+        from agent_execution.tasks import TaskStore, task_owner
+        import json
+        import time
+        tasks = TaskStore()
+        for command in self.store.recoverable_commands():
+            owner = task_owner(ExecutionContext(source='communication',identity=f'{command.platform}:{command.sender_id}',session=f'{command.platform}:{command.conversation_id}',project=command.project))
+            try:
+                row = tasks.get(owner,command.command_id)
+            except KeyError:
+                continue
+            if row['lease_until'] and row['lease_until'] > time.time():
+                continue
+            if row['state'] in {'completed','failed','cancelled'}:
+                reply = row['reply'] or 'Task ended without a reply'
+                if row['state']=='failed':
+                    self.store.fail_command(command.command_id,reply)
+                else:
+                    if row['state']=='cancelled':
+                        self.store.cancel_command(command.command_id)
+                    self.store.complete_command(command.command_id,reply)
+                self._send_reply(command,reply)
+            elif row['phase'] in {'tool_started','skill_started'} or row['state']=='uncertain':
+                tasks.mark_uncertain(owner,command.command_id)
+                self.store.set_recovery_state(command.command_id,'recovery_required')
+            elif row['state']=='suspended':
+                self.store.suspend_command(command.command_id,json.dumps({'messages':row['checkpoint']['messages'],'episode_id':row['episode']}),row['checkpoint']['suspended_tool_call_id'])
+                self._send_reply(command,row['reply'] or 'Human input is required')
+            else:
+                self.store.set_recovery_state(command.command_id,'pending')
 
     def drain(self, timeout: float = 2.0) -> None:
         end_time = None

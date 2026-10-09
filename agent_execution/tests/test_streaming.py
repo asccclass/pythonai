@@ -45,7 +45,7 @@ class StreamingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         env = patch.dict(os.environ, {"AGENT_WORKSPACE_ROOT": str(self.root), "AGENT_PROJECT_WORKSPACES": "{}",
-            "COMPANION_WS_TOKENS": "token:alice", "ROLES_CONFIG": "", "AGENT_TENANT_ROOT": str(self.root / "tenants")})
+            "COMPANION_WS_TOKENS": "token:alice", "ROLES_CONFIG": "", "AGENT_TENANT_ROOT": str(self.root / "tenants"), 'AGENT_TASK_DB':str(self.root/'tasks.db')})
         env.start()
         self.addCleanup(env.stop)
         app.state.agent_runtime = runtime()
@@ -197,6 +197,30 @@ class StreamingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 asyncio.run(send_via_telegram("private", user_id="bob"))
             adapter.return_value.send_message.assert_called_once()
+
+    def test_suspended_websocket_task_resumes_after_runtime_restart(self):
+        streams = [Stream([chunk(calls=[NS(index=0,id='ask1',function=NS(name='ask_user',arguments='{"question":"which file?"}'))]),chunk(finish='tool_calls')]),
+                   Stream([chunk('received note.txt'),chunk(finish='stop')])]
+        client=NS(chat=NS(completions=NS(create=Mock(side_effect=lambda **kwargs:streams.pop(0)))))
+        with patch('server.get_client',return_value=client):
+            with TestClient(app).websocket_connect('/ws/v1') as ws:
+                ws.send_json({'type':'hello','payload':{'token':'token','device_id':'device'}});ws.receive_json()
+                ws.send_json({'type':'chat.send','id':'first','payload':{'text':'ask for a filename'}})
+                while True:
+                    event=ws.receive_json()
+                    if event['type']=='chat.end':break
+                self.assertTrue(event['payload']['suspended'])
+                last_seq=event['seq']
+            hub.sessions.clear()
+            with TestClient(app).websocket_connect('/ws/v1') as ws:
+                ws.send_json({'type':'hello','payload':{'token':'token','device_id':'device','last_seq':last_seq}});ws.receive_json()
+                ws.send_json({'type':'chat.send','id':'answer','payload':{'text':'note.txt'}})
+                while True:
+                    event=ws.receive_json()
+                    if event['type']=='chat.end':break
+                self.assertEqual(event['payload']['text'],'received note.txt')
+        self.assertEqual(client.chat.completions.create.call_count,2)
+        self.assertTrue(any(m.get('role')=='tool' and m.get('tool_call_id')=='ask1' and m.get('content')=='note.txt' for m in client.chat.completions.create.call_args.kwargs['messages']))
 
     def test_interrupt_reaches_real_host_tool_process(self):
         roles = self.root / "roles.json"

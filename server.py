@@ -178,92 +178,121 @@ def run_agent(
     max_eval_retries: int = 2,
     hook_manager: HookManager | None = None,
     event_callback: Callable[[str, dict], None] | None = None,
+    resume_state: dict | None = None,
 ):
-    iteration = 0
-    eval_retries = 0
-    pre_state = task_evaluator.capture_state() if task_evaluator is not None else None
+    from agent_execution.tasks import save_checkpoint
+    from openai.types.chat import ChatCompletionMessage
+    resume_state = resume_state or {}
+    iteration = resume_state.get('iteration', 0)
+    if resume_state.get('phase') == 'model_pending':
+        iteration = max(0,iteration-1)
+    eval_retries = resume_state.get('eval_retries', 0)
+    pre_state = resume_state.get('pre_state')
+    if pre_state is None and task_evaluator is not None:
+        pre_state = task_evaluator.capture_state()
+    def checkpoint(phase, **metadata):
+        save_checkpoint(phase,messages,iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,**metadata)
+    def pending_assistant():
+        for index in range(len(messages)-1,-1,-1):
+            message = messages[index]
+            if message.get('role') == 'assistant':
+                calls = message.get('tool_calls') or []
+                finished = {m.get('tool_call_id') for m in messages[index+1:] if m.get('role')=='tool'}
+                if any(call['id'] not in finished for call in calls):
+                    return ChatCompletionMessage(**message), finished
+                break
+        return None, set()
+
     while iteration < max_iterations:
         if check_cancelled and check_cancelled():
             return "Task was cancelled by the user."
             
-        iteration += 1
-        if hook_manager is not None:
-            hook_context = HookContext(
-                lifecycle=HookLifecycle.PRE_MODEL_CALL,
-                messages=messages,
-                model_request={"model": OLLAMA_MODEL, "tools": TOOLS_SCHEMAS},
-                memory=memory,
-                episode_id=episode_id,
-                metadata={"iteration": iteration},
-            )
-            hook_result = hook_manager.dispatch(HookLifecycle.PRE_MODEL_CALL, hook_context)
-            if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
-                return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
-        attempts = 0
-        while True:
-            try:
-                if event_callback is not None:
-                    from agent_execution.streaming import streamed_completion
-                    event_callback("model.start", {"iteration": iteration, "model": OLLAMA_MODEL})
-                    assistant_message = streamed_completion(get_client(), OLLAMA_MODEL, messages,
-                                                            TOOLS_SCHEMAS, event_callback, check_cancelled)
-                else:
-                    response = get_client().chat.completions.create(model=OLLAMA_MODEL, messages=messages, tools=TOOLS_SCHEMAS)
-                    assistant_message = response.choices[0].message
-                break
-            except InterruptedError:
-                return "Task was cancelled by the user."
-            except (APIStatusError, APIConnectionError, APITimeoutError) as error:
-                if check_cancelled and check_cancelled():
+        assistant_message, resolved_calls = pending_assistant() if resume_state else (None,set())
+        if resume_state.get('phase') in {'evaluation_pending','evaluation_done'} or (resume_state.get('phase')=='model_received' and not messages[-1].get('tool_calls')):
+            assistant_message = ChatCompletionMessage(**next(m for m in reversed(messages) if m.get('role')=='assistant'))
+        if assistant_message is None:
+            iteration += 1
+            if hook_manager is not None:
+                hook_context = HookContext(
+                    lifecycle=HookLifecycle.PRE_MODEL_CALL,
+                    messages=messages,
+                    model_request={"model": OLLAMA_MODEL, "tools": TOOLS_SCHEMAS},
+                    memory=memory,
+                    episode_id=episode_id,
+                    metadata={"iteration": iteration},
+                )
+                hook_result = hook_manager.dispatch(HookLifecycle.PRE_MODEL_CALL, hook_context)
+                if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                    return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+            checkpoint('model_pending')
+            attempts = 0
+            while True:
+                try:
+                    if event_callback is not None:
+                        from agent_execution.streaming import streamed_completion
+                        event_callback("model.start", {"iteration": iteration, "model": OLLAMA_MODEL})
+                        assistant_message = streamed_completion(get_client(), OLLAMA_MODEL, messages,
+                                                                TOOLS_SCHEMAS, event_callback, check_cancelled)
+                    else:
+                        response = get_client().chat.completions.create(model=OLLAMA_MODEL, messages=messages, tools=TOOLS_SCHEMAS)
+                        assistant_message = response.choices[0].message
+                    break
+                except InterruptedError:
                     return "Task was cancelled by the user."
-                is_transient = True
-                status_code = getattr(error, 'status_code', None)
-                if isinstance(error, APIStatusError) and status_code not in TRANSIENT_STATUS_CODES:
-                    is_transient = False
+                except (APIStatusError, APIConnectionError, APITimeoutError) as error:
+                    if check_cancelled and check_cancelled():
+                        return "Task was cancelled by the user."
+                    is_transient = True
+                    status_code = getattr(error, 'status_code', None)
+                    if isinstance(error, APIStatusError) and status_code not in TRANSIENT_STATUS_CODES:
+                        is_transient = False
                     
-                if not is_transient or attempts >= max_retries:
-                    err_msg = f"⚠️ 遠端 LLM 服務發生錯誤 (連線失敗或伺服器過載)。已達最大重試次數，請稍後再試。\n詳細錯誤: {error}"
-                    print(err_msg)
-                    if event_callback:
-                        event_callback("error", {"code": "provider_error", "message": "Model provider request failed", "retryable": is_transient})
-                        return "Error: Model provider request failed"
-                    return err_msg
+                    if not is_transient or attempts >= max_retries:
+                        err_msg = f"⚠️ 遠端 LLM 服務發生錯誤 (連線失敗或伺服器過載)。已達最大重試次數，請稍後再試。\n詳細錯誤: {error}"
+                        print(err_msg)
+                        if event_callback:
+                            event_callback("error", {"code": "provider_error", "message": "Model provider request failed", "retryable": is_transient})
+                            return "Error: Model provider request failed"
+                        return err_msg
                     
-                attempts += 1
-                base_delay = retry_delay_seconds(error) if isinstance(error, APIStatusError) else 5.0
-                jitter = random.uniform(0.1, 1.0) if base_delay > 0 else 0.0
-                delay = base_delay * (2 ** (attempts - 1)) + jitter
+                    attempts += 1
+                    base_delay = retry_delay_seconds(error) if isinstance(error, APIStatusError) else 5.0
+                    jitter = random.uniform(0.1, 1.0) if base_delay > 0 else 0.0
+                    delay = base_delay * (2 ** (attempts - 1)) + jitter
                 
-                status_str = f"HTTP {status_code}" if status_code else type(error).__name__
-                print(f"\nRemote service returned {status_str}; retrying in {delay:g} seconds.")
-                if event_callback and check_cancelled:
-                    end = time.monotonic() + delay
-                    while time.monotonic() < end:
-                        if check_cancelled():
-                            return "Task was cancelled by the user."
-                        sleep(min(.1, max(0, end - time.monotonic())))
-                else:
-                    sleep(delay)
-        messages.append(assistant_message_to_dict(assistant_message))
-        if hook_manager is not None:
-            hook_context = HookContext(
-                lifecycle=HookLifecycle.POST_MODEL_CALL,
-                messages=messages,
-                model_response=assistant_message,
-                memory=memory,
-                episode_id=episode_id,
-                metadata={"iteration": iteration},
-            )
-            hook_result = hook_manager.dispatch(HookLifecycle.POST_MODEL_CALL, hook_context)
-            if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
-                return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
-            if hook_result.decision == HookDecision.APPEND_FEEDBACK:
-                messages.append({"role": "user", "content": hook_result.feedback})
-                continue
+                    status_str = f"HTTP {status_code}" if status_code else type(error).__name__
+                    print(f"\nRemote service returned {status_str}; retrying in {delay:g} seconds.")
+                    if event_callback and check_cancelled:
+                        end = time.monotonic() + delay
+                        while time.monotonic() < end:
+                            if check_cancelled():
+                                return "Task was cancelled by the user."
+                            sleep(min(.1, max(0, end - time.monotonic())))
+                    else:
+                        sleep(delay)
+            messages.append(assistant_message_to_dict(assistant_message))
+            if hook_manager is not None:
+                hook_context = HookContext(
+                    lifecycle=HookLifecycle.POST_MODEL_CALL,
+                    messages=messages,
+                    model_response=assistant_message,
+                    memory=memory,
+                    episode_id=episode_id,
+                    metadata={"iteration": iteration},
+                )
+                hook_result = hook_manager.dispatch(HookLifecycle.POST_MODEL_CALL, hook_context)
+                if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                    return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+                if hook_result.decision == HookDecision.APPEND_FEEDBACK:
+                    messages.append({"role": "user", "content": hook_result.feedback})
+                    continue
 
+            checkpoint('model_received')
         if assistant_message.tool_calls:
             suspend_request = None
             for tool_call in assistant_message.tool_calls:
+                if tool_call.id in resolved_calls:
+                    continue
                 matched_procedure = find_matching_procedure_for_tool_call(memory, tool_call)
                 log_episode_event(
                     memory,
@@ -276,16 +305,6 @@ def run_agent(
                     },
                 )
                 
-                if tool_call.function.name == "ask_user":
-                    import json
-                    try:
-                        args = json.loads(tool_call.function.arguments)
-                        question = args.get("question", "Please provide input.")
-                    except:
-                        question = "Please provide input."
-                    suspend_request = (tool_call.id, question)
-                    continue
-
                 tool_name = tool_call.function.name
                 tool_args = parse_tool_arguments(tool_call.function.arguments)
                 if hook_manager is not None:
@@ -322,8 +341,22 @@ def run_agent(
                     return "Task was cancelled by the user."
                 if event_callback:
                     event_callback("tool.start", {"tool_call_id": tool_call.id, "name": tool_name, "arguments": tool_args})
+                if tool_name == 'ask_user':
+                    question = run_tool_with_context(tool_call,memory=memory,episode_id=episode_id)
+                    if str(question).startswith('Error:'):
+                        messages.append({'role':'tool','tool_call_id':tool_call.id,'content':str(question)})
+                        checkpoint('tool_done')
+                    elif suspend_request is None:
+                        suspend_request = (tool_call.id,question)
+                    continue
+                step = {'id':tool_call.id,'name':tool_name,'arguments':tool_args,
+                        'dependencies':sorted(resolved_calls),'state':'running'}
+                checkpoint('tool_started',step=step)
                 with execution_scope(check_cancelled=check_cancelled):
                     result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                save_checkpoint('tool_done',messages+[{'role':'tool','tool_call_id':tool_call.id,'content':str(result)}],
+                    iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,
+                    step={**step,'state':'failed' if str(result).lstrip().startswith('Error:') else 'completed','result':str(result)})
                 if hook_manager is not None:
                     hook_context = HookContext(
                         lifecycle=HookLifecycle.POST_TOOL_EXECUTE,
@@ -360,11 +393,13 @@ def run_agent(
                 )
                 record_tool_procedure_result(memory, episode_id, matched_procedure, result)
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
-                
+                resolved_calls.add(tool_call.id)
+                checkpoint('tool_done',step={**step,'state':'failed' if str(result).lstrip().startswith('Error:') else 'completed','result':str(result)})
+
             if suspend_request:
                 tool_call_id, question = suspend_request
                 raise TaskSuspendedException(question, tool_call_id, messages)
-                
+            resume_state = {}
             continue
 
         if task_evaluator is not None:
@@ -376,14 +411,23 @@ def run_agent(
                         user_goal = content
                         break
 
-            post_state = task_evaluator.capture_state()
-            eval_res = task_evaluator.evaluate(
-                user_goal=user_goal,
-                messages=messages,
-                final_reply=assistant_message.content or "",
-                pre_state=pre_state,
-                post_state=post_state,
-            )
+            if resume_state.get('phase') == 'evaluation_done':
+                from task_evaluator import EvaluationResult
+                eval_res = EvaluationResult(**resume_state['evaluation'])
+            else:
+                checkpoint('evaluation_pending')
+                post_state = task_evaluator.capture_state()
+                eval_res = task_evaluator.evaluate(
+                    user_goal=user_goal,
+                    messages=messages,
+                    final_reply=assistant_message.content or "",
+                    pre_state=pre_state,
+                    post_state=post_state,
+                )
+
+            from dataclasses import asdict
+            checkpoint('evaluation_done',evaluation=asdict(eval_res))
+            resume_state = {}
 
             log_episode_event(
                 memory,
@@ -411,6 +455,7 @@ def run_agent(
                         f"請根據上述反饋自主修正，檢查程式碼或執行相應的修復工具，直到完成任務目標。"
                     )
                     messages.append({"role": "user", "content": critic_feedback})
+                    checkpoint('model_pending')
                     log_episode_event(
                         memory,
                         episode_id,
@@ -512,7 +557,9 @@ def assistant_message_to_dict(assistant_message: Any) -> dict[str, Any]:
     message = {"role": "assistant", "content": getattr(assistant_message, "content", None)}
     tool_calls = getattr(assistant_message, "tool_calls", None)
     if tool_calls:
-        message["tool_calls"] = tool_calls
+        message["tool_calls"] = [call if isinstance(call,dict) else {
+            'id':call.id,'type':'function','function':{'name':call.function.name,'arguments':call.function.arguments}}
+            for call in tool_calls]
     return message
 
 
@@ -572,7 +619,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
     print("Mini agent ready. Type 'exit' to quit.")
     import uuid
     from agent_execution import execution_scope
-    local_session = uuid.uuid4().hex
+    local_session = os.environ.get('AGENT_SESSION_ID') or 'local'
 
     try:
         while True:
@@ -587,8 +634,11 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
                 continue
 
             try:
-                with execution_scope(session=local_session):
-                    result = run_agent_turn(user_input, runtime)
+                with execution_scope(session=local_session, task_id=uuid.uuid4().hex):
+                    from agent_execution.tasks import dispatch_task_input
+                    result = dispatch_task_input(user_input,runtime)
+                    if result is None:
+                        result = run_agent_turn(user_input, runtime)
             except ValueError as e:
                 print(f"\nConfiguration error: {e}")
                 break

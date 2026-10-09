@@ -65,6 +65,7 @@ class Session:
     runtime_factory: Any = None
     cancel_chat: threading.Event | None = None
     event_store: Any = None
+    request_id: str | None = None
 
     @property
     def owner(self):
@@ -225,9 +226,12 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
             runtime.check_cancelled = cancelled.is_set
             runtime.event_callback = emit
             with execution_scope(source="websocket", identity=identity, session=scoped_session,
-                    project=session.project, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
+                    project=session.project, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
                     set_current_role(get_user_role(identity)), auto_approve_command_runs():
-                result = run_agent_turn(user_text, runtime)
+                from agent_execution.tasks import dispatch_task_input
+                result = dispatch_task_input(user_text,runtime)
+                if result is None:
+                    result = run_agent_turn(user_text, runtime)
             emit("end", {"text": result.reply, "episode_id": result.episode_id,
                           "suspended": result.suspended, "failed": result.reply.startswith("Error:"),
                           "emotion": "neutral", "action": "none"})
@@ -384,6 +388,7 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
                 await session.send('notify', {'request_id':message_id,'status':previous,'text':'Duplicate input was not executed; inspect replayed events.'}, ref=message_id)
                 return
         session.cancel_chat = threading.Event()
+        session.request_id = message_id
         session.current_chat_task = asyncio.create_task(handle_chat(session, text, str(message_id or "")))
     elif message_type == "chat.interrupt":
         if session.current_chat_task is not None and not session.current_chat_task.done():
@@ -431,7 +436,7 @@ async def handle_chat(session: Session, text: str, ref: str) -> None:
             elif kind == "end":
                 await session.send("chat.end", {**dict(value), "interrupted": bool(session.cancel_chat and session.cancel_chat.is_set())}, ref=ref)
                 if session.event_store is not None:
-                    session.event_store.finish_input(session.owner, ref, 'interrupted' if session.cancel_chat and session.cancel_chat.is_set() else 'failed' if value.get('failed') else 'completed')
+                    session.event_store.finish_input(session.owner, ref, 'interrupted' if session.cancel_chat and session.cancel_chat.is_set() else 'failed' if value.get('failed') else 'suspended' if value.get('suspended') else 'completed')
             else:
                 await session.send(kind, value, ref=ref)
     except asyncio.CancelledError:

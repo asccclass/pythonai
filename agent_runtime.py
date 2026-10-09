@@ -59,7 +59,7 @@ class AgentRuntime:
     event_callback: Callable[[str, dict], None] | None = None
 
 
-def invoke_runtime_agent(runtime, messages, episode_id):
+def invoke_runtime_agent(runtime, messages, episode_id, resume=False):
     values = {"memory": runtime.memory, "episode_id": episode_id,
               "check_cancelled": runtime.check_cancelled, "task_evaluator": getattr(runtime, "task_evaluator", None),
               "hook_manager": getattr(runtime, "hook_manager", None)}
@@ -71,7 +71,19 @@ def invoke_runtime_agent(runtime, messages, episode_id):
         if callback is not None and "event_callback" not in signature.parameters:
             raise TypeError("Agent runner does not support streaming callbacks")
         values = {key: value for key, value in values.items() if key in signature.parameters}
-    return runtime.run_agent(messages, **values)
+    from agent_execution.tasks import durable_invoke
+    def invoke(saved):
+        supported = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()) or 'resume_state' in signature.parameters
+        if saved and not supported:
+            raise TypeError('Agent runner does not support checkpoint recovery')
+        kwargs = dict(values)
+        if 'check_cancelled' in kwargs:
+            from agent_execution.policy import current_context
+            kwargs['check_cancelled'] = current_context().check_cancelled or kwargs['check_cancelled']
+        if saved:
+            kwargs['resume_state'] = saved
+        return runtime.run_agent(messages, **kwargs)
+    return durable_invoke(invoke,messages,episode_id,resume=resume)
 
 
 @dataclass(frozen=True)
@@ -140,7 +152,8 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
         inputs = {"question": user_input} if "question" in selected.inputs.get("properties", {}) else {}
         if runtime.event_callback:
             runtime.event_callback("tool.start", {"name": "run_skill", "arguments": {"skill_name": selected.name, "inputs": inputs}})
-        result = runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id)
+        from agent_execution.tasks import durable_invoke
+        result = durable_invoke(lambda saved:runtime.run_skill(selected.name, inputs, memory=runtime.memory, episode_id=episode_id),runtime.messages,episode_id,skill=True,skill_arguments={'skill_name':selected.name,'inputs':inputs})
         if runtime.event_callback:
             runtime.event_callback("tool.result", {"name": "run_skill", "result": str(result)})
         reply = format_skill_reply(result)
@@ -464,8 +477,16 @@ def log_retrieval_stats(
     log_episode_event(memory, episode_id, "memory_retrieval_stats", metadata={"stats": stats})
 
 def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, episode_id: int | None = None) -> AgentTurnResult:
+    from agent_execution.policy import current_context
+    from agent_execution.tasks import TaskStore, task_owner
+    context = current_context()
+    if context.task_id and episode_id is None:
+        try:
+            episode_id = TaskStore().get(task_owner(context),context.task_id)['episode']
+        except KeyError:
+            pass
     try:
-        reply = invoke_runtime_agent(runtime, messages, episode_id)
+        reply = invoke_runtime_agent(runtime, messages, episode_id, resume=True)
     except TaskSuspendedException as error:
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)

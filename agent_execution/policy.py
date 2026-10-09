@@ -22,6 +22,7 @@ class ExecutionContext:
     identity: str = "local"
     session: str = "local"
     project: str = "default"
+    task_id: str | None = None
     workspace: Path | None = None
     memory: Any = None
     episode_id: int | None = None

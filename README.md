@@ -8,13 +8,13 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 功能領域 | 現有能力 | 狀態與限制 | 實作依據 |
 | --- | --- | --- | --- |
-| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；預設最多 15 次迭代，規劃主要靠提示，尚無持久化任務 DAG | `server.py`, `agent_runtime.py` |
+| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；預設最多 15 次迭代，持久化 task／checkpoint／循序工具依賴；跨代理 DAG 與全域預算仍待增修 | `server.py`, `agent_runtime.py` |
 | Provider 相容與重試 | OpenAI-compatible endpoint、模型／embedding 設定、暫時性 API 錯誤重試與 Retry-After | 已實作；主要使用 Chat Completions，未建立多 provider 路由及總成本上限 | `server.py`, `request_budget.py` |
 | 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；共用政策檢查角色與路徑／symlink，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
 | Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、共用政策、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
 | 動態工具 | 載入 tools/*.py + JSON schema、create_dynamic_tool 建立並重新載入 | 基礎實作；載入會執行 Python 模組，尚無發布前測試、版本審核及撤回流程 | `base.py`, `tools/` |
 | MCP | stdio JSON-RPC 子程序、初始化、工具發現、schema 轉換、呼叫路由與 shutdown | 已實作；啟動失敗記於 skipped_servers；未見 remote HTTP/OAuth 與自動重連管理 | `mcp_manager.py`, `mcp_config.json` |
-| Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；一般 Agent 對話仍以 runtime 記憶體持有，事件紀錄不等於完整任務續跑 | `memory.py`, `agent_runtime.py` |
+| Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；task checkpoint 另存 TaskStore 並保留 episode 關聯；跨任務對話與摘要治理待 T09 | `memory.py`, `agent_runtime.py` |
 | Semantic memory | 主詞／關係／受詞、user_profile／agent_persona 等類型、scope、信心、來源、實體關聯 | 已實作；遠端採身份／專案實體 DB 隔離，通訊另依會話隔離；本機既有資料保留 | `semantic_extractor.py`, `memory.py`, `agent_execution/sessions.py` |
 | Procedural memory | 重用工作流程、相似度比對、成功／失敗計數、驗收狀態控制保存 | 已實作；不代表模型訓練或任意任務成功保證 | `memory_review.py`, `procedure_similarity.py`, `server.py` |
 | 記憶檢索 | embedding／cosine similarity、Hashing fallback、關鍵詞、實體與程序檢索、可選 Laya 排序 | 已實作；本機候選與向量計算，尚無大型資料 ANN 索引 | `retrieval.py`, `retrieval_ranker.py`, `vector_search.py` |
@@ -23,7 +23,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 記憶管理 | confirm／contradict／archive／supersede、CLI 匯入匯出、網頁 CRUD／restore | 已實作；高風險模型工具與 API 更新要求身份／會話／參數綁定的一次性批准 | `memory_tools.py`, `agent_execution/approvals.py`, `web_api.py` |
 | Telegram | webhook／polling、getMe 診斷、訊息去重、佇列、長訊息分段、圖片／document 接收 | 已實作；圖片轉 image_url、文字解碼及截斷；二進位附件以 Base64 文字傳入，非通用 PDF／Office 解析 | `communication_adapters/telegram_adapter.py`, `telegram_polling_worker.py`, `agent_runtime.py` |
 | Discord／LINE | 簽章與時效驗證、去重、Discord deferred response／回覆閘門／原始回覆更新與 follow-up、LINE push／分段 | 已實作本機協定測試；production 缺配置／PyNaCl 拒絕，正式帳號 round trip 尚待驗證 | `communication_adapters/`, `communication_server.py`, `tests/test_webhook_security.py` |
-| 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；角色／會話／記憶及取消已隔離，附件與 delivery intent 已持久化；一般執行 checkpoint 待 T08 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
+| 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；ask_user schema、隔離 runtime、持久化附件／delivery／checkpoint；過期 lease 才恢復，副作用不確定轉 recovery_required | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由具 Bearer／角色／資料隔離及人類批准；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
 | Companion WebSocket | hello token 驗證、seq／ack、SQLite 重啟補送、ping、chat interrupt、裝置事件及主動訊息路由 | 真實 AgentRuntime／模型 delta、工具、驗收、批准事件及模型／程序取消；owner-targeted Telegram adapter fallback；provider／實際送達驗收待辦，audio.end 尚未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
 | Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
@@ -50,7 +50,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
-| 長任務／通用 Agentic | 有多輪、摘要、通訊暫停／續跑 | 補持久化計畫與 checkpoint、程序重啟恢復、冪等副作用、deadline／token／成本預算及重規劃 |
+| 長任務／通用 Agentic | 有多輪、摘要、通訊暫停／續跑 | 已有持久化循序步驟／checkpoint、lease 與保守副作用恢復；仍需總預算、token 治理與跨代理 DAG |
 | 完成度驗證／通用 Agentic | 已有 Critic loop 與來源事件 | 補使用者驗收條件、結構化工具結果、端到端測試、獨立 Reviewer 與任務品質評測 |
 | 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
@@ -419,3 +419,27 @@ WebSocket 可靠事件在傳送前存 SQLite，seq 單調遞增，ACK 原子刪�
 通訊回覆有持久化 delivery intent、原子 claim、120 秒 lease、內容去重及身份範圍。重啟可送出尚未 claim 的 pending；傳送逾時或 lease 過期記為 uncertain，保留模型成果且不自動重送，以免平台已收件但 response 遺失時重複送達。送達成功才寫 outbound sent；pending 超过 `COMM_DELIVERY_TTL`（預設 7 天）不再發送，成功紀錄亦依期限清理。`COMM_DELIVERY_LIMIT=10000`、`COMM_DELIVERY_BYTES=134217728` 限制儲存。正式平台沒有通用 exactly-once 契約，uncertain 需人工查平台後處理；不以模型成功代表送達成功。
 
 相關測試涵蓋真正新程序讀回圖檔／中文文件、身份／專案／會話越界、竄改與到期、交易回滾、工作成果與傳送失敗分離、claim／重啟、WebSocket seq／ACK／歷史缺口與不重複執行。對話 runtime／模型執行 checkpoint 的恢復另由 T08 處理。
+
+
+## 持久化任務與 crash 恢復（T08）
+
+CLI、通訊 runtime、WebSocket 以 transport 指定的 task ID 保存 goal、criteria（目前為原始目標）、messages、episode、模型迭代／Critic 次數、驗收 pre-state、循序工具輸入／結果／依賴及 checkpoint。`AGENT_TASK_DB` 預設 `%LOCALAPPDATA%/PythonAI/tasks.db`（其他 OS 為 ~/.local/share/PythonAI），按 source／identity／project／session 授權。新工具任務不直接重播舊對話中未配對的 tool call。
+
+checkpoint 包含 model_pending／model_received、tool_started／tool_done、evaluation_pending／evaluation_done、waiting_user、skill_started／skill_done。工具結果保存後恢復會略過已完成 call；驗收結果保存後不重跑 Judge／測試。程序在 tool_started／skill_started 階段消失時，可能已產生副作用，任務轉 uncertain；通訊 job 顯示 recovery_required，不自動重做寫入。完整直接 Skill 結果亦持久化，恢復／快取維持乾淨 stdout；Skill 中途 crash 需人工確認，不能盲目重跑整段。
+
+每任務原子 claim、180 秒 lease、20 秒 heartbeat 及 fencing token；過期舊 worker 不能再提交 checkpoint，新 worker 不會接手仍有 lease 的工作。取消檢查亦讀持久狀態；模型連線建立中仍有 T06 所述 timeout 限制。通訊 loop 自動恢復有 checkpoint、lease 已過期的安全 running 工作；未保存任何 task checkpoint 的舊版 running job 不猜測執行狀態，保留人工處理。crash 恢復最多 3 次；正常人類回答不消耗此恢復次數。
+
+人類入口（不提供給模型工具 schema）：
+
+- `/tasks`：列出自己的 task ID、goal、state／phase、episode 與 attempts。
+- `/steps <task_id>`：列出自己的工具步驟、輸入／結果與依賴。
+- `/resume <task_id>`：續跑安全 checkpoint 或讀取已完成結果。
+- `/cancel-task <task_id>`：取消自己的持久任務。
+- `/clear`／`/reset`：取消本 session 尚未完成的持久任務並清除對話；不會在下一次回答恢復舊暫停任務。
+- `/resolve <task_id> <tool_call_id> <observed_result>`：admin 在查核真實副作用後填入對應不確定工具的結果，再 /resume；不重做原工具，也不把人類文字直接視為已通過驗收。整段 Skill 中途失敗尚不可逐步 resolve，須查核後取消及另開工作。
+
+`ask_user` 已列入預設 schema 並經工具政策驗證問題長度。CLI／WebSocket 重啟後，對同一身份／project／session 的普通回答會續接最近的 suspended task；通訊亦沿用持久化問答機制。tool call/result 配對及原 episode ID 保留。CLI `AGENT_SESSION_ID` 預設 local，需分開多個終端時設定不同且穩定的 session ID，重啟使用相同值。未知平台身份不自動合併。
+
+task 最多 10000 筆／256 MiB（`AGENT_TASK_LIMIT`、`AGENT_TASK_STORAGE_BYTES`），單 checkpoint 64 MiB、人類回答／resolve 1 MiB。達上限拒絕新工作／checkpoint，不刪舊資料；管理者須規劃保留與匯出。task completed 表示迴圈已回覆，真正的 verified_completed 條件由 T10 結構化驗收補強；不把 checkpoint 等同任務品質證明。多代理計畫 DAG／worktree 分別由 T13／T12 擴充。
+
+驗證包含以子程序 `os._exit` 在實際已提交的 checkpoint 結束、在新執行環境續跑；模型回覆後、工具結果後與驗收前後均不重複檔案寫入，工具開始但未保存結果時停待人工。另測試 lease／舊 token／owner、取消、快取、容量交易、Skill stdout、人類回答與原 episode、WebSocket runtime 重建後問答續接。
