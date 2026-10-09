@@ -300,7 +300,9 @@ def run_agent(
                         return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
                     tool_call = mutable_tool_call(tool_call, tool_name, tool_args)
 
-                result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                from agent_execution import execution_scope
+                with execution_scope(check_cancelled=check_cancelled):
+                    result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
                 if hook_manager is not None:
                     hook_context = HookContext(
                         lifecycle=HookLifecycle.POST_TOOL_EXECUTE,

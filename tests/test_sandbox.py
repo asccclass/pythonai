@@ -14,26 +14,35 @@ class SandboxExecutionTests(unittest.TestCase):
             with patch("subprocess.run", side_effect=Exception("daemon down")):
                 self.assertFalse(is_docker_available())
 
-    def test_fallback_setup_excludes_heavy_directories(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+    def test_missing_docker_refuses_setup_and_execution(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch("sandbox.is_docker_available", return_value=False):
+            sandbox = SandboxExecution(Path(temp_dir))
+            with self.assertRaisesRegex(RuntimeError, "execution refused"):
+                sandbox.setup()
+            with patch("sandbox.run_process") as run:
+                result = sandbox.run(["python", "-c", "print('unsafe')"])
+            self.assertNotEqual(result.returncode, 0)
+            run.assert_not_called()
+            sandbox.cleanup()
+
+    def test_snapshot_excludes_secrets_and_heavy_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch("sandbox.is_docker_available", return_value=True):
             root = Path(temp_dir)
-            (root / "models").mkdir()
-            (root / "models" / "weights.safetensors").write_bytes(b"large_weight_data")
             (root / "src").mkdir()
             (root / "src" / "app.py").write_text("print('hello')", encoding="utf-8")
+            (root / "src" / ".env").write_text("SECRET=private", encoding="utf-8")
+            (root / "credential.json").write_text("private", encoding="utf-8")
             (root / "large.bin").write_bytes(b"x" * (11 * 1024 * 1024))
-
             sandbox = SandboxExecution(root)
-            sandbox.has_docker = False
             sandbox.setup()
-
             try:
-                self.assertTrue((sandbox.sandbox_dir / "src" / "app.py").exists())
-                self.assertFalse((sandbox.sandbox_dir / "models").exists())
-                self.assertFalse((sandbox.sandbox_dir / "large.bin").exists())
+                self.assertTrue((sandbox.snapshot_dir / "src" / "app.py").exists())
+                self.assertFalse((sandbox.snapshot_dir / "src" / ".env").exists())
+                self.assertFalse((sandbox.snapshot_dir / "credential.json").exists())
+                self.assertFalse((sandbox.snapshot_dir / "large.bin").exists())
             finally:
                 sandbox.cleanup()
-                self.assertFalse(sandbox.sandbox_dir.exists())
+            self.assertFalse(sandbox.sandbox_dir.exists())
 
     def test_base_run_command_uses_sandbox_when_env_enabled(self):
         mock_sandbox = MagicMock()

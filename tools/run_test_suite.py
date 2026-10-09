@@ -1,3 +1,4 @@
+from agent_execution.process import run_process
 from agent_execution import policy_tool, resolve_path
 import os
 import sys
@@ -28,7 +29,7 @@ def run_test_suite(test_target: str, framework: str = "pytest") -> str:
         
     try:
         # Run safely with timeout
-        result = subprocess.run(cmd, cwd=resolve_path("."), capture_output=True, text=True, timeout=30)
+        result = run_process(cmd, cwd=resolve_path("."), capture_output=True, text=True, timeout=30)
         
         output = f"Exit Code: {result.returncode}\n\n"
         

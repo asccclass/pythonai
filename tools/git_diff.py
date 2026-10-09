@@ -1,3 +1,4 @@
+from agent_execution.process import run_process
 from agent_execution.policy import policy_tool, git_workspace
 import subprocess
 import os
@@ -7,7 +8,7 @@ def git_diff(staged: bool = False, file_path: str = "") -> str:
     """Returns the git diff."""
     repository = git_workspace()
     try:
-        subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], check=True, capture_output=True, cwd=repository)
+        run_process(["git", "rev-parse", "--is-inside-work-tree"], check=True, capture_output=True, cwd=repository)
     except subprocess.CalledProcessError:
         return "Error: Current directory is not a git repository."
 
@@ -18,7 +19,7 @@ def git_diff(staged: bool = False, file_path: str = "") -> str:
         cmd.extend(["--", file_path])
         
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", cwd=repository)
+        result = run_process(cmd, capture_output=True, text=True, encoding="utf-8", cwd=repository)
         if result.stdout is None or not result.stdout.strip():
             return "No differences found."
             

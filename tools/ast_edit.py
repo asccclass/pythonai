@@ -1,3 +1,4 @@
+from agent_execution.process import run_process
 from agent_execution import policy_tool, resolve_path
 import os
 import sys
@@ -53,13 +54,13 @@ def ast_edit(file_path: str, node_type: str, node_name: str, new_code: str) -> s
     # Run syntax check / linter using the current python executable
     try:
         # Check syntax first
-        result = subprocess.run([sys.executable, '-m', 'py_compile', str(path)], capture_output=True, text=True)
+        result = run_process([sys.executable, '-m', 'py_compile', str(path)], capture_output=True, text=True)
         if result.returncode != 0:
             path.write_bytes(code_bytes)
             return f"Error: Syntax error introduced. Rollbacked changes.\n{result.stderr}"
             
         # Run flake8 for style/indent checks
-        result = subprocess.run([sys.executable, '-m', 'flake8', str(path)], capture_output=True, text=True)
+        result = run_process([sys.executable, '-m', 'flake8', str(path)], capture_output=True, text=True)
         if result.returncode != 0:
             # Maybe just warn if it's only style errors?
             # Or rollback? Let's rollback to force the agent to write perfect code

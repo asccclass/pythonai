@@ -1,3 +1,4 @@
+from agent_execution.process import run_process
 from agent_execution import policy_tool, resolve_path
 import subprocess
 import os
@@ -35,7 +36,7 @@ def _create_venv(project_dir: Path) -> str:
     if venv_dir.exists():
         return f"Virtual environment already exists at {venv_dir}"
         
-    result = subprocess.run(["python", "-m", "venv", "venv"], cwd=project_dir, capture_output=True, text=True)
+    result = run_process(["python", "-m", "venv", "venv"], cwd=project_dir, capture_output=True, text=True)
     if result.returncode != 0:
         return f"Failed to create venv:\n{result.stderr}"
     return "Successfully created Python virtual environment in 'venv' folder."
@@ -50,7 +51,7 @@ def _install_pip(project_dir: Path, packages: list[str]) -> str:
     resolve_path(venv_python)
     cmd = [str(venv_python) if venv_python.exists() else "python", "-m", "pip", "install"] + packages
     
-    result = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True)
+    result = run_process(cmd, cwd=project_dir, capture_output=True, text=True)
     if result.returncode != 0:
         return f"Failed to install pip packages:\n{result.stderr}"
         
@@ -84,7 +85,7 @@ def _install_npm(project_dir: Path, packages: list[str]) -> str:
     executable = "npm.cmd" if os.name == "nt" else "npm"
     cmd[0] = executable
     
-    result = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True)
+    result = run_process(cmd, cwd=project_dir, capture_output=True, text=True)
     if result.returncode != 0:
         return f"Failed to install npm packages:\n{result.stderr}"
         

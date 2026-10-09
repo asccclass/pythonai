@@ -20,7 +20,8 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
         runtime.check_cancelled = lambda: store.is_cancel_requested(command.command_id)
         from agent_execution import execution_scope
         with auto_approve_command_runs(), set_current_role(role), execution_scope(
-            source="communication", identity=f"{command.platform}:{command.sender_id}"):
+            source="communication", identity=f"{command.platform}:{command.sender_id}",
+            check_cancelled=runtime.check_cancelled):
             if resumed_messages is not None:
                 return resume_agent_turn(resumed_messages, runtime)
             return run_agent_turn(command.text, runtime, attachments=command.attachments)

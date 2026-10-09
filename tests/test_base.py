@@ -70,37 +70,16 @@ class BaseTests(unittest.TestCase):
 
             self.assertEqual((root / "notes" / "sample.txt").read_text(encoding="utf-8"), "hello")
 
-    def test_delete_file_uses_windows_command_on_windows(self):
-        completed = object()
-
-        with (
-            patch("base.platform.system", return_value="Windows"),
-            patch("base.subprocess.run", return_value=completed) as run,
-        ):
-            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}):
-                result = delete_file("sample.txt")
-
-        self.assertIs(result, completed)
-        run.assert_called_once_with(
-            ["cmd", "/c", "del", "/f", "/q", str((Path.cwd() / "sample.txt").resolve())],
-            **subprocess_text_options(),
-        )
-
-    def test_delete_file_uses_rm_command_on_non_windows(self):
-        completed = object()
-
-        with (
-            patch("base.platform.system", return_value="Linux"),
-            patch("base.subprocess.run", return_value=completed) as run,
-        ):
-            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}):
-                result = delete_file("sample.txt")
-
-        self.assertIs(result, completed)
-        run.assert_called_once_with(
-            ["rm", "-f", str((Path.cwd() / "sample.txt").resolve())],
-            **subprocess_text_options(),
-        )
+    def test_delete_file_removes_file_without_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "sample & note.txt"
+            target.write_text("remove", encoding="utf-8")
+            with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}), patch("base.subprocess.run") as run:
+                result = delete_file(target.name)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(target.exists())
+            run.assert_not_called()
 
     def test_delete_file_refuses_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -133,7 +112,7 @@ class BaseTests(unittest.TestCase):
 
         with (
             patch("base.platform.system", return_value="Linux"),
-            patch("base.subprocess.run", return_value=completed) as run,
+            patch("base.run_process", return_value=completed) as run,
         ):
             result = fetch_url("https://example.test", max_time=3)
 
@@ -174,7 +153,7 @@ class BaseTests(unittest.TestCase):
         with (
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input") as user_input,
-            patch("base.subprocess.run", return_value=completed) as run,
+            patch("base.run_process", return_value=completed) as run,
             patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             result = run_command(["echo", "hello"])
@@ -197,7 +176,7 @@ class BaseTests(unittest.TestCase):
         with (
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input", return_value="y") as user_input,
-            patch("base.subprocess.run", return_value=completed) as run,
+            patch("base.run_process", return_value=completed) as run,
             patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             first_result = run_command(["echo", "hello"])
@@ -216,7 +195,7 @@ class BaseTests(unittest.TestCase):
         with (
             patch("base.get_command_guard", return_value=Guard()),
             patch("builtins.input", return_value="n"),
-            patch("base.subprocess.run") as run,
+            patch("base.run_process") as run,
             patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
             result = run_command(["echo", "hello"])
@@ -231,7 +210,7 @@ class BaseTests(unittest.TestCase):
         with (
             patch("base.get_command_guard") as guard,
             patch("builtins.input") as user_input,
-            patch("base.subprocess.run", return_value=completed) as run,
+            patch("base.run_process", return_value=completed) as run,
             auto_approve_command_runs(),
             patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(Path.cwd())}),
         ):
@@ -255,7 +234,7 @@ class BaseTests(unittest.TestCase):
             with (
                 patch.dict("os.environ", {"OLLAMA_MODEL": "from-parent"}, clear=False),
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}, clear=False),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(["echo", "hello"], env_file="envfile")
@@ -271,7 +250,7 @@ class BaseTests(unittest.TestCase):
             cwd = Path(temp_dir)
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(cwd)}),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command([".\\tool.exe", "--version"])
@@ -331,7 +310,7 @@ class BaseTests(unittest.TestCase):
             root = Path(temp_dir)
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(["echo"])
@@ -346,7 +325,7 @@ class BaseTests(unittest.TestCase):
             (root / "subdir").mkdir()
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(["echo"], cwd="subdir")
@@ -362,7 +341,7 @@ class BaseTests(unittest.TestCase):
             outside.write_text("SECRET=value\n", encoding="utf-8")
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run") as run,
+                patch("base.run_process") as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(["echo"], env_file=outside)
@@ -377,7 +356,7 @@ class BaseTests(unittest.TestCase):
             root = Path(temp_dir)
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(["echo", "https://example.test/a/b"])
@@ -396,7 +375,7 @@ class BaseTests(unittest.TestCase):
             (scripts / "envfile").write_text("KEY=value\n", encoding="utf-8")
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(
@@ -418,7 +397,7 @@ class BaseTests(unittest.TestCase):
             root = Path(temp_dir)
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run", return_value=completed) as run,
+                patch("base.run_process", return_value=completed) as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(
@@ -442,7 +421,7 @@ class BaseTests(unittest.TestCase):
             other_skill.mkdir(parents=True)
             with (
                 patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}),
-                patch("base.subprocess.run") as run,
+                patch("base.run_process") as run,
                 auto_approve_command_runs(),
             ):
                 result = run_command(["echo"], cwd=other_skill, trusted_asset_roots=[skill_root])

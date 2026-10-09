@@ -11,3 +11,16 @@ Path arguments are resolved against AGENT_WORKSPACE_ROOT (including symlinks).
 This is application policy, not an OS sandbox: arbitrary Python, shell programs
 and third-party MCP servers still require T02 isolation. Tests live in
 agent_execution/tests and are collected by the main test suite.
+
+## Bounded subprocesses and Docker sandbox (T02)
+
+process.py applies a default 60 second timeout, 2 MiB output limit per stream,
+cancellation and descendant cleanup (Windows Job Object or POSIX process group).
+Exit codes: 124 timeout, 130 cancellation, 125 output overflow.
+
+sandbox.py uses a read-only filtered snapshot and offline resource-limited Docker
+container, with bounded tmpfs scratch/artifacts and validated tar export. Docker
+unavailability never falls back to host execution. Built-in trusted host helpers
+use the bounded runner; third-party MCP/generated-code lifecycle remains T18.
+
+Opt-in live tests: PYTHONAI_DOCKER_TEST=1 python -m pytest agent_execution/tests.

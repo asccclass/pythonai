@@ -116,7 +116,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_git_cannot_use_parent_repository(self):
         result = subprocess.CompletedProcess([], 0, stdout=self.directory.name, stderr="")
-        with patch("subprocess.run", return_value=result), self.assertRaises(PermissionError):
+        with patch("agent_execution.process.run_process", return_value=result), self.assertRaises(PermissionError):
             git_workspace()
 
     def test_direct_mcp_call_denied_before_starting_servers(self):

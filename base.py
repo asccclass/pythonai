@@ -10,6 +10,7 @@ from pathlib import Path
 from laya_guard import GuardDecision, LayaGuard
 from skills import SkillExecutor, SkillRegistry
 from agent_execution import policy_tool
+from agent_execution.process import run_process, execution_mode
 
 
 _approved_commands: set[tuple[tuple[str, ...], str | None]] = set()
@@ -154,8 +155,11 @@ def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
             stderr=f"Refusing to delete directory: {target}",
         )
 
-    command = ["cmd", "/c", "del", "/f", "/q", str(target)] if platform.system() == "Windows" else ["rm", "-f", str(target)]
-    return subprocess.run(command, **subprocess_text_options())
+    try:
+        target.unlink(missing_ok=True)
+        return subprocess.CompletedProcess(args=["delete_file", str(target)], returncode=0, stdout="", stderr="")
+    except OSError as error:
+        return subprocess.CompletedProcess(args=["delete_file", str(target)], returncode=1, stdout="", stderr=str(error))
 
 
 def curl_command(url: str, max_time: int = 20, follow_redirects: bool = True) -> list[str]:
@@ -173,7 +177,7 @@ def curl_command(url: str, max_time: int = 20, follow_redirects: bool = True) ->
 
 def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True) -> subprocess.CompletedProcess[str]:
     command = curl_command(url, max_time=max_time, follow_redirects=follow_redirects)
-    return subprocess.run(command, **subprocess_text_options())
+    return run_process(command, **subprocess_text_options())
 
 
 def get_command_guard() -> LayaGuard:
@@ -205,6 +209,7 @@ def run_command(
     cwd: str | Path | None = None,
     env_file: str | Path | None = None,
     trusted_asset_roots: list[str | Path] | None = None,
+    artifacts_directory: str | Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         resolved_cwd = resolve_command_cwd(cwd, trusted_asset_roots)
@@ -237,15 +242,26 @@ def run_command(
     run_options = subprocess_text_options()
     if env is not None:
         run_options["env"] = env
-    if os.environ.get("AGENT_USE_SANDBOX", "").lower() in ("1", "true"):
+    mode = execution_mode()
+    print(f"[Execution] mode={mode}")
+    if mode == "container":
         from sandbox import SandboxExecution
         sandbox = SandboxExecution(workspace_root())
-        sandbox.setup()
         try:
-            return sandbox.run(resolved_command, cwd=resolved_cwd, **run_options)
+            sandbox.setup()
+            result = sandbox.run(resolved_command, cwd=resolved_cwd, **run_options)
+            if result.returncode == 0 and artifacts_directory is not None:
+                destination = resolve_workspace_path(artifacts_directory)
+                sandbox.export_artifacts(destination)
+                result.stderr += f"\nArtifacts exported to {destination}"
+            return result
+        except Exception as error:
+            return subprocess.CompletedProcess(args=resolved_command, returncode=1, stdout="", stderr=str(error))
         finally:
             sandbox.cleanup()
-    return subprocess.run(resolved_command, cwd=resolved_cwd, **run_options)
+    if artifacts_directory is not None:
+        return subprocess.CompletedProcess(args=resolved_command, returncode=1, stdout="", stderr="artifacts_directory requires container mode")
+    return run_process(resolved_command, cwd=resolved_cwd, **run_options)
 
 
 def resolve_command_cwd(
@@ -474,6 +490,10 @@ TOOLS_SCHEMAS = [
                         "cwd": {
                             "type": "string",
                             "description": "Optional workspace-relative working directory"
+                        },
+                        "artifacts_directory": {
+                            "type": "string",
+                            "description": "In container mode, export regular files from /artifacts into this workspace directory without overwriting existing files."
                         }
                     },
                     "required": ["command"]

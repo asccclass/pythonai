@@ -10,14 +10,17 @@
   - 現況：`base.py` 核心路徑檢查與 RBAC 已存在；`tools/` 部分程式直接使用 cwd／Path，`SkillExecutor` 直接呼叫工具；排程命令直接 `shell=True`。
   - 工作：建立共用執行入口，涵蓋一般工具、Skill 步驟、MCP、動態工具、子代理及排程；解析路徑、符號連結、cwd、來源身份與工具權限。
   - 驗收：viewer／operator 不可透過 Skill、動態工具或排程繞過權限；跨 workspace 與路徑穿越均拒絕且留下可追蹤事件；合法 trusted Skill 資源仍可執行。
-  - 完成（2026-10-09）：新增 `agent_execution/` 共用政策與來源／身份 context；接入模型工具、Skill、動態工具、MCP、排程及子代理 context。工具路徑解析、Git repository 邊界、命令 option 路徑、索引位置亦已修正。
+  - 完成（2026-10-09，commit `328bcd8`）：新增 `agent_execution/` 共用政策與來源／身份 context；接入模型工具、Skill、動態工具、MCP、排程及子代理 context。工具路徑解析、Git repository 邊界、命令 option 路徑、索引位置亦已修正。
   - 驗證：完整 pytest 349 passed；後續 MCP／索引補強及新增測試後相關 pytest 77 passed（含 18 項政策回歸）；變更檔案語法與 diff 檢查通過。Windows junction 越界拒絕已實測；未進行真實 MCP provider round trip。
   - 邊界：此為應用層的角色與參數政策，不能限制已授權任意 Python／shell／第三方 MCP 內部副作用，OS 隔離由 T02 處理。舊排程遷移為 local/admin，新工作保存建立者身份／角色；shell operator 字串須改成 argv 或明確腳本。
 
-- [ ] **T02 — 真正的沙箱與程序生命週期管理**
+- [x] **T02 — 真正的沙箱與程序生命週期管理**
   - 現況：`sandbox.py` Docker 可寫掛載 workspace，fallback 是主機 subprocess；`run_command` 未設通用 timeout。
   - 工作：明確區分 container 與 host 模式；需要隔離時無 Docker 應拒絕執行；加入唯讀／可寫範圍、secret 排除、網路政策、CPU／記憶體／磁碟限制、timeout、子程序終止及 artifacts 匯出。
   - 驗收：容器不能讀取主機 secret／未授權路徑；超時與取消可終止整棵程序樹；隔離失效不可靜默退回主機；Windows 與 Docker 實測分別記錄。
+  - 完成（2026-10-09）：Docker-only sandbox、唯讀 secret-filtered snapshot、禁網路、256 MiB／1 CPU／64 PID、16 MiB tmpfs 暫存及 32 MiB artifacts；安全 tar 匯出及拒絕覆寫。明確 host/container 模式、60 秒預設命令期限、2 MiB／stream 輸出上限、取消、Windows Job Object／程序樹清理。
+  - 驗證：完整 pytest（開啟 Docker integration）366 passed；Windows 原生成功／取消／超時／輸出超限／子程序清理，以及 Docker 網路、secret、唯讀掛載、資源上限、artifact 匯出與超時後容器移除均實測通過。
+  - 使用限制：container 適用 Linux 指令及唯讀 workspace，產出寫至 /artifacts；不轉交 env_file 中的 provider credentials。內建應用 helper 仍是受信任 Python host 程式，子程序統一使用有界 runner；第三方 MCP 與動態工具的可信發布流程由 T18 處理。
 
 - [ ] **T03 — 遠端身份驗證與不可偽造的批准流程**
   - 現況：`permissions.py` 未設定 ROLES_CONFIG 時預設 admin；通訊命令自動批准；`manage_memory(confirm=True)` 依賴模型遵守提示；REST 管理 API 未整合身份／角色。

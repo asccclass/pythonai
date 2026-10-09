@@ -23,6 +23,7 @@ class ExecutionContext:
     memory: Any = None
     episode_id: int | None = None
     trusted_assets: tuple[Path, ...] = ()
+    check_cancelled: Callable[[], bool] | None = None
 
 
 _context: ContextVar[ExecutionContext] = ContextVar("execution_context", default=ExecutionContext())
@@ -51,9 +52,9 @@ def current_context() -> ExecutionContext:
 
 def git_workspace() -> Path:
     """Reject Git's implicit traversal into a repository outside the workspace."""
-    import subprocess
+    from .process import run_process
     root = resolve_path(".")
-    result = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
+    result = run_process(["git", "rev-parse", "--show-toplevel"], cwd=root,
                             capture_output=True, text=True, encoding="utf-8", check=True)
     return resolve_path(result.stdout.strip())
 
@@ -67,7 +68,7 @@ def _validate_paths(arguments: dict[str, Any], trusted_assets: tuple[Path, ...])
             roots = tuple(Path(item).resolve() for item in value or [])
             if any(root not in trusted_assets for root in roots):
                 raise PolicyDenied("Untrusted caller cannot grant trusted_asset_roots")
-        elif key in PATH_KEYS or key.endswith(("_path", "_dir")):
+        elif key in PATH_KEYS or key.endswith(("_path", "_dir", "_directory")):
             if value not in (None, ""):
                 # Only run_command may read/use trusted executable assets outside workspace.
                 resolve_workspace_or_trusted_path(value, list(trusted_assets))

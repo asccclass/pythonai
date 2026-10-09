@@ -26,11 +26,11 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
 | Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 協定原型；brain_reply_stream 為示範回覆，Telegram fallback 僅記入清單；audio.end 回空字串，未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
-| Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；尚無 timeout | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
+| Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG | 基礎實作；Laya 不可用可繼續、未配置角色預設 admin；非完整批准與最小權限框架 | `laya_guard.py`, `permissions.py`, `base.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
 | 任務驗收與自修正 | 檔案／Python 語法、測試輸出、Git 前後狀態、LLM Judge、Critic feedback | 已實作；預設最多 2 次驗收修正；規則／文字輸出及 Judge 有侷限，人工交接不等於完整審批 UI | `task_evaluator.py`, `tests/test_task_evaluator.py` |
-| Sandbox | AGENT_USE_SANDBOX 啟用 Docker，無 Docker 時複製至暫存目錄執行 | 基礎實作；Docker 可寫掛載 workspace，未限制網路／資源；fallback 使用主機 subprocess，不能當作安全邊界 | `sandbox.py`, `tests/test_sandbox.py` |
+| Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
 | 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 基礎實作；繼承角色／身份／執行 context，但共享 workspace／工具，無 worktree、依賴 DAG、取消、重啟恢復及結果合併治理 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
 | 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
@@ -323,4 +323,28 @@ python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py mem
 
 Git 工具只操作 workspace 內的 repository。設定 `AGENT_WORKSPACE_ROOT` 指向欲開發的 repository；`build_codebase_index.py` 與 `search_codebase` 共用該 workspace 的 `codebase_index.db`。排程 command 建議使用 JSON argv，如 `{ "command": ["python", "job.py"] }`；舊的簡單 command 字串仍會轉成 argv，shell operator 字串會拒絕。舊排程以 local/admin 遷移，新排程保存建立者身份與角色。
 
-應用政策不等同 OS 隔離；可執行 Python、shell 或第三方 MCP 的內部行為仍須以 T02 沙箱限制。
+應用政策不等同 OS 隔離；可執行 Python、shell 或第三方 MCP 的內部行為可用以下 T02 容器模式隔離命令。
+
+## 命令執行與沙箱（T02）
+
+```env
+AGENT_EXECUTION_MODE=container
+AGENT_COMMAND_TIMEOUT_SECONDS=60
+```
+
+`AGENT_EXECUTION_MODE` 接受 `host`／`container`。未設定時保留舊配置：`AGENT_USE_SANDBOX=1` 選 container，其餘為 host；執行時印出模式。host 為主機執行，不具 OS 隔離。所有內建 subprocess helper 使用有界 runner，命令預設 60 秒期限及每個 stdout／stderr 2 MiB 上限；超時、取消、輸出超限分別回傳 exit code 124、130、125。
+
+container 必須有運作中的 Docker Linux daemon 及 `python:3.12-slim` image。沙箱建立不含 `.env`、envfile、私鑰、已知 credential 檔案／目錄與 symlink 的獨立唯讀工作副本；預設 network none、256 MiB RAM（無 swap）、1 CPU、64 PID，根檔案系統唯讀。可寫區僅有 `/tmp`（16 MiB）及 `/artifacts`（32 MiB），不提供主機可寫掛載。
+
+腳本應將輸出寫至 `/artifacts`。`run_command` 可帶 `artifacts_directory` 指定 workspace 內的匯出目錄；只匯出有界、非敏感的 regular files，拒絕 archive traversal／symlink／覆寫。未指定時產出隨沙箱清理。provider credentials 不會透過 env_file 送入容器；需要第三方套件的任務須先準備相容 image／腳本，目前不在容器啟動時自動安裝。
+
+Windows 使用 Job Object 清理子程序；Linux 使用程序群組。Docker 執行在結束、取消或超時後移除具唯一名稱的容器。內建 Python helper 為受信任 host 程式；第三方 MCP 及生成工具的發布、執行信任邊界仍列於 T18。
+
+執行真實 Docker 回歸測試：
+
+```powershell
+$env:PYTHONAI_DOCKER_TEST="1"
+python -m pytest tests agent_execution/tests -q
+```
+
+Docker 實作依據：[Resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)、[tmpfs mounts](https://docs.docker.com/engine/storage/tmpfs/)。
