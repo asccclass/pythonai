@@ -26,6 +26,7 @@ class InboundMessage:
     raw_payload: dict[str, Any] = field(default_factory=dict)
     received_at: str | None = None
     attachments: tuple[InboundAttachment, ...] = field(default_factory=tuple)
+    project: str = "default"
 
     @property
     def idempotency_key(self) -> str:
@@ -47,6 +48,7 @@ class AgentCommand:
     requires_confirmation: bool = False
     source_message_id: int | None = None
     attachments: tuple[InboundAttachment, ...] = field(default_factory=tuple)
+    project: str = "default"
 
 
 @dataclass(frozen=True)

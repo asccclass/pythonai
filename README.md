@@ -15,7 +15,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 動態工具 | 載入 tools/*.py + JSON schema、create_dynamic_tool 建立並重新載入 | 基礎實作；載入會執行 Python 模組，尚無發布前測試、版本審核及撤回流程 | `base.py`, `tools/` |
 | MCP | stdio JSON-RPC 子程序、初始化、工具發現、schema 轉換、呼叫路由與 shutdown | 已實作；啟動失敗記於 skipped_servers；未見 remote HTTP/OAuth 與自動重連管理 | `mcp_manager.py`, `mcp_config.json` |
 | Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；一般 Agent 對話仍以 runtime 記憶體持有，事件紀錄不等於完整任務續跑 | `memory.py`, `agent_runtime.py` |
-| Semantic memory | 主詞／關係／受詞、user_profile／agent_persona 等類型、scope、信心、來源、實體關聯 | 已實作；具資料 scope，尚非端到端使用者／專案隔離機制 | `semantic_extractor.py`, `memory_update.py`, `memory.py` |
+| Semantic memory | 主詞／關係／受詞、user_profile／agent_persona 等類型、scope、信心、來源、實體關聯 | 已實作；遠端採身份／專案實體 DB 隔離，通訊另依會話隔離；本機既有資料保留 | `semantic_extractor.py`, `memory.py`, `agent_execution/sessions.py` |
 | Procedural memory | 重用工作流程、相似度比對、成功／失敗計數、驗收狀態控制保存 | 已實作；不代表模型訓練或任意任務成功保證 | `memory_review.py`, `procedure_similarity.py`, `server.py` |
 | 記憶檢索 | embedding／cosine similarity、Hashing fallback、關鍵詞、實體與程序檢索、可選 Laya 排序 | 已實作；本機候選與向量計算，尚無大型資料 ANN 索引 | `retrieval.py`, `retrieval_ranker.py`, `vector_search.py` |
 | 工作記憶與遺忘 | 對話摘要壓縮、保留候選、TTL、矛盾／替代、衝突處理、程序淘汰 | 已實作；壓縮尚非完整 token 預算及無損任務狀態保存 | `working_memory.py`, `forgetting.py` |
@@ -355,7 +355,7 @@ Docker 實作依據：[Resource constraints](https://docs.docker.com/engine/cont
 
 管理 API 須配置 `AGENT_API_TOKENS`，內容為 JSON 的「token → 身份名稱」對照；每個 token 至少 32 字元，建議以 `secrets.token_urlsafe(32)` 產生。使用身份 `alice` 時，角色檔的 key 為 `api:alice`。請將真實 token 放在私有環境設定，對外部署以 HTTPS 傳送。Dashboard 的 API Token 欄位支援登入，token 僅存於頁面輸入欄，不寫入 localStorage 或 URL。
 
-API 請求帶 `Authorization: Bearer <token>`；未登入回 401，非 admin 的寫入回 403。`/health` 與 Dashboard HTML 可公開讀取。記憶租戶隔離仍待 T05，角色為 viewer 的 API 使用者目前可讀取管理資料，僅應配置可信任帳號。
+API 請求帶 `Authorization: Bearer <token>`；未登入回 401，非 admin 的寫入回 403。`/health` 與 Dashboard HTML 可公開讀取。記憶與任務資料依遠端身份／專案隔離，admin 角色亦不會自動取得其他身份的資料。
 
 `manage_memory` 的 archive／contradict／supersede 不接受模型自行以 `confirm=True` 授權。工具先回 `approval_required` 與 ID，人類可用 `/approvals` 查看原始操作，使用 `/approve <id>` 或 `/deny <id>` 決定，再要求 Agent 以該 `approval_id` 重試相同參數。CLI 會話具有獨立 ID；通訊會話綁定 platform／conversation 及 sender。批准期限 5 分鐘，綁定身份、會話、工具與操作參數，原子消耗一次；變更參數、跨會話、過期及重放均拒絕。此流程不會讀取遠端 stdin；授權後的普通遠端命令仍採非互動執行。
 
@@ -381,3 +381,13 @@ DISCORD_PUBLIC_KEY=<application-public-key>
 Discord PING 回 `{"type":1}`，application command 回 `{"type":5}` deferred response；任務由送出 ACK 後的持久化 delivery gate 放行，避免先送 follow-up。interaction 的 application ID／token 保存於原始訊息，只供 adapter 回覆；14 分鐘內以 PATCH 更新原始回覆，後續分段使用 follow-up webhook，逾時採 Bot channel fallback，長訊息分成最多 2000 字元並停用自動 mentions。LINE 非同步任務使用 push API 回覆，避免過期 reply token，最多 5000 字元分段；需確保官方帳號有向使用者／群組 push 的資格及額度。平台拒絕／無效 JSON 回覆會視為傳送失敗。
 
 本機已有實際 Ed25519 簽章、HTTP deferred response、重放去重、重啟後 follow-up metadata、polling 與 webhook 邊界測試；正式 Discord／LINE 帳號 round trip 尚待部署驗證。協定依據：[Discord interactions](https://docs.discord.com/developers/interactions/receiving-and-responding)、[LINE Messaging API](https://developers.line.biz/en/reference/messaging-api/)、[Telegram Bot API](https://core.telegram.org/bots/api)。
+
+## 遠端會話與資料隔離（T05）
+
+通訊 runtime／對話訊息／鎖以「platform + sender + conversation + project」區分。同一會話串行執行，不同會話可並行；取消 callback 只讀原 job 狀態，取消後不會被完成結果覆寫。`/status`、`/cancel`、`/clear`、ask_user 恢復皆限同一身份與會話／專案。`/clear` 取消該範圍的舊工作並重設自己的對話，保留長期記憶；自訂 runner 的 session_clearer 會收到原 AgentCommand，應依此清理。
+
+`COMM_PROJECT` 選擇通訊服務專案，預設 `default`。多專案的命令 workspace 須由受信任設定 `AGENT_PROJECT_WORKSPACES` 指定 JSON 對照，例如 `{"default":"C:/projects/a","other":"C:/projects/b"}`；只接受絕對路徑，配置存在時缺專案即拒絕。未配置僅允許 default 使用既有 AGENT_WORKSPACE_ROOT；不以修改 process env 的方式切換不同會話的工作路徑。
+
+遠端記憶保存於 `%LOCALAPPDATA%/PythonAI/tenants/<scope-hash>/memory.db`（其他 OS 為 `~/.local/share/PythonAI/tenants/`）。`AGENT_TENANT_ROOT` 可指定受信任 storage 根目錄。通訊 DB 範圍包含穩定的 conversation；REST 管理 DB 依 API 身份與 project 分配，Dashboard 重新登入仍可讀自己的記憶。`X-Agent-Project`／Dashboard 專案欄預設 default；批准亦綁定 project。舊 `MEMORY_DB_PATH` 仍屬本機資料，未自動复制給遠端使用者；不同平台身份不自動合併。
+
+WebSocket session／outbox key 包含 user、project、device，使用者不能以同名 device 讀取他人事件；proactive 選擇限原 user／project。同一裝置重連會關閉舊連線，舊連線退出不會清除新連線。未配置 WebSocket tokens 時拒絕登入，沒有通用預設密碼。任務專用 worktree 仍待 T12。

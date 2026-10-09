@@ -15,6 +15,7 @@ from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker
 from memory import MemoryStore
 from agent_execution.approvals import ApprovalStore
+from agent_execution import execution_scope
 
 
 class AuthTransportTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class AuthTransportTests(unittest.TestCase):
             with patch.dict(os.environ, {"MEMORY_DB_PATH": str(root / "memory.db"),
                     "COMMUNICATION_DB_PATH": str(root / "communication.db"),
                     "AGENT_APPROVAL_DB": str(root / "approvals.db"), "ROLES_CONFIG": str(roles),
+                    "AGENT_TENANT_ROOT": str(root / "tenants"),
                     "AGENT_API_TOKENS": json.dumps({"a" * 32: "alice"})}):
                 MemoryStore()
                 store = CommunicationStore()
@@ -77,12 +79,13 @@ class AuthTransportTests(unittest.TestCase):
                         page.wait_for_function("document.getElementById('status').textContent === 'Loaded 1 memories'")
                         page.on("dialog", lambda dialog: dialog.accept())
                         page.evaluate("archiveMemory(1)")
-                        self.assertIsNotNone(MemoryStore().semantic_memory(1)["archived_at"])
+                        with execution_scope(source="api", identity="api:alice"):
+                            self.assertIsNotNone(MemoryStore().semantic_memory(1)["archived_at"])
                         with closing(ApprovalStore().connect()) as conn:
                             row = conn.execute("SELECT * FROM approvals WHERE state='consumed'").fetchone()
                         replay = page.request.delete(f"http://127.0.0.1:{httpd.server_port}/api/memories/1",
                             headers={"Authorization": "Bearer " + "a" * 32,
-                                     "X-Agent-Session": row["session"], "X-Agent-Approval": row["id"]},
+                                     "X-Agent-Session": row["session"].split(":", 1)[1], "X-Agent-Approval": row["id"]},
                             data=json.loads(row["arguments"])["body"])
                         self.assertEqual(replay.status, 403)
                         self.assertIsNone(page.evaluate("localStorage.getItem('api-token')"))

@@ -282,6 +282,7 @@
       </div>
       <div class="stats" id="stats"></div>
       <label>API Token <input id="api-token" type="password" autocomplete="off" placeholder="輸入管理 Token"></label>
+      <label>專案 <input id="api-project" value="default" maxlength="64"></label>
       <button id="login" type="button">登入</button>
     </div>
   </header>
@@ -378,6 +379,7 @@
         ...options,
         headers: { 'Content-Type': 'application/json',
           'Authorization': `Bearer ${$('api-token').value}`,
+          'X-Agent-Project': $('api-project').value,
           'X-Agent-Session': session, ...(options.headers || {}) }
       });
       const payload = await response.json();

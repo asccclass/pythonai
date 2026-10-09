@@ -38,3 +38,13 @@ host code which can access the user's private storage.
 
 Opt-in actual Chromium tests: PYTHONAI_BROWSER_TEST=1 python -m pytest
 agent_execution/tests/test_auth_transport.py.
+
+## Session and memory isolation (T05)
+
+sessions.py creates independent runtime/messages/search stats/locks per identity,
+conversation and project. The original runtime is a template only. Physical SQLite
+databases isolate remote memory; the legacy local database is not copied to remote
+users. Trusted project-to-workspace mappings are carried by ContextVar rather than
+mutating process environment. Cancellation, status and suspended job queries are
+owner-scoped, and atomic claims prevent duplicate starts. API approvals also bind
+project. WebSocket devices/outboxes/proactive routing are owner-scoped.

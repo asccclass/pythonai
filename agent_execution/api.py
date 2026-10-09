@@ -2,6 +2,7 @@
 import hmac
 import json
 import os
+import re
 from urllib.parse import urlparse
 
 from permissions import get_user_role, set_current_role
@@ -31,13 +32,17 @@ def authenticated_api(path, method, body, headers):
     if identity is None:
         return 401, {"error": "unauthorized"}
     role = get_user_role(identity)
+    project = headers.get("X-Agent-Project", "default")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", project):
+        return 400, {"error": "invalid_project"}
     session = headers.get("X-Agent-Session", "dashboard")
     if not session or len(session) > 128:
         return 400, {"error": "invalid_session"}
     if method != "GET" and role != "admin":
         return 403, {"error": "forbidden"}
     route = urlparse(path).path.rstrip("/")
-    with set_current_role(role), execution_scope(source="api", identity=identity, session=session):
+    session = f"{project}:{session}"
+    with set_current_role(role), execution_scope(source="api", identity=identity, session=session, project=project):
         if route == "/api/approvals" and method == "GET":
             return 200, ApprovalStore().pending(identity, session)
         parts = route.split("/")
@@ -56,15 +61,15 @@ def authenticated_api(path, method, body, headers):
             except UnicodeDecodeError:
                 return 400, {"error": "invalid_utf8"}
             arguments = {"route": route, "method": method,
-                         "body": content}
+                         "body": content, "project": project}
             store = ApprovalStore()
             approval_id = headers.get("X-Agent-Approval", "")
             if not approval_id:
-                key = store.request(identity, session, "memory_api", arguments)
+                key = store.request(identity, session, f"memory_api:{project}", arguments)
                 return 409, {"error": "approval_required", "approval_id": key,
                              "operation": arguments, "expires_in": 300}
             try:
-                store.consume(approval_id, identity, session, "memory_api", arguments)
+                store.consume(approval_id, identity, session, f"memory_api:{project}", arguments)
             except PermissionError as error:
                 return 403, {"error": "approval_rejected", "message": str(error)}
         from web_api import handle_api_request

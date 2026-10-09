@@ -12,6 +12,7 @@ from memory import MemoryStore, memory_db_path
 
 def get_dashboard_stats() -> dict[str, int]:
     stats: dict[str, int] = {}
+    MemoryStore()  # Ensure a newly allocated tenant database has its schema.
     with closing(sqlite3.connect(memory_db_path())) as conn:
         conn.row_factory = sqlite3.Row
         stats["semantic_memory_count"] = conn.execute(
@@ -24,14 +25,15 @@ def get_dashboard_stats() -> dict[str, int]:
 
     with closing(sqlite3.connect(communication_db_path())) as conn:
         conn.row_factory = sqlite3.Row
+        clause, values = task_visibility()
         stats["pending_tasks"] = conn.execute(
-            "SELECT COUNT(*) as c FROM agent_command_jobs WHERE status = 'pending'"
+            f"SELECT COUNT(*) as c FROM agent_command_jobs WHERE status = 'pending' AND {clause}", values
         ).fetchone()["c"]
         stats["running_tasks"] = conn.execute(
-            "SELECT COUNT(*) as c FROM agent_command_jobs WHERE status = 'running'"
+            f"SELECT COUNT(*) as c FROM agent_command_jobs WHERE status = 'running' AND {clause}", values
         ).fetchone()["c"]
         stats["failed_tasks"] = conn.execute(
-            "SELECT COUNT(*) as c FROM agent_command_jobs WHERE status = 'failed'"
+            f"SELECT COUNT(*) as c FROM agent_command_jobs WHERE status = 'failed' AND {clause}", values
         ).fetchone()["c"]
 
     return stats
@@ -46,17 +48,28 @@ def get_recent_memories(limit: int = 50, include_archived: bool = False) -> list
     return memories[:limit]
 
 
+def task_visibility():
+    from agent_execution.policy import current_context
+    context = current_context()
+    if context.identity == "local" and context.source == "local":
+        return "1=1", ()
+    platform, _, sender = context.identity.partition(":")
+    return "platform=? AND sender_id=? AND project=?", (platform, sender, context.project)
+
+
 def get_recent_tasks(limit: int = 50) -> list[dict[str, Any]]:
+    clause, values = task_visibility()
     with closing(sqlite3.connect(communication_db_path())) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            """
+            f"""
             SELECT id, text, status, created_at, last_error
             FROM agent_command_jobs
+            WHERE {clause}
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (*values, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 

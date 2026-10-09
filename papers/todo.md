@@ -34,15 +34,18 @@
   - 現況：未配置 Telegram／LINE secret 或 Discord public key 可接受請求；Discord 缺 PyNaCl 會略過驗章；Discord command 路徑尚需確認符合 interaction 回覆時限。
   - 工作：分開開發與對外模式，對外缺 secret／驗證依賴拒絕啟動或請求；補 timestamp／重放限制、Discord deferred response／follow-up 與 LINE 回覆策略。
   - 驗收：缺少或錯誤簽章、過期／重放請求不能入列；Discord／LINE 真實帳號 round trip 成功；平台依賴及配置寫入安裝文件。
-  - 實作完成（2026-10-09，外部驗收待辦）：production 缺配置拒絕，development 明確豁免；真實 Ed25519 與 event timestamp 驗證、持久化去重、單次解析／附件下載、Discord deferred ACK 後放行 job／follow-up／過期 channel fallback、LINE push 與分段、API delivery error 檢查。新增 PyNaCl 依賴及部署設定。
+  - 實作完成（2026-10-09，commit `bcecff0`，外部驗收待辦）：production 缺配置拒絕，development 明確豁免；真實 Ed25519 與 event timestamp 驗證、持久化去重、單次解析／附件下載、Discord deferred ACK 後放行 job／follow-up／過期 channel fallback、LINE push 與分段、API delivery error 檢查。新增 PyNaCl 依賴及部署設定。
   - 相關測試：`python -m pytest tests/test_webhook_security.py tests/test_communication.py tests/test_communication_server.py tests/test_telegram_polling_worker.py -q`：53 passed；包含真實密碼學簽章驗證及缺套件拒絕，平台 HTTP POST 使用 stub。語法／diff 檢查通過。
   - 保持未勾選：Discord／LINE 正式帳號 round trip 尚未驗證，須有配置完成的測試帳號與對外 HTTPS webhook。實作可供 T05 後續隔離工作使用，不能將本機協定測試等同正式平台交付。
   - 完整驗證：開啟 Docker／Chromium integration 的 pytest：388 passed；其後補原始 Discord 回覆 PATCH 與原生 HTTP ACK 測試：相關 11 passed。無外部平台訊息傳送。
 
-- [ ] **T05 — 會話、使用者、專案與取消狀態隔離**
+- [x] **T05 — 會話、使用者、專案與取消狀態隔離**
   - 現況：`CommunicationWorker` 背景 threads 共用 runtime.messages／check_cancelled；記憶 scope 欄位尚非端到端隔離；/status、/cancel、/clear 需完整身份範圍。
   - 工作：以 platform + conversation + identity + project 分配 runtime／鎖／記憶查詢範圍；每個 job 保存獨立取消 token，管理指令依身份授權。
   - 驗收：兩使用者同時發送、取消或清除任務時互不影響；不可查看／取消他人 job；記憶檢索與管理 API 不會跨租戶洩漏。
+  - 完成（2026-10-09）：獨立 runtime／messages／search state／會話 lock、身份／會話／專案分庫、可信 workspace map／ContextVar 根目錄；保存 command project、原子 claim／cancel、禁止取消狀態被完成覆寫，status／cancel／clear／resume owner filter。API 資料、任務計數及批准隔離到身份／project。WebSocket device／outbox／proactive key 加入 owner／project，移除預設 token，修正舊 socket 清除新連線。
+  - 驗證：完整 pytest 開啟 Docker／Chromium integration：395 passed；後續 workspace 與 WebSocket 補強相關測試 33 passed（含 8 項 sessions 測試），Chromium 登入／批准實測相關 27 passed。語法與 diff 檢查通過。
+  - 邊界：legacy 本機記憶不自動複製到遠端，新租戶由空 DB 開始；不同平台身份不自動合併。對話 runtime 仍是程序記憶體，重啟續跑由 T08 處理；各 task 的專用 worktree 由 T12 處理。自訂 runner 須實作 scoped clear callback。
 
 ## P1：真實 Agent 體驗與長任務可靠性
 

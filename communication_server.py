@@ -197,7 +197,6 @@ def create_multi_service(runtime: AgentRuntime | None = None) -> MultiWebhookSer
         store,
         adapters,
         agent_runtime_command_runner(runtime, store),
-        session_clearer=getattr(runtime, "messages", None).clear if getattr(runtime, "messages", None) is not None else None,
     )
     return MultiWebhookService(
         store=store,
@@ -216,7 +215,6 @@ def create_telegram_service(runtime: AgentRuntime | None = None) -> TelegramWebh
         store,
         {"telegram": adapter},
         agent_runtime_command_runner(runtime, store),
-        session_clearer=getattr(runtime, "messages", None).clear if getattr(runtime, "messages", None) is not None else None,
     )
     return TelegramWebhookService(
         store=store,

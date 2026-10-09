@@ -23,6 +23,12 @@ DEFAULT_WORKSPACE_DIR = PROJECT_ROOT / "workspace"
 
 
 def workspace_root() -> Path:
+    from agent_execution.policy import current_context
+    scoped = current_context().workspace
+    if scoped is not None:
+        resolved = Path(scoped).expanduser().resolve()
+        resolved.mkdir(parents=True, exist_ok=True)
+        return resolved
     configured = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip()
     root = Path(configured).expanduser() if configured else DEFAULT_WORKSPACE_DIR
     resolved = root.resolve()

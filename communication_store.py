@@ -86,6 +86,20 @@ class CommunicationStore:
             connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN suspended_tool_call_id TEXT")
         if "delivery_ready" not in columns:
             connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN delivery_ready INTEGER NOT NULL DEFAULT 1")
+        if "project" not in columns:
+            connection.execute("ALTER TABLE agent_command_jobs ADD COLUMN project TEXT NOT NULL DEFAULT 'default'")
+
+    @staticmethod
+    def owner_filter(owner):
+        if owner is None:
+            return "1=1", ()
+        return "platform=? AND conversation_id=? AND sender_id=? AND project=?", (owner.platform, owner.conversation_id, owner.sender_id, owner.project)
+
+    def cancel_session(self, owner):
+        clause, values = self.owner_filter(owner)
+        with closing(self.connect()) as connection, connection:
+            connection.execute(f"UPDATE agent_command_jobs SET status=CASE WHEN status IN ('running','cancel_requested') THEN 'cancel_requested' ELSE 'cancelled' END, state=NULL, suspended_tool_call_id=NULL WHERE {clause} AND command_id<>? AND status IN ('pending','running','cancel_requested','suspended')",
+                               (*values, owner.command_id))
 
     def release_discord_interaction(self, interaction_id):
         with closing(self.connect()) as connection, connection:
@@ -143,9 +157,9 @@ class CommunicationStore:
             connection.execute(
                 """
                 INSERT OR IGNORE INTO agent_command_jobs (
-                    command_id, platform, conversation_id, sender_id, text, source_message_id, delivery_ready
+                    command_id, platform, conversation_id, sender_id, text, source_message_id, delivery_ready, project
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     command_id,
@@ -155,6 +169,7 @@ class CommunicationStore:
                     message.text,
                     source_message_id,
                     0 if message.platform == "discord" else 1,
+                    message.project,
                 ),
             )
             connection.commit()
@@ -170,7 +185,7 @@ class CommunicationStore:
             rows = connection.execute(
                 """
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
-                       requires_confirmation, source_message_id
+                       requires_confirmation, source_message_id, project
                 FROM agent_command_jobs
                 WHERE status = 'pending' AND delivery_ready=1
                 ORDER BY id ASC
@@ -185,7 +200,7 @@ class CommunicationStore:
             row = connection.execute(
                 """
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
-                       requires_confirmation, source_message_id
+                       requires_confirmation, source_message_id, project
                 FROM agent_command_jobs
                 WHERE command_id = ?
                 """,
@@ -195,8 +210,11 @@ class CommunicationStore:
             raise KeyError(command_id)
         return _command_from_row(row)
 
-    def mark_command_running(self, command_id: str) -> None:
-        self._update_command(command_id, "running", increment_attempts=True)
+    def mark_command_running(self, command_id: str) -> bool:
+        with closing(self.connect()) as connection, connection:
+            cursor = connection.execute("UPDATE agent_command_jobs SET status='running', attempts=attempts+1, updated_at=CURRENT_TIMESTAMP WHERE command_id=? AND status IN ('pending','suspended')",
+                                        (command_id,))
+            return cursor.rowcount == 1
 
     def complete_command(self, command_id: str, result_text: str) -> None:
         self._update_command(command_id, "completed", result_text=result_text)
@@ -204,70 +222,70 @@ class CommunicationStore:
     def fail_command(self, command_id: str, error: str) -> None:
         self._update_command(command_id, "failed", last_error=error)
         
-    def cancel_command(self, command_id: str) -> bool:
-        # returns True if it was cancelled/requested successfully
-        with closing(self.connect()) as connection:
-            row = connection.execute("SELECT status FROM agent_command_jobs WHERE command_id = ?", (command_id,)).fetchone()
-            if not row:
-                return False
-            status = row["status"]
-            if status == "pending":
-                self._update_command(command_id, "cancelled")
-                return True
-            elif status == "running":
-                self._update_command(command_id, "cancel_requested")
-                return True
-            return False
+    def cancel_command(self, command_id: str, owner=None) -> bool:
+        clause, values = self.owner_filter(owner)
+        with closing(self.connect()) as connection, connection:
+            cursor = connection.execute(f"UPDATE agent_command_jobs SET status=CASE WHEN status='running' THEN 'cancel_requested' ELSE 'cancelled' END WHERE command_id=? AND {clause} AND status IN ('pending','running','suspended')",
+                                        (command_id, *values))
+            return cursor.rowcount == 1
 
-    def query_jobs_status(self, limit: int = 5) -> list[AgentCommand]:
+    def query_jobs_status(self, limit: int = 5, owner=None) -> list[AgentCommand]:
+        clause, values = self.owner_filter(owner)
         with closing(self.connect()) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
-                       requires_confirmation, source_message_id
+                       requires_confirmation, source_message_id, project
                 FROM agent_command_jobs
+                WHERE {clause}
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (*values, limit),
             ).fetchall()
         return [_command_from_row(row) for row in rows]
         
     def is_cancel_requested(self, command_id: str) -> bool:
         with closing(self.connect()) as connection:
             row = connection.execute("SELECT status FROM agent_command_jobs WHERE command_id = ?", (command_id,)).fetchone()
-            return row is not None and row["status"] == "cancel_requested"
+            return row is not None and row["status"] in {"cancel_requested", "cancelled"}
             
-    def resolve_command_id(self, prefix: str) -> str | None:
+    def resolve_command_id(self, prefix: str, owner=None) -> str | None:
+        if not prefix:
+            return None
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        clause, values = self.owner_filter(owner)
         with closing(self.connect()) as connection:
-            row = connection.execute("SELECT command_id FROM agent_command_jobs WHERE command_id LIKE ?", (f"{prefix}%",)).fetchone()
-            return row["command_id"] if row else None
+            rows = connection.execute(f"SELECT command_id FROM agent_command_jobs WHERE command_id LIKE ? ESCAPE '\\' AND {clause} LIMIT 2", (f"{escaped}%", *values)).fetchall()
+            return rows[0]["command_id"] if len(rows) == 1 else None
 
     def suspend_command(self, command_id: str, state_json: str, tool_call_id: str) -> None:
         with closing(self.connect()) as connection:
             connection.execute(
-                "UPDATE agent_command_jobs SET status = 'suspended', state = ?, suspended_tool_call_id = ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?",
+                "UPDATE agent_command_jobs SET status = 'suspended', state = ?, suspended_tool_call_id = ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ? AND status IN ('pending','running')",
                 (state_json, tool_call_id, command_id)
             )
             connection.commit()
 
-    def get_suspended_command(self, conversation_id: str) -> tuple[str, str, str] | None:
+    def get_suspended_command(self, conversation_id: str, owner=None) -> tuple[str, str, str] | None:
         """Returns (command_id, state_json, suspended_tool_call_id) of the most recent suspended job."""
         with closing(self.connect()) as connection:
+            clause, values = self.owner_filter(owner)
             row = connection.execute(
-                "SELECT command_id, state, suspended_tool_call_id FROM agent_command_jobs WHERE conversation_id = ? AND status = 'suspended' ORDER BY id DESC LIMIT 1",
-                (conversation_id,)
+                f"SELECT command_id, state, suspended_tool_call_id FROM agent_command_jobs WHERE conversation_id = ? AND {clause} AND status = 'suspended' ORDER BY id DESC LIMIT 1",
+                (conversation_id, *values)
             ).fetchone()
             if row and row["state"] and row["suspended_tool_call_id"]:
                 return (row["command_id"], row["state"], row["suspended_tool_call_id"])
         return None
 
-    def clear_suspended_command(self, conversation_id: str) -> int:
+    def clear_suspended_command(self, conversation_id: str, owner=None) -> int:
         """Cancel suspended jobs so the next message cannot resume old context."""
         with closing(self.connect()) as connection:
+            clause, values = self.owner_filter(owner)
             cursor = connection.execute(
-                "UPDATE agent_command_jobs SET status = 'cancelled', state = NULL, suspended_tool_call_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND status = 'suspended'",
-                (conversation_id,),
+                f"UPDATE agent_command_jobs SET status = 'cancelled', state = NULL, suspended_tool_call_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND {clause} AND status = 'suspended'",
+                (conversation_id, *values),
             )
             connection.commit()
             return cursor.rowcount
@@ -327,14 +345,14 @@ class CommunicationStore:
             connection.execute(
                 f"""
                 UPDATE agent_command_jobs
-                SET status = ?,
+                SET status = CASE WHEN status IN ('cancel_requested','cancelled') AND ? IN ('completed','failed','running') THEN 'cancelled' ELSE ? END,
                     {attempts_sql}
                     result_text = COALESCE(?, result_text),
                     last_error = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE command_id = ?
                 """,
-                (status, result_text, last_error, command_id),
+                (status, status, result_text, last_error, command_id),
             )
             connection.commit()
 
@@ -351,6 +369,7 @@ def _command_from_row(row: sqlite3.Row) -> AgentCommand:
         requires_confirmation=bool(row["requires_confirmation"]),
         source_message_id=int(row["source_message_id"]) if row["source_message_id"] is not None else None,
         attachments=_PENDING_ATTACHMENTS.get(command_id, ()),
+        project=str(row["project"]),
     )
 
 

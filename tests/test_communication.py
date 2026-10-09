@@ -12,6 +12,13 @@ from communication_models import AgentCommand, InboundAttachment, OutboundMessag
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, enqueue_adapter_events
 from skills import SkillMatcher, SkillRegistry
+from agent_runtime import AgentRuntime
+
+
+def isolated_runtime():
+    return AgentRuntime(messages=[{"role": "system", "content": "system"}], guard=MagicMock(), memory=None,
+        memory_searcher=None, skill_matcher=None, memory_worker=None, memory_classifier_factory=None,
+        semantic_extractor=None, procedure_matcher=None, run_agent=MagicMock())
 
 
 def telegram_update(text="hello", update_id=100, message_id=7):
@@ -256,7 +263,7 @@ class CommunicationTests(unittest.TestCase):
         self.assertEqual(matches[0].skill.name, "mybrain_query_cli")
 
     def test_agent_runtime_command_runner_uses_shared_turn_flow(self):
-        runtime = MagicMock()
+        runtime = isolated_runtime()
         attachment = InboundAttachment("note.txt", "text/plain", b"hello")
         command = AgentCommand(
             command_id="1",
@@ -273,14 +280,16 @@ class CommunicationTests(unittest.TestCase):
             "communication_worker.run_agent_turn",
             return_value=SimpleNamespace(reply="agent reply"),
         ) as run_agent_turn:
-            runner = agent_runtime_command_runner(runtime, store=MagicMock())
+            runner = agent_runtime_command_runner(runtime, store=SimpleNamespace(is_cancel_requested=lambda key: False))
             reply = runner(command)
 
         self.assertEqual(reply.reply, "agent reply")
-        run_agent_turn.assert_called_once_with("hello agent", runtime, attachments=(attachment,))
+        self.assertEqual(run_agent_turn.call_args.args[0], "hello agent")
+        self.assertIsNot(run_agent_turn.call_args.args[1], runtime)
+        self.assertEqual(run_agent_turn.call_args.kwargs["attachments"], (attachment,))
 
     def test_agent_runtime_command_runner_auto_approves_command_runs(self):
-        runtime = MagicMock()
+        runtime = isolated_runtime()
         command = AgentCommand(
             command_id="1",
             platform="telegram",
@@ -295,7 +304,7 @@ class CommunicationTests(unittest.TestCase):
             return SimpleNamespace(reply=str(base._auto_approve_commands.get()))
 
         with patch("communication_worker.run_agent_turn", side_effect=run_turn):
-            runner = agent_runtime_command_runner(runtime, store=MagicMock())
+            runner = agent_runtime_command_runner(runtime, store=SimpleNamespace(is_cancel_requested=lambda key: False))
             reply = runner(command)
 
         self.assertEqual(reply.reply, "True")
@@ -324,7 +333,7 @@ class CommunicationTests(unittest.TestCase):
                 store,
                 {"telegram": adapter},
                 lambda command, resumed_messages=None: SimpleNamespace(reply="unexpected"),
-                session_clearer=lambda: cleared.append(True),
+                session_clearer=lambda command: cleared.append(True),
             )
             worker.process_next()
 

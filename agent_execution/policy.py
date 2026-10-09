@@ -21,6 +21,8 @@ class ExecutionContext:
     source: str = "local"
     identity: str = "local"
     session: str = "local"
+    project: str = "default"
+    workspace: Path | None = None
     memory: Any = None
     episode_id: int | None = None
     trusted_assets: tuple[Path, ...] = ()
@@ -107,12 +109,13 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
         if name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}:
             values = {"reason": "", "superseded_by": None, **values}
             context = _context.get()
-            authorization = (context.identity, context.session, name, canonical(values))
+            action = f"{context.project}:{name}"
+            authorization = (context.identity, context.session, action, canonical(values))
             if _approved.get() != authorization:
                 store = ApprovalStore()
                 if not approval_id:
-                    raise ApprovalRequired(store.request(context.identity, context.session, name, values))
-                store.consume(approval_id, context.identity, context.session, name, values)
+                    raise ApprovalRequired(store.request(context.identity, context.session, action, values))
+                store.consume(approval_id, context.identity, context.session, action, values)
     except PermissionError as error:
         _audit_denial(name, str(error))
         if isinstance(error, ApprovalRequired):

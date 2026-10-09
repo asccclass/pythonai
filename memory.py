@@ -13,6 +13,10 @@ DEFAULT_MEMORY_DB = Path(__file__).resolve().parent / "memory" / "memory.db"
 
 
 def memory_db_path() -> Path:
+    from agent_execution.sessions import remote_memory_path
+    remote = remote_memory_path()
+    if remote is not None:
+        return remote
     return Path(os.environ.get("MEMORY_DB_PATH", DEFAULT_MEMORY_DB))
 
 

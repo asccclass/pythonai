@@ -14,19 +14,36 @@ CommandRunner = Callable[[AgentCommand, list | None], AgentTurnResult]
 
 
 def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStore) -> CommandRunner:
+    from agent_execution.sessions import RuntimeSessions, project_workspace
+    sessions = RuntimeSessions(runtime)
+
+    def key(command):
+        return (f"{command.platform}:{command.sender_id}", f"{command.platform}:{command.conversation_id}", command.project)
+
     def run(command: AgentCommand, resumed_messages: list | None = None) -> AgentTurnResult:
         from permissions import get_user_role, set_current_role
         role = get_user_role(f"{command.platform}:{command.sender_id}")
-        runtime.check_cancelled = lambda: store.is_cancel_requested(command.command_id)
+        session_runtime, lock = sessions.get(key(command))
+        cancelled = lambda: store.is_cancel_requested(command.command_id)
+        while not lock.acquire(timeout=.1):
+            if cancelled():
+                return AgentTurnResult("Task cancelled", None)
         from agent_execution import execution_scope
-        with auto_approve_command_runs(), set_current_role(role), execution_scope(
-            source="communication", identity=f"{command.platform}:{command.sender_id}",
-            session=f"{command.platform}:{command.conversation_id}",
-            check_cancelled=runtime.check_cancelled):
-            if resumed_messages is not None:
-                return resume_agent_turn(resumed_messages, runtime)
-            return run_agent_turn(command.text, runtime, attachments=command.attachments)
+        try:
+            if cancelled():
+                return AgentTurnResult("Task cancelled", None)
+            session_runtime.check_cancelled = cancelled
+            with auto_approve_command_runs(), set_current_role(role), execution_scope(
+                source="communication", identity=key(command)[0], session=key(command)[1],
+                project=command.project, workspace=project_workspace(command.project), check_cancelled=cancelled):
+                if resumed_messages is not None:
+                    return resume_agent_turn(resumed_messages, session_runtime)
+                return run_agent_turn(command.text, session_runtime, attachments=command.attachments)
+        finally:
+            session_runtime.check_cancelled = None
+            lock.release()
 
+    run.clear_session = lambda command: sessions.clear(key(command))
     return run
 
 
@@ -36,7 +53,7 @@ class CommunicationWorker:
         store: CommunicationStore,
         adapters: dict[str, CommunicationAdapter],
         command_runner: CommandRunner,
-        session_clearer: Callable[[], None] | None = None,
+        session_clearer: Callable[[AgentCommand], None] | None = None,
     ) -> None:
         self.store = store
         self.adapters = adapters
@@ -68,7 +85,8 @@ class CommunicationWorker:
         if not pending:
             return None
         command = pending[0]
-        self.store.mark_command_running(command.command_id)
+        if not self.store.mark_command_running(command.command_id):
+            return None
 
         text = command.text.strip()
         from agent_execution.approvals import human_command
@@ -81,20 +99,23 @@ class CommunicationWorker:
             self._send_reply(command, decision)
             return self.store.command_by_id(command.command_id)
         if text.startswith("/status"):
-            jobs = self.store.query_jobs_status(limit=5)
+            jobs = self.store.query_jobs_status(limit=5, owner=command)
             lines = ["📋 Recent Jobs:"]
             for j in jobs:
                 status_icon = "⏳" if j.status == "pending" else "🏃" if j.status == "running" else "✅" if j.status == "completed" else "❌"
                 lines.append(f"{status_icon} [{j.status}] {j.command_id[:8]}: {j.text[:30]}")
-            result_text = "\\n".join(lines)
+            result_text = "\n".join(lines)
             self.store.complete_command(command.command_id, result_text)
             self._send_reply(command, result_text)
             return self.store.command_by_id(command.command_id)
 
         if text == "/clear" or text == "/reset":
-            if self.session_clearer is not None:
-                self.session_clearer()
-            self.store.clear_suspended_command(command.conversation_id)
+            self.store.cancel_session(command)
+            if hasattr(self.command_runner, "clear_session"):
+                self.command_runner.clear_session(command)
+            elif self.session_clearer is not None:
+                self.session_clearer(command)
+            self.store.clear_suspended_command(command.conversation_id, owner=command)
             result_text = "✅ 對話 session 已清除，後續訊息將從新的上下文開始。"
             self.store.complete_command(command.command_id, result_text)
             self._send_reply(command, result_text)
@@ -104,9 +125,9 @@ class CommunicationWorker:
             parts = text.split()
             if len(parts) > 1:
                 target_id = parts[1]
-                resolved_id = self.store.resolve_command_id(target_id)
+                resolved_id = self.store.resolve_command_id(target_id, owner=command)
                 if resolved_id:
-                    if self.store.cancel_command(resolved_id):
+                    if self.store.cancel_command(resolved_id, owner=command):
                         result_text = f"✅ Cancel requested for job {resolved_id[:8]}"
                     else:
                         result_text = f"❌ Could not cancel job {resolved_id[:8]} (may be already completed or cancelled)"
@@ -119,7 +140,7 @@ class CommunicationWorker:
             self._send_reply(command, result_text)
             return self.store.command_by_id(command.command_id)
 
-        suspended_job = self.store.get_suspended_command(command.conversation_id) if not text.startswith("/") else None
+        suspended_job = self.store.get_suspended_command(command.conversation_id, owner=command) if not text.startswith("/") else None
 
         import json
 
@@ -139,16 +160,25 @@ class CommunicationWorker:
                             "content": text
                         })
                         resumed_messages = messages
+                        if not self.store.mark_command_running(suspended_id):
+                            raise PermissionError("Suspended job was already resumed or cancelled")
                         self.store.complete_command(command.command_id, "Forwarded to suspended job")
                         target_command = self.store.command_by_id(suspended_id)
-                        self.store.mark_command_running(suspended_id)
                     except Exception as e:
+                        resumed_messages = None
                         print(f"Error resuming job: {e}")
                 
+                import inspect
                 try:
-                    turn_result = self.command_runner(target_command, resumed_messages)
+                    inspect.signature(self.command_runner).bind(target_command, resumed_messages)
                 except TypeError:
                     turn_result = self.command_runner(target_command)
+                else:
+                    turn_result = self.command_runner(target_command, resumed_messages)
+                if self.store.is_cancel_requested(target_command.command_id):
+                    self.store.complete_command(target_command.command_id, "Task cancelled")
+                    self._send_reply(target_command, "Task cancelled")
+                    return
                 
                 if isinstance(turn_result, str):
                     self.store.complete_command(target_command.command_id, turn_result)
@@ -223,6 +253,9 @@ def _enqueue_verified_events(store, adapter, headers, body, query=None, allowed_
     commands = []
     allowed = normalize_allowed_senders(allowed_senders)
     for inbound in adapter.parse_events(headers, body, query):
+        from dataclasses import replace
+        import os
+        inbound = replace(inbound, project=os.environ.get("COMM_PROJECT", "default"))
         if allowed is not None and inbound.sender_key not in allowed:
             raise PermissionError(f"{inbound.platform} sender is not allowed")
         command, inserted = store.ingest_inbound_message(inbound)

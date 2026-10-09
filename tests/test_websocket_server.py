@@ -41,7 +41,7 @@ class WebSocketServerTests(unittest.TestCase):
         self.assertEqual(message["type"], "welcome")
         self.assertEqual(message["payload"]["resumed"], True)
         self.assertIn("session_id", message["payload"])
-        self.assertEqual(hub.sessions["desktop-andy-01"].user_id, "andy")
+        self.assertEqual(hub.sessions[("andy", "default", "desktop-andy-01")].user_id, "andy")
 
     def test_ping_returns_pong_with_ref(self):
         with patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1"}, clear=False):

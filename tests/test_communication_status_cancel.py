@@ -77,7 +77,7 @@ def test_communication_worker_cancel_command(tmp_path):
         platform_message_id="msg2",
         conversation_id="conv1",
         sender_id="user1",
-        text=f"/cancel {cmd1.command_id[:8]}",
+        text=f"/cancel {cmd1.command_id}",
         raw_payload={},
     )
     cmd2, _ = store.ingest_inbound_message(msg2)

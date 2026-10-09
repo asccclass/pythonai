@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ def now_ms() -> int:
 
 
 def websocket_tokens() -> dict[str, str]:
-    raw = os.environ.get("COMPANION_WS_TOKENS") or os.environ.get("COMPANION_WS_TOKEN") or "change-me:andy"
+    raw = os.environ.get("COMPANION_WS_TOKENS") or os.environ.get("COMPANION_WS_TOKEN") or ""
     tokens: dict[str, str] = {}
     for item in raw.split(","):
         item = item.strip()
@@ -46,6 +47,7 @@ class Session:
     device_id: str
     device_type: str = "web"
     user_id: str = "user"
+    project: str = "default"
     caps: set[str] = field(default_factory=set)
     ws: WebSocket | None = None
     seq: int = 0
@@ -85,20 +87,20 @@ class Session:
 
 class Hub:
     def __init__(self) -> None:
-        self.sessions: dict[str, Session] = {}
+        self.sessions: dict[tuple[str, str, str], Session] = {}
         self.telegram_fallbacks: list[str] = []
 
-    def get(self, device_id: str, device_type: str = "web", user_id: str = "user") -> Session:
-        session = self.sessions.get(device_id)
+    def get(self, device_id: str, device_type: str = "web", user_id: str = "user", project="default") -> Session:
+        key = (user_id, project, device_id)
+        session = self.sessions.get(key)
         if session is None:
-            session = Session(device_id=device_id, device_type=device_type, user_id=user_id)
-            self.sessions[device_id] = session
+            session = Session(device_id=device_id, device_type=device_type, user_id=user_id, project=project)
+            self.sessions[key] = session
         session.device_type = device_type or session.device_type
-        session.user_id = user_id or session.user_id
         return session
 
-    def pick_for_proactive(self) -> Session | None:
-        online = [session for session in self.sessions.values() if session.ws is not None]
+    def pick_for_proactive(self, user_id: str, project="default") -> Session | None:
+        online = [session for session in self.sessions.values() if session.ws is not None and session.user_id == user_id and session.project == project]
         if not online:
             return None
         online.sort(
@@ -117,9 +119,13 @@ class Hub:
         text: str,
         emotion: str = "happy",
         priority: str = "normal",
+        user_id: str | None = None,
+        project: str = "default",
     ) -> dict[str, Any] | None:
         payload = {"reason": reason, "text": text, "emotion": emotion, "tts": True, "priority": priority}
-        session = self.pick_for_proactive()
+        if not user_id:
+            raise ValueError("Proactive messages require a target user")
+        session = self.pick_for_proactive(user_id, project)
         if session is not None:
             return await session.send("proactive", payload)
         if priority == "high":
@@ -163,7 +169,13 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if not device_id:
             await ws.close(code=4400)
             return
-        session = hub.get(device_id, str(payload.get("device_type") or "web"), tokens[token])
+        project = str(payload.get("project") or "default")
+        if len(device_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", project):
+            await ws.close(code=4400)
+            return
+        session = hub.get(device_id, str(payload.get("device_type") or "web"), tokens[token], project)
+        if session.ws is not None:
+            await session.ws.close(code=4409)
         session.ws = ws
         session.caps = {str(capability) for capability in payload.get("capabilities", [])}
         last_seq = int(payload.get("last_seq") or 0)
@@ -202,7 +214,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if session is not None:
             await session.send("error", {"code": "bad_message", "message": "invalid JSON", "retryable": False})
     finally:
-        if session is not None:
+        if session is not None and session.ws is ws:
             session.ws = None
 
 
@@ -274,7 +286,7 @@ async def handle_event(session: Session, event: dict[str, Any]) -> None:
     elif name == "user.active":
         session.last_active = time.time()
     elif name == "user.arrived":
-        await hub.push_proactive("greeting", "歡迎回來！", "happy")
+        await hub.push_proactive("greeting", "歡迎回來！", "happy", user_id=session.user_id, project=session.project)
     elif name == "user.idle":
         session.state["idle_seconds"] = data.get("seconds")
 
