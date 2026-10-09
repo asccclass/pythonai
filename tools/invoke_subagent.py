@@ -1,3 +1,5 @@
+from contextvars import copy_context
+from agent_execution import policy_tool
 import threading
 import uuid
 import json
@@ -16,7 +18,7 @@ PERSONAS = {
 }
 
 def subagent_worker(agent_id: str, persona: str, task: str):
-    state_file = SUBAGENT_STATE_DIR / f"{agent_id}.json"
+    state_file = resolve_workspace_path(f"subagents/{agent_id}.json")
     
     try:
         from server import run_agent, build_system_prompt
@@ -52,6 +54,7 @@ def subagent_worker(agent_id: str, persona: str, task: str):
         }, ensure_ascii=False), encoding="utf-8")
 
 
+@policy_tool("invoke_subagent")
 def invoke_subagent(persona: str, task: str) -> str:
     """Spawns a subagent asynchronously and returns its task ID."""
     
@@ -59,8 +62,9 @@ def invoke_subagent(persona: str, task: str) -> str:
         return f"Error: persona must be one of {list(PERSONAS.keys())}"
         
     agent_id = str(uuid.uuid4())[:8]
-    state_file = SUBAGENT_STATE_DIR / f"{agent_id}.json"
+    state_file = resolve_workspace_path(f"subagents/{agent_id}.json")
     
+    state_file.parent.mkdir(parents=True, exist_ok=True)
     # Initialize state as running
     state_file.write_text(json.dumps({
         "status": "running",
@@ -68,7 +72,8 @@ def invoke_subagent(persona: str, task: str) -> str:
     }, ensure_ascii=False), encoding="utf-8")
     
     # Start thread
-    thread = threading.Thread(target=subagent_worker, args=(agent_id, persona, task))
+    context = copy_context()
+    thread = threading.Thread(target=context.run, args=(subagent_worker, agent_id, persona, task))
     thread.daemon = True
     thread.start()
     

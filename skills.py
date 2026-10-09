@@ -179,7 +179,11 @@ class SkillExecutor:
                 args = self._with_trusted_skill_assets(tool_name, args, skill)
                 self._print_status(f"Skill {skill.name} step {index}: {tool_name}")
                 self._log("skill_step", metadata={"skill": skill.name, "index": index, "tool": tool_name, "args": args})
-                output = self.tools[tool_name](**args)
+                from agent_execution import execute_tool, execution_scope
+                with execution_scope(source="skill", memory=self.memory,
+                                     episode_id=self.episode_id,
+                                     trusted_assets=(skill.path.resolve(),)):
+                    output = execute_tool(tool_name, args, self.tools[tool_name])
                 result = SkillStepResult(index, tool_name, args, True, output=output)
                 steps.append(result)
                 self._print_status(f"Skill {skill.name} step {index} completed")
@@ -205,7 +209,9 @@ class SkillExecutor:
         print(f"[skill] {message}")
 
     def _with_trusted_skill_assets(self, tool_name: str, args: dict[str, Any], skill: Skill) -> dict[str, Any]:
-        if tool_name != "run_command" or "trusted_asset_roots" in args:
+        if "trusted_asset_roots" in args:
+            raise SkillExecutionError("Skill arguments cannot grant trusted_asset_roots")
+        if tool_name != "run_command":
             return args
         if not callable_accepts_keyword(self.tools[tool_name], "trusted_asset_roots"):
             return args

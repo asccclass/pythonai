@@ -9,6 +9,7 @@ from pathlib import Path
 
 from laya_guard import GuardDecision, LayaGuard
 from skills import SkillExecutor, SkillRegistry
+from agent_execution import policy_tool
 
 
 _approved_commands: set[tuple[tuple[str, ...], str | None]] = set()
@@ -74,10 +75,14 @@ def resolve_workspace_or_trusted_path(
 
 
 def validate_command_paths(command: list[str], trusted_asset_roots: list[str | Path] | None = None) -> None:
-    for item in command:
-        if not isinstance(item, str) or not looks_like_path_argument(item):
+    for index, item in enumerate(command):
+        if not isinstance(item, str):
             continue
-        resolve_workspace_or_trusted_path(item, trusted_asset_roots)
+        if index == 1 and command[0].lower() in {"cmd", "cmd.exe"} and item.lower() in {"/c", "/k"}:
+            continue
+        value = item.split("=", 1)[1] if item.startswith("-") and "=" in item else item
+        if looks_like_path_argument(value):
+            resolve_workspace_or_trusted_path(value, trusted_asset_roots)
 
 
 def looks_like_path_argument(value: str) -> bool:
@@ -271,6 +276,7 @@ def resolve_command_executable(
     return [str(resolved), *command[1:]]
 
 
+@policy_tool("run_skill")
 def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None) -> dict:
     skill = SkillRegistry().get(name)
     result = SkillExecutor(TOOLS, memory=memory, episode_id=episode_id).execute(skill, inputs or {})
@@ -326,67 +332,33 @@ TOOLS = {
 
 
 def run_tool(tool_call):
-    name = tool_call.function.name
-    try:
-        from permissions import check_tool_permission, current_role
-        if not check_tool_permission(name):
-            error_msg = f"Error: Permission denied. Role '{current_role()}' cannot execute {name}."
-            print(f"AUDIT: {error_msg}")
-            if memory and episode_id:
-                try:
-                    from agent_runtime import log_episode_event
-                    log_episode_event(memory, episode_id, "permission_denied", content=error_msg, metadata={"tool": name, "role": current_role()})
-                except Exception:
-                    pass
-            return error_msg
-    except ImportError:
-        pass
-    args = json.loads(tool_call.function.arguments)
-    if name == "run_command":
-        args.pop("trusted_asset_roots", None)
-    if name not in TOOLS:
-        return f"Error: Tool '{name}' not found"
-    try:
-        result = TOOLS[name](**args)
-        return result
-    except Exception as e:
-        return f"Error: {e}"
+    return run_tool_with_context(tool_call)
 
 
 def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None):
+    from agent_execution import execute_tool, execution_scope
     name = tool_call.function.name
     try:
-        from permissions import check_tool_permission, current_role
-        if not check_tool_permission(name):
-            error_msg = f"Error: Permission denied. Role '{current_role()}' cannot execute {name}."
-            print(f"AUDIT: {error_msg}")
-            if memory and episode_id:
-                try:
-                    from agent_runtime import log_episode_event
-                    log_episode_event(memory, episode_id, "permission_denied", content=error_msg, metadata={"tool": name, "role": current_role()})
-                except Exception:
-                    pass
-            return error_msg
-    except ImportError:
-        pass
-    args = json.loads(tool_call.function.arguments)
-    if name == "run_command":
-        args.pop("trusted_asset_roots", None)
-    if name in ("run_skill", "manage_memory"):
-        args["memory"] = memory
-        args["episode_id"] = episode_id
-    if name.startswith("mcp_"):
-        try:
+        args = json.loads(tool_call.function.arguments)
+        if not isinstance(args, dict):
+            raise ValueError("Tool arguments must be an object")
+        # These fields are controlled by the runtime, never by the model.
+        for field in ("trusted_asset_roots", "memory", "episode_id"):
+            args.pop(field, None)
+        if name in ("run_skill", "manage_memory"):
+            args.update(memory=memory, episode_id=episode_id)
+        if name.startswith("mcp_"):
             from mcp_manager import execute_mcp_tool
-            return execute_mcp_tool(name, args)
-        except Exception as e:
-            return f"Error executing MCP tool: {e}"
-    if name not in TOOLS:
-        return f"Error: Tool '{name}' not found"
-    try:
-        return TOOLS[name](**args)
-    except Exception as e:
-        return f"Error: {e}"
+            function = lambda **values: execute_mcp_tool(name, values)
+        else:
+            function = TOOLS.get(name)
+        if function is None:
+            return f"Error: Tool '{name}' not found"
+        with execution_scope(memory=memory, episode_id=episode_id):
+            return execute_tool(name, args, function)
+    except Exception as error:
+        return f"Error: {error}"
+
 
 TOOLS_SCHEMAS = [
     {
@@ -749,7 +721,8 @@ def load_dynamic_tools():
             sys.modules[tool_name] = module
             spec.loader.exec_module(module)
             func = getattr(module, tool_name)
-            TOOLS[tool_name] = func
+            from agent_execution import policy_tool
+            TOOLS[tool_name] = policy_tool(tool_name)(func)
             
             if "function" not in schema:
                 schema = {"type": "function", "function": schema}
@@ -760,12 +733,16 @@ def load_dynamic_tools():
         except Exception as e:
             print(f"Failed to load dynamic tool {tool_name}: {e}")
 
+@policy_tool("create_dynamic_tool")
 def create_dynamic_tool(name: str, code: str, schema_json: str) -> str:
     try:
         import json
         schema = json.loads(schema_json)
         if "name" not in schema and ("function" not in schema or "name" not in schema["function"]):
             return "Error: Schema must contain a 'name' field either at the top level or inside 'function'."
+        import re
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+            return "Error: Tool name must be a lowercase Python identifier"
         py_file = DYNAMIC_TOOLS_DIR / f"{name}.py"
         schema_file = DYNAMIC_TOOLS_DIR / f"{name}.json"
         py_file.write_text(code, encoding="utf-8")

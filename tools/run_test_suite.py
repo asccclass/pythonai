@@ -1,3 +1,4 @@
+from agent_execution import policy_tool, resolve_path
 import os
 import sys
 import subprocess
@@ -7,11 +8,12 @@ from pathlib import Path
 _failure_counts = {}
 MAX_RETRIES = 5
 
+@policy_tool("run_test_suite")
 def run_test_suite(test_target: str, framework: str = "pytest") -> str:
     global _failure_counts
     
     workspace_dir = Path(os.getcwd())
-    target_path = workspace_dir / test_target
+    target_path = resolve_path(test_target)
     
     if not target_path.exists():
         return f"Error: Test target '{test_target}' does not exist."
@@ -26,7 +28,7 @@ def run_test_suite(test_target: str, framework: str = "pytest") -> str:
         
     try:
         # Run safely with timeout
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, cwd=resolve_path("."), capture_output=True, text=True, timeout=30)
         
         output = f"Exit Code: {result.returncode}\n\n"
         

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextvars import copy_context
 
 from typing import Callable, Iterable
 import threading
@@ -17,7 +18,9 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
         from permissions import get_user_role, set_current_role
         role = get_user_role(f"{command.platform}:{command.sender_id}")
         runtime.check_cancelled = lambda: store.is_cancel_requested(command.command_id)
-        with auto_approve_command_runs(), set_current_role(role):
+        from agent_execution import execution_scope
+        with auto_approve_command_runs(), set_current_role(role), execution_scope(
+            source="communication", identity=f"{command.platform}:{command.sender_id}"):
             if resumed_messages is not None:
                 return resume_agent_turn(resumed_messages, runtime)
             return run_agent_turn(command.text, runtime, attachments=command.attachments)
@@ -160,7 +163,7 @@ class CommunicationWorker:
                     self._threads = [thread for thread in self._threads if thread is not current]
 
         # Run normal agent commands in a background thread so the worker can keep processing /cancel and /status
-        thread = threading.Thread(target=background_run)
+        thread = threading.Thread(target=copy_context().run, args=(background_run,))
         thread.daemon = True
         with self._threads_lock:
             self._threads.append(thread)

@@ -59,66 +59,71 @@ def extract_nodes_from_file(file_path: Path):
                 "end_line": node.end_point[0] + 1,
                 "docstring": docstring
             })
-            
+
         for child in node.children:
             traverse(child)
-            
+
     traverse(tree.root_node)
     return nodes
 
 def build_index(workspace_dir: str):
-    import sys
-    sys.path.append(os.path.abspath(workspace_dir))
+    from base import resolve_workspace_path
+    root_path = resolve_workspace_path(workspace_dir)
     
     from server import get_client, OLLAMA_EMBEDDING_MODEL
     from vector_search import OpenAICompatibleEmbeddingProvider
     
     provider = OpenAICompatibleEmbeddingProvider(get_client, OLLAMA_EMBEDDING_MODEL)
     
-    db_path = Path(workspace_dir) / 'workspace' / 'codebase_index.db'
+    db_path = resolve_workspace_path('codebase_index.db')
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = init_db(str(db_path))
     cursor = conn.cursor()
     
-    root_path = Path(workspace_dir)
-    count = 0
-    for py_file in root_path.rglob("*.py"):
-        if 'venv' in py_file.parts or '.git' in py_file.parts or '__pycache__' in py_file.parts:
-            continue
-            
-        rel_path = str(py_file.relative_to(root_path)).replace("\\", "/")
-        print(f"Indexing {rel_path}...")
-        
-        try:
-            nodes = extract_nodes_from_file(py_file)
-        except Exception as e:
-            print(f"Failed parsing {rel_path}: {e}")
-            continue
-            
-        for node in nodes:
-            # Prepare text for embedding
-            text_to_embed = f"File: {rel_path}\nType: {node['type']}\nName: {node['name']}\nDescription: {node['docstring']}"
-            
+    try:
+        count = 0
+        for py_file in root_path.rglob("*.py"):
+            if 'venv' in py_file.parts or '.git' in py_file.parts or '__pycache__' in py_file.parts:
+                continue
+
             try:
-                embedding = provider.embed(text_to_embed)
-                emb_json = json.dumps(embedding)
+                resolve_workspace_path(py_file)
+            except PermissionError:
+                continue
+            rel_path = str(py_file.relative_to(root_path)).replace("\\", "/")
+            print(f"Indexing {rel_path}...")
+        
+            try:
+                nodes = extract_nodes_from_file(py_file)
             except Exception as e:
-                print(f"Embedding failed for {node['name']}: {e}")
-                emb_json = "[]"
+                print(f"Failed parsing {rel_path}: {e}")
+                continue
+
+            for node in nodes:
+                # Prepare text for embedding
+                text_to_embed = f"File: {rel_path}\nType: {node['type']}\nName: {node['name']}\nDescription: {node['docstring']}"
+
+                try:
+                    embedding = provider.embed(text_to_embed)
+                    emb_json = json.dumps(embedding)
+                except Exception as e:
+                    print(f"Embedding failed for {node['name']}: {e}")
+                    emb_json = "[]"
                 
-            cursor.execute("""
-                INSERT INTO code_index (file_path, node_type, name, start_line, end_line, docstring, embedding)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(file_path, name) DO UPDATE SET
-                    start_line=excluded.start_line,
-                    end_line=excluded.end_line,
-                    docstring=excluded.docstring,
-                    embedding=excluded.embedding
-            """, (rel_path, node['type'], node['name'], node['start_line'], node['end_line'], node['docstring'], emb_json))
-            count += 1
-            
-    conn.commit()
-    conn.close()
+                cursor.execute("""
+                    INSERT INTO code_index (file_path, node_type, name, start_line, end_line, docstring, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(file_path, name) DO UPDATE SET
+                        start_line=excluded.start_line,
+                        end_line=excluded.end_line,
+                        docstring=excluded.docstring,
+                        embedding=excluded.embedding
+                """, (rel_path, node['type'], node['name'], node['start_line'], node['end_line'], node['docstring'], emb_json))
+                count += 1
+
+        conn.commit()
+    finally:
+        conn.close()
     print(f"Indexed {count} functions/classes successfully.")
 
 if __name__ == "__main__":

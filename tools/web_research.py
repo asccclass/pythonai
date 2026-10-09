@@ -1,9 +1,11 @@
+from agent_execution import policy_tool, resolve_path
 import json
 import urllib.request
 import urllib.parse
 from bs4 import BeautifulSoup
 import markdownify
 
+@policy_tool("web_research")
 def web_research(query: str, max_results: int = 3) -> str:
     """
     Perform deep web research on a specific topic.

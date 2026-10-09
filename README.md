@@ -10,8 +10,8 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | --- | --- | --- | --- |
 | Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；預設最多 15 次迭代，規劃主要靠提示，尚無持久化任務 DAG | `server.py`, `agent_runtime.py` |
 | Provider 相容與重試 | OpenAI-compatible endpoint、模型／embedding 設定、暫時性 API 錯誤重試與 Retry-After | 已實作；主要使用 Chat Completions，未建立多 provider 路由及總成本上限 | `server.py`, `request_budget.py` |
-| 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；核心工具檢查 workspace 路徑，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
-| Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
+| 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；共用政策檢查角色與路徑／symlink，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
+| Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、共用政策、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
 | 動態工具 | 載入 tools/*.py + JSON schema、create_dynamic_tool 建立並重新載入 | 基礎實作；載入會執行 Python 模組，尚無發布前測試、版本審核及撤回流程 | `base.py`, `tools/` |
 | MCP | stdio JSON-RPC 子程序、初始化、工具發現、schema 轉換、呼叫路由與 shutdown | 已實作；啟動失敗記於 skipped_servers；未見 remote HTTP/OAuth 與自動重連管理 | `mcp_manager.py`, `mcp_config.json` |
 | Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；一般 Agent 對話仍以 runtime 記憶體持有，事件紀錄不等於完整任務續跑 | `memory.py`, `agent_runtime.py` |
@@ -26,14 +26,14 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；暫停／續跑機制已實作，但 ask_user 未列入預設工具 schema；取消屬合作式檢查，附件 bytes 暫存於記憶體，shared runtime 尚需隔離 | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由尚未整合登入與角色授權；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
 | Companion WebSocket | hello token 驗證、seq／ack、同程序重連補送、ping、chat interrupt、裝置事件及主動訊息路由 | 協定原型；brain_reply_stream 為示範回覆，Telegram fallback 僅記入清單；audio.end 回空字串，未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
-| Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，command 直接 shell 執行且無 timeout | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
+| Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；尚無 timeout | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG | 基礎實作；Laya 不可用可繼續、未配置角色預設 admin；非完整批准與最小權限框架 | `laya_guard.py`, `permissions.py`, `base.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；優先序、過濾、fail-open／closed、修改上下文、阻擋／提前回覆／回饋與稽核 | 已實作；default_hook_manager 是空 manager，需註冊政策 hook 才會執行政策 | `hooks.py`, `server.py`, `tests/test_hooks.py` |
 | 任務驗收與自修正 | 檔案／Python 語法、測試輸出、Git 前後狀態、LLM Judge、Critic feedback | 已實作；預設最多 2 次驗收修正；規則／文字輸出及 Judge 有侷限，人工交接不等於完整審批 UI | `task_evaluator.py`, `tests/test_task_evaluator.py` |
 | Sandbox | AGENT_USE_SANDBOX 啟用 Docker，無 Docker 時複製至暫存目錄執行 | 基礎實作；Docker 可寫掛載 workspace，未限制網路／資源；fallback 使用主機 subprocess，不能當作安全邊界 | `sandbox.py`, `tests/test_sandbox.py` |
-| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 基礎實作；共享 workspace／工具，無 worktree、依賴 DAG、取消、重啟恢復及結果合併治理 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
+| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 基礎實作；繼承角色／身份／執行 context，但共享 workspace／工具，無 worktree、依賴 DAG、取消、重啟恢復及結果合併治理 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
-| 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；部分 tools 直接使用 cwd／Path，未統一 workspace 邊界 | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
+| 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
 | 開發工具 | Git status／diff／commit／rollback、pytest／Python 測試 runner、venv／pip／npm、四種 scaffold | 基礎實作；Git rollback 具破壞性，尚無 PR／CI／worktree 全流程；測試 runner timeout 為 30 秒 | `tools/git_*.py`, `tools/run_test_suite.py`, `tools/env_manager.py`, `tools/project_scaffold.py` |
 | IDE 整合 | VS Code Inline Chat、Ghost Text、HTTP 串流替換選取程式碼 | 原型；獨立 ide_server.py，非完整 Agent 任務 UI，尚無修改預覽、驗收與 robust cancellation | `ide_server.py`, `vscode-extension/` |
 | 觀測與診斷 | episodes／hooks／Skills／記憶健康 CLI、Skill Doctor 產生 agent_persona 建議 | 已實作；Doctor --apply 可寫記憶，尚無品質 A/B 評測及完整分散式 tracing／成本報表 | `observability.py`, `skill_doctor.py` |
@@ -316,3 +316,11 @@ Run syntax checks:
 ```powershell
 python -m py_compile base.py server.py forgetting.py laya_guard.py memory.py memory_classifier.py memory_review.py observability.py procedure_similarity.py request_budget.py retrieval.py retrieval_ranker.py semantic_extractor.py skills.py vector_search.py working_memory.py tests\test_base.py tests\test_forgetting.py tests\test_laya_guard.py tests\test_memory.py tests\test_memory_classifier.py tests\test_memory_review.py tests\test_observability.py tests\test_procedure_similarity.py tests\test_retrieval.py tests\test_retrieval_ranker.py tests\test_semantic_extractor.py tests\test_skills.py tests\test_vector_search.py tests\test_server.py tests\test_working_memory.py
 ```
+
+## 共用執行政策（T01）
+
+`agent_execution/` 將模型工具、Skill 步驟、註冊動態工具、MCP、子代理及排程接入相同角色與路徑檢查。拒絕事件包含來源與身份；operator 不可藉由 run_skill 執行寫入／命令工具。Skill 的 trusted_asset_roots 僅由執行器指定，模型／Skill 參數不能自行擴大信任範圍。
+
+Git 工具只操作 workspace 內的 repository。設定 `AGENT_WORKSPACE_ROOT` 指向欲開發的 repository；`build_codebase_index.py` 與 `search_codebase` 共用該 workspace 的 `codebase_index.db`。排程 command 建議使用 JSON argv，如 `{ "command": ["python", "job.py"] }`；舊的簡單 command 字串仍會轉成 argv，shell operator 字串會拒絕。舊排程以 local/admin 遷移，新排程保存建立者身份與角色。
+
+應用政策不等同 OS 隔離；可執行 Python、shell 或第三方 MCP 的內部行為仍須以 T02 沙箱限制。

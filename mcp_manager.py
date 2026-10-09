@@ -284,5 +284,5 @@ def get_mcp_tools():
 
 def execute_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
     """Helper to route execution."""
-    manager = get_mcp_manager()
-    return manager.call_tool(tool_name, arguments)
+    from agent_execution import execute_tool
+    return execute_tool(tool_name, arguments, lambda **values: get_mcp_manager().call_tool(tool_name, values))

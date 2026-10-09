@@ -1,8 +1,10 @@
+from agent_execution import policy_tool, resolve_path
 import os
 import sys
 import subprocess
 from pathlib import Path
 
+@policy_tool("ast_edit")
 def ast_edit(file_path: str, node_type: str, node_name: str, new_code: str) -> str:
     """
     node_type: 'function_definition' or 'class_definition'
@@ -13,9 +15,7 @@ def ast_edit(file_path: str, node_type: str, node_name: str, new_code: str) -> s
     except ImportError:
         return "Error: tree_sitter or tree_sitter_python not installed"
 
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = Path(os.getcwd()) / path
+    path = resolve_path(file_path)
         
     if not path.exists():
         return f"Error: File {path} not found"

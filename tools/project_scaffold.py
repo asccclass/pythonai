@@ -1,14 +1,16 @@
+from agent_execution import policy_tool, resolve_path
 import os
 from pathlib import Path
 from base import workspace_root
 import json
 
+@policy_tool("project_scaffold")
 def project_scaffold(project_name: str, framework: str) -> str:
     """
     Scaffold a new project structure based on the requested framework.
     """
     try:
-        project_dir = workspace_root() / project_name
+        project_dir = resolve_path(project_name)
         if project_dir.exists():
             return f"Error: Directory {project_dir} already exists."
             

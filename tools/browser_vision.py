@@ -1,3 +1,4 @@
+from agent_execution import policy_tool, resolve_path
 import json
 import base64
 import time
@@ -25,6 +26,7 @@ def execute_playwright_actions(page, actions):
         except Exception as e:
             print(f"[BrowserVision] Action {act_type} on {selector} failed: {e}")
 
+@policy_tool("browser_vision")
 def browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Describe this page in detail.") -> str:
     """
     Opens a URL, performs optional UI actions (click, type), and sends a screenshot to the Vision LLM.

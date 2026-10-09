@@ -1,3 +1,4 @@
+from agent_execution import policy_tool, resolve_path
 import os
 import json
 import sqlite3
@@ -14,16 +15,17 @@ def cosine_similarity(first: list[float], second: list[float]) -> float:
         return 0.0
     return numerator / (first_norm * second_norm)
 
+@policy_tool("search_codebase")
 def search_codebase(query: str, limit: int = 5) -> str:
-    workspace_dir = Path(os.getcwd())
-    db_path = workspace_dir / 'workspace' / 'codebase_index.db'
+    workspace_dir = resolve_path(".")
+    db_path = resolve_path('codebase_index.db')
     
     if not db_path.exists():
         return "Error: Codebase index does not exist. Run build_codebase_index.py first."
         
     try:
         import sys
-        sys.path.append(os.path.abspath(workspace_dir))
+        # Runtime modules are already available from the application import path.
         from server import get_client, OLLAMA_EMBEDDING_MODEL
         from vector_search import OpenAICompatibleEmbeddingProvider
         

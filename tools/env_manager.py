@@ -1,9 +1,11 @@
+from agent_execution import policy_tool, resolve_path
 import subprocess
 import os
 import json
 from pathlib import Path
-from base import workspace_root
+from base import validate_command_paths
 
+@policy_tool("env_manager")
 def env_manager(action: str, project_path: str, packages: list[str] = None) -> str:
     """
     Manage virtual environments and project dependencies.
@@ -11,7 +13,8 @@ def env_manager(action: str, project_path: str, packages: list[str] = None) -> s
     if packages is None:
         packages = []
         
-    project_dir = workspace_root() / project_path
+    validate_command_paths(packages)
+    project_dir = resolve_path(project_path)
     if not project_dir.exists():
         return f"Error: Project directory {project_dir} does not exist."
         
@@ -28,7 +31,7 @@ def env_manager(action: str, project_path: str, packages: list[str] = None) -> s
         return f"Env Manager Error: {str(e)}"
 
 def _create_venv(project_dir: Path) -> str:
-    venv_dir = project_dir / "venv"
+    venv_dir = resolve_path(project_dir / "venv")
     if venv_dir.exists():
         return f"Virtual environment already exists at {venv_dir}"
         
@@ -44,6 +47,7 @@ def _install_pip(project_dir: Path, packages: list[str]) -> str:
     # Check if venv exists
     venv_python = project_dir / "venv" / "Scripts" / "python.exe" if os.name == 'nt' else project_dir / "venv" / "bin" / "python"
     
+    resolve_path(venv_python)
     cmd = [str(venv_python) if venv_python.exists() else "python", "-m", "pip", "install"] + packages
     
     result = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True)
@@ -51,7 +55,7 @@ def _install_pip(project_dir: Path, packages: list[str]) -> str:
         return f"Failed to install pip packages:\n{result.stderr}"
         
     # Update requirements.txt
-    req_file = project_dir / "requirements.txt"
+    req_file = resolve_path(project_dir / "requirements.txt")
     existing = set()
     if req_file.exists():
         with open(req_file, "r", encoding="utf-8") as f:

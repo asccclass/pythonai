@@ -6,10 +6,13 @@
 
 ## P0：執行政策、身份與資料隔離
 
-- [ ] **T01 — 所有執行路徑共用工具政策與 workspace 邊界**
+- [x] **T01 — 所有執行路徑共用工具政策與 workspace 邊界**
   - 現況：`base.py` 核心路徑檢查與 RBAC 已存在；`tools/` 部分程式直接使用 cwd／Path，`SkillExecutor` 直接呼叫工具；排程命令直接 `shell=True`。
   - 工作：建立共用執行入口，涵蓋一般工具、Skill 步驟、MCP、動態工具、子代理及排程；解析路徑、符號連結、cwd、來源身份與工具權限。
   - 驗收：viewer／operator 不可透過 Skill、動態工具或排程繞過權限；跨 workspace 與路徑穿越均拒絕且留下可追蹤事件；合法 trusted Skill 資源仍可執行。
+  - 完成（2026-10-09）：新增 `agent_execution/` 共用政策與來源／身份 context；接入模型工具、Skill、動態工具、MCP、排程及子代理 context。工具路徑解析、Git repository 邊界、命令 option 路徑、索引位置亦已修正。
+  - 驗證：完整 pytest 349 passed；後續 MCP／索引補強及新增測試後相關 pytest 77 passed（含 18 項政策回歸）；變更檔案語法與 diff 檢查通過。Windows junction 越界拒絕已實測；未進行真實 MCP provider round trip。
+  - 邊界：此為應用層的角色與參數政策，不能限制已授權任意 Python／shell／第三方 MCP 內部副作用，OS 隔離由 T02 處理。舊排程遷移為 local/admin，新工作保存建立者身份／角色；shell operator 字串須改成 argv 或明確腳本。
 
 - [ ] **T02 — 真正的沙箱與程序生命週期管理**
   - 現況：`sandbox.py` Docker 可寫掛載 workspace，fallback 是主機 subprocess；`run_command` 未設通用 timeout。

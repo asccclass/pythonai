@@ -1,15 +1,15 @@
+from agent_execution import policy_tool, resolve_path
 import os
 from pathlib import Path
 
+@policy_tool("find_references")
 def find_references(file_path: str, line: int, column: int) -> str:
     try:
         import jedi
     except ImportError:
         return "Error: jedi not installed"
 
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = Path(os.getcwd()) / path
+    path = resolve_path(file_path)
         
     if not path.exists():
         return f"Error: File {path} not found"

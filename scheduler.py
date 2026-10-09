@@ -8,6 +8,10 @@ from contextlib import closing
 from croniter import croniter
 import traceback
 import subprocess
+import shlex
+from agent_execution import execute_tool, execution_scope
+from agent_execution.policy import current_context, policy_tool
+from permissions import current_role, set_current_role
 
 DEFAULT_SCHEDULER_DB = Path(__file__).resolve().parent / "communication" / "scheduler.db"
 
@@ -71,8 +75,13 @@ class SchedulerStore:
                 )
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(scheduled_jobs)")}
+            for name, default in (("owner_role", "admin"), ("owner_identity", "local")):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE scheduled_jobs ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
             connection.commit()
 
+    @policy_tool("schedule_job")
     def add_job(self, name: str, cron_expression: str, job_type: str, job_payload: dict, description: str = "") -> str:
         job_id = str(uuid.uuid4())
         
@@ -83,10 +92,11 @@ class SchedulerStore:
         with closing(self.connect()) as connection:
             connection.execute(
                 """
-                INSERT INTO scheduled_jobs (id, name, description, cron_expression, job_type, job_payload, next_run_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO scheduled_jobs (id, name, description, cron_expression, job_type, job_payload, next_run_at, owner_role, owner_identity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, name, description, cron_expression, job_type, json.dumps(job_payload), next_run_at)
+                (job_id, name, description, cron_expression, job_type, json.dumps(job_payload), next_run_at,
+                 current_role(), current_context().identity)
             )
             connection.commit()
         return job_id
@@ -161,13 +171,38 @@ class SchedulerStore:
 
 
 def execute_job(job: dict) -> tuple[str, str, str]:
-    job_type = job["job_type"]
-    payload = json.loads(job["job_payload"])
-    
     try:
+        return execute_tool("schedule_job", {}, lambda: _execute_job_as_owner(job))
+    except Exception as error:
+        return "failed", "", str(error)
+
+
+def _execute_job_as_owner(job: dict) -> tuple[str, str, str]:
+    with set_current_role(job.get("owner_role", "admin")), execution_scope(
+        source="scheduler", identity=job.get("owner_identity", "local")
+    ):
+        return _execute_job(job)
+
+
+def _execute_job(job: dict) -> tuple[str, str, str]:
+    try:
+        job_type = job["job_type"]
+        payload = json.loads(job["job_payload"])
         if job_type == "command":
+            from base import auto_approve_command_runs, run_command
             cmd = payload.get("command")
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if isinstance(cmd, str):
+                # Legacy CLI strings remain supported as argv, not shell programs.
+                if any(character in cmd for character in "&|;<>\r\n`$"):
+                    raise ValueError("Scheduled commands must use argv; shell operators are not allowed")
+                cmd = shlex.split(cmd)
+            if not isinstance(cmd, list) or not cmd or not all(isinstance(item, str) for item in cmd):
+                raise ValueError("command must be a non-empty argv list")
+            if os.name == "nt" and cmd[0].lower() == "echo":
+                cmd = ["cmd", "/c", *cmd]
+            arguments = {"command": cmd, "cwd": payload.get("cwd"), "env_file": payload.get("env_file")}
+            with auto_approve_command_runs():
+                result = execute_tool("run_command", arguments, run_command)
             if result.returncode == 0:
                 return "completed", result.stdout, ""
             else:
@@ -177,7 +212,7 @@ def execute_job(job: dict) -> tuple[str, str, str]:
         ):
             from summary import generate_daily_summary
             telegram_chat_id = payload.get("telegram_chat_id")
-            output, error = generate_daily_summary(telegram_chat_id=telegram_chat_id)
+            output, error = execute_tool("maintenance.summary", {"telegram_chat_id": telegram_chat_id}, generate_daily_summary)
             if error:
                 return "failed", output, error
             return "completed", output, ""
