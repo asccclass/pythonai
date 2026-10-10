@@ -7,7 +7,7 @@
   "case_count": 10,
   "completion_rate": 1.0,
   "recovery_success_rate": 1.0,
-  "elapsed": 30.515999999945052,
+  "elapsed": 14.625,
   "provider_cost_usd": null,
   "provider_cost_note": "No external provider called; billing/model quality not measured",
   "cases": [
@@ -16,7 +16,7 @@
       "test": "agent_execution.tests.test_process.ProcessTests.test_native_success_and_utf8_output",
       "layer": "native",
       "passed": true,
-      "elapsed": 0.515999999945052,
+      "elapsed": 0.31200000003445894,
       "failure_count": 0,
       "skipped": 0
     },
@@ -25,7 +25,7 @@
       "test": "agent_execution.tests.test_process.ProcessTests.test_native_cancel_propagates_from_execution_context",
       "layer": "native",
       "passed": true,
-      "elapsed": 0.734000000054948,
+      "elapsed": 0.5940000000409782,
       "failure_count": 0,
       "skipped": 0
     },
@@ -34,7 +34,7 @@
       "test": "agent_execution.tests.test_results.ResultTests.test_acceptance_rejects_path_escape_and_successful_prose_is_not_verification",
       "layer": "offline acceptance",
       "passed": true,
-      "elapsed": 8.015999999945052,
+      "elapsed": 2.280999999959022,
       "failure_count": 0,
       "skipped": 0
     },
@@ -43,7 +43,7 @@
       "test": "agent_execution.tests.test_results.ResultTests.test_skill_nonzero_exit_stops_following_side_effect",
       "layer": "native Skill",
       "passed": true,
-      "elapsed": 0.18700000003445894,
+      "elapsed": 0.1720000000204891,
       "failure_count": 0,
       "skipped": 0
     },
@@ -53,7 +53,7 @@
       "layer": "native + offline SDK",
       "recovery": true,
       "passed": true,
-      "elapsed": 18.0,
+      "elapsed": 9.594000000040978,
       "failure_count": 0,
       "skipped": 0
     },
@@ -63,7 +63,7 @@
       "layer": "SQLite failure injection",
       "recovery": true,
       "passed": true,
-      "elapsed": 0.8279999999795109,
+      "elapsed": 0.3589999999385327,
       "failure_count": 0,
       "skipped": 0
     },
@@ -72,7 +72,7 @@
       "test": "agent_execution.tests.test_scheduling.SchedulingTests.test_atomic_claim_and_stale_due_snapshot",
       "layer": "SQLite concurrency",
       "passed": true,
-      "elapsed": 0.5779999999795109,
+      "elapsed": 0.40700000000651926,
       "failure_count": 0,
       "skipped": 0
     },
@@ -81,7 +81,7 @@
       "test": "agent_execution.tests.test_scheduling.SchedulingTests.test_watch_silence_change_completion_and_stop",
       "layer": "offline observation",
       "passed": true,
-      "elapsed": 1.1570000000065193,
+      "elapsed": 0.5309999999590218,
       "failure_count": 0,
       "skipped": 0
     },
@@ -90,7 +90,7 @@
       "test": "agent_execution.tests.test_extensions.MCPRoutingTests.test_underscore_collisions_have_exact_routes_and_validate_results",
       "layer": "offline MCP",
       "passed": true,
-      "elapsed": 0.030999999959021807,
+      "elapsed": 0.03100000007543713,
       "failure_count": 0,
       "skipped": 0
     },
@@ -99,7 +99,7 @@
       "test": "agent_execution.tests.test_improvement.ImprovementTests.test_retrieval_excludes_conflicts_expired_persona_and_marks_external_data",
       "layer": "native SQLite + local embedding",
       "passed": true,
-      "elapsed": 0.4690000000409782,
+      "elapsed": 0.34399999992456287,
       "failure_count": 0,
       "skipped": 0
     }

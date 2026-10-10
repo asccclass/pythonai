@@ -12,9 +12,9 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Provider 相容與重試 | OpenAI-compatible endpoint、文字／視覺／embedding 模型設定、能力探測、Retry-After | 已實作；關閉 SDK 隱藏重試，task 預算涵蓋重試；成本上限須配置模型費率，多 provider failover 尚未提供 | `server.py`, `agent_execution/budgets.py`, `agent_execution/model_probe.py` |
 | 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；共用政策檢查角色與路徑／symlink，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
 | Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、共用政策、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
-| 動態工具 | 載入 tools/*.py + JSON schema、create_dynamic_tool 建立並重新載入 | 基礎實作；載入會執行 Python 模組，尚無發布前測試、版本審核及撤回流程 | `base.py`, `tools/` |
-| MCP | stdio JSON-RPC 子程序、初始化、工具發現、schema 轉換、呼叫路由與 shutdown | 已實作；啟動失敗記於 skipped_servers；未見 remote HTTP/OAuth 與自動重連管理 | `mcp_manager.py`, `mcp_config.json` |
-| Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；task checkpoint 另存 TaskStore 並保留 episode 關聯；跨任務對話與摘要治理待 T09 | `memory.py`, `agent_runtime.py` |
+| 動態工具／Skill 版本 | builtin inventory、生成版本 stage、來源／digest、Docker tests、人工核准啟用／撤回／rollback | 已實作；未批准不 import；啟用 Python 仍屬 trusted host code，需重啟刷新 schema | `base.py`, `agent_execution/extensions/` |
+| MCP | stdio／remote Streamable HTTP、exact route、schema／結果驗證、health、明確 reconnect、OAuth discovery／PKCE／refresh | 已實作本機協定案例；缺 server 不阻塞其他工具；401／不確定工具結果不重播；正式帳號尚待驗收 | `mcp_manager.py`, `agent_execution/extensions/` |
+| Episodic memory | SQLite episodes／events、訊息、工具與驗收事件追蹤 | 已實作；task checkpoint 另存 TaskStore 並保留 episode 關聯；稽核事件 redact，原對話／checkpoint 保留於私有儲存 | `memory.py`, `agent_runtime.py` |
 | Semantic memory | 主詞／關係／受詞、user_profile／agent_persona 等類型、scope、信心、來源、實體關聯 | 已實作；遠端採身份／專案實體 DB 隔離，通訊另依會話隔離；本機既有資料保留 | `semantic_extractor.py`, `memory.py`, `agent_execution/sessions.py` |
 | Procedural memory | 重用工作流程、相似度比對、成功／失敗計數、驗收狀態控制保存 | 已實作；不代表模型訓練或任意任務成功保證 | `memory_review.py`, `procedure_similarity.py`, `server.py` |
 | 記憶檢索 | embedding／cosine similarity、Hashing fallback、關鍵詞、實體與程序檢索、可選 Laya 排序 | 已實作；本機候選與向量計算，尚無大型資料 ANN 索引 | `retrieval.py`, `retrieval_ranker.py`, `vector_search.py` |
@@ -25,19 +25,21 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Discord／LINE | 簽章與時效驗證、去重、Discord deferred response／回覆閘門／原始回覆更新與 follow-up、LINE push／分段 | 已實作本機協定測試；production 缺配置／PyNaCl 拒絕，正式帳號 round trip 尚待驗證 | `communication_adapters/`, `communication_server.py`, `tests/test_webhook_security.py` |
 | 通訊任務管理 | SQLite inbound／outbound／command、背景執行、/status、/cancel、/clear／/reset、ask_user 暫停及回覆續跑 | 已實作；ask_user schema、隔離 runtime、持久化附件／delivery／checkpoint；過期 lease 才恢復，副作用不確定轉 recovery_required | `communication_store.py`, `communication_worker.py`, `exceptions.py` |
 | 統一 ASGI 與 Dashboard | /health、管理網頁、統計／任務 API、記憶 CRUD、三平台 webhook、/ws/v1 | 已實作；REST 管理路由具 Bearer／角色／資料隔離及人類批准；/health 僅回傳存活狀態 | `communication_server.py`, `web_api.py`, `web/index.html` |
-| Companion WebSocket | hello token 驗證、seq／ack、SQLite 重啟補送、ping、chat interrupt、裝置事件及主動訊息路由 | 真實 AgentRuntime／模型 delta、工具、驗收、批准事件及模型／程序取消；owner-targeted Telegram adapter fallback；provider／實際送達驗收待辦，audio.end 尚未串接 STT／TTS | `websocket_server.py`, `tests/test_websocket_server.py` |
-| Cron 排程 | croniter 計算、SQLite jobs／runs、工作鎖、背景 worker、command 與 maintenance.summary | 已實作；沒有通用 script／Skill／Agent job 執行器，保存建立者角色／身份，command 經共用政策以 argv 執行；共用 runner 有 timeout／取消／輸出上限 | `scheduler.py`, `schedule_cli.py`, `summary.py`, `add_default_jobs.py` |
+| Companion WebSocket | hello token、seq／ack／SQLite 補送、模型 delta／工具事件、interrupt、裝置與 STT／TTS 音訊 | owner 隔離、有序有界 frames／WAV／取消與重連；本機 SDK HTTP contract 通過，正式語音品質／裝置播放仍待驗收 | `websocket_server.py`, `agent_execution/media/audio.py` |
+| Agent／Skill 排程 | cron／精確自然語句、Taipei 時區、command／script／Agent／Skill／watch、lease／fencing、quiet follow-up | 人工批准、owner 還原、timeout／misfire／有界 retry；通訊入口原會話通知、不確定發送不重送；正式平台送達待驗收 | `scheduler.py`, `schedule_cli.py`, `agent_execution/scheduling/` |
 | Guard 與 RBAC | 可選 Laya 請求／命令判斷、viewer／operator／admin、ROLES_CONFIG、API Bearer 登入 | 已實作共用政策；遠端缺角色配置預設 viewer，管理 API 寫入限 admin；Laya 不可用仍可繼續 | `laya_guard.py`, `permissions.py`, `agent_execution/api.py` |
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；六項內建政策、可配置啟停／排序／fail-closed、啟動診斷、阻擋／提前回覆／回饋與身份稽核 | 已實作；模型、直接工具、Skill／排程共用政策；核心權限／路徑／批准不受停用 Hook 影響 | `hooks.py`, `agent_execution/hook_policies.py`, `server.py` |
 | 任務驗收與自修正 | 凍結驗收契約、結構化工具結果、檔案／語法、JUnit／process、Judge 與 Critic | 明確條件及證據才能 verified_completed；Judge 無效／失效拒絕、不可修正失敗直接交人工；直接 Skill 亦驗收 | `task_evaluator.py`, `agent_execution/acceptance.py`, `agent_execution/results.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
 | 子代理 | 持久化 DAG、planner／coder／reviewer 獨立程序、follow-up／等待／取消／合併 | 獨立工具範圍、checkpoint、worktree；共享根預算；Coder 須通過獨立 Reviewer，內容衝突禁止覆寫 | `agent_execution/coordinator.py`, `tools/manage_subagent.py` |
-| 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
+| 搜尋、網頁與視覺 | Wikipedia／DuckDuckGo、網頁正文、Playwright owner profile／cookies、斷言／私有下載、圖片模型與 DOM fallback | 實際 Chromium 登入續跑／隔離通過；有界網路政策；host 瀏覽器仍需部署隔離，未提供桌面操作 | `base.py`, `agent_execution/media/`, `tools/browser_session.py` |
+| 文件附件／OCR | PDF／DOCX／PPTX／XLSX 文字與來源單位、scanned PDF Tesseract OCR | 原生 worker／ZIP／XML／輸出限額；未知二進位明確不支援；DOCX 以段落來源、不杜撰頁碼 | `agent_execution/media/documents.py`, `agent_runtime.py` |
 | 程式碼理解與修改 | Python／Go／JS／TS 增量符號／引用、版本化向量、精確文字搜尋、LSH ANN、Jedi／可配置 LSP、AST 替換與回復 | 每次查詢同步；ignore／秘密過濾；語法候選與語意解析分開標示；一般 workspace 內索引、任務 worktree 使用外部 cache | `agent_execution/code_index/`, `build_codebase_index.py`, `tools/code_symbols.py`, `tools/search_codebase.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
 | 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
 | Patch／PR／CI | 多檔內容雜湊驗證、diff 預覽、GitHub PR／GitLab MR、確切 SHA 發布、CI／審查門檻、同 PR 修復與交付摘要 | 發布／合併各需一次性批准；平台 API 以本機 fixture 驗證，外部帳號尚未實測 | `agent_execution/patches.py`, `agent_execution/git_delivery.py`, `agent_execution/git_provider.py`, `tools/project_delivery.py` |
 | IDE 整合與任務審查 | VS Code 提案 diff、明確單次套用／undo、Ghost Text；Dashboard 計畫／工具／驗收／批准／artifact | 已實作 T16；Token／角色／會話隔離、UTF-8 串流完整性與取消、文件版本檢查；跨通道身份連結與外部 provider 仍待驗證 | `ide_server.py`, `vscode-extension/` |
-| 觀測與診斷 | episodes／hooks／Skills／記憶健康 CLI、Skill Doctor 產生 agent_persona 建議 | 已實作；Doctor --apply 可寫記憶，尚無品質 A/B 評測及完整分散式 tracing／成本報表 | `observability.py`, `skill_doctor.py` |
+| 可控改善／記憶品質 | Doctor stage、owner persona／Skill 版本、來源／矛盾／TTL、retrieval 評測、固定案例 A/B／核准／撤回 | 改善且零回歸／非預期副作用才允許批准；未啟用 production persona，較廣 provider 品質仍待驗收 | `skill_doctor.py`, `agent_execution/improvement/`, `retrieval.py` |
+| 觀測與運維 | owner task／episode／node trace、token／費用／latency／retry、redaction、readiness／doctor、SQLite backup／restore／migration、fixed benchmark／分層 CI | 十項本機失敗案例基準；未知費率不當零成本；備份驗證後還原新目錄；GitHub CI 與正式服務尚待執行 | `observability.py`, `agent_execution/operations/`, `.github/workflows/verification.yml` |
 
 附帶資源包括 `skills/story/` 的敘事分析／motion 程式與測試，以及 `skills/security_audit/` 的安全審查指引及 Node 報告驗證器。它們是個別工作流程或應用；目錄存在不表示全部已註冊為可執行 Skill。`patch*.py`、`fix*.py`、`drill.py`、`demo_scenario.py` 等維護／示範腳本也不視為 Agent 正式入口。
 
@@ -48,14 +50,14 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 比較面向 | PythonAI 現況 | 相對差距與下一步 |
 | --- | --- | --- |
 | 編碼交付／Codex | 已有編輯、增量多語言索引、選檔 Git、測試、Judge、task worktree、patch、跨代理合併與 PR／CI 門檻 | 外部平台／正式 LSP 實測、跨通道身份連結與完整品質基準仍待完成 |
-| 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
+| 多代理／Codex | 持久化 DAG、獨立上下文／權限／worktree、follow-up／cancel、Reviewer／衝突管理 | 正式多代理任務品質及不同 provider 配置仍需 benchmark |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
-| 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
+| 自動化／Codex | Agent／Skill／watch 排程、時區／精確自然語句、停止條件與原會話通知 | 真實 provider 追蹤及正式平台送達；其他通道推送需明確收件人設計 |
 | 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算、PR／CI 修復流程 | 已有步驟／checkpoint、跨代理 DAG、lease 與保守副作用恢復；品質 benchmark 待 T21 |
-| 完成度驗證／通用 Agentic | 已有驗收契約、結構化結果、Critic loop 與來源事件 | 補獨立 Reviewer／結果收斂及端到端品質評測；僅以通過的明確檢查作為驗收範圍 |
+| 完成度驗證／通用 Agentic | 驗收契約、結果／來源事件、Critic、獨立 Reviewer 及固定失敗基準 | 正式模型端到端品質評測；本機 fixture 成功率只代表明確案例範圍 |
 | 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 提案與任務審查 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；已有執行 checkpoint 與 T16 審查 UI；跨通道身份連結仍需明確配置設計 |
-| 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
-| 擴充／整合 | Skills、動態工具、stdio MCP | 補 schema／結果驗證、受審核工具發布、remote MCP／OAuth、健康檢查、版本相容與故障恢復 |
+| 記憶／個人化 | 租戶／專案隔離、來源／矛盾／過期測試、版本化改善與 A/B gate | 較廣標記資料集、正式 provider 改善量與長期漂移；不推論 Codex 缺少記憶能力 |
+| 擴充／整合 | 工具／Skill 核准生命週期、schema／結果驗證、remote MCP／OAuth／health | 正式 issuer 帳號 consent／callback 驗收；dynamic registration／confidential client 尚未提供 |
 
 建議依序完成：**執行政策與會話隔離 → 真實串流與持久任務 → worktree／多代理交付 → 評測、整合與多模態**。可直接開工的清單見 [papers/todo.md](papers/todo.md)。
 
@@ -600,7 +602,7 @@ Watch 保存最近四次觀察，回傳 waiting／completed／needs_input；第�
 
 MCP 使用明確路由表，server／tool 名稱含底線及名稱碰撞均不靠字串切割判斷；參數與 structuredContent 以有界、離線 JSON Schema 驗證，工具錯誤不再混成成功文字。stdio 支援 EOF、取消及有界請求，remote 支援 HTTPS Streamable HTTP 的 JSON／SSE、session 與 access token；也提供人工 OAuth discovery／PKCE／一次性 callback／refresh rotation。未知寫入結果與 401 工具呼叫不自動重播。協定版本固定為 2025-11-25。[MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)。
 
-OAuth 使用預先註冊的 public client、明確 issuer 與原始 redirect URI；CLI 回收 callback URL，不啟動 callback listener。Token 依 owner 保存在私有 SQLite；不跨身份继承授權。配置與操作見 `agent_execution/extensions/README.md`；正式 provider 登入／同意流程仍待實測。[MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)。
+OAuth 使用預先註冊的 public client、明確 issuer 與原始 redirect URI；CLI 回收 callback URL，不啟動 callback listener。Token 依 owner 保存在私有 SQLite；不跨身份繼承授權。配置與操作見 `agent_execution/extensions/README.md`；正式 provider 登入／同意流程仍待實測。[MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)。
 
 `create_dynamic_tool` 改為只保存版本提案，不寫入 tools/ 或立即執行。Python 工具與 Skill 版本保存在 owner 隔離的提案庫，通過 Docker unittest 與一次性人工批准後啟用；可撤回或批准切回舊版本。自動載入僅限提交的 builtins 清單。已批准 Python 是受信任 host 程式；來源、雜湊與測試不代替程式審查。CLI、package 格式、容量及限制見 `agent_execution/extensions/README.md`。
 
@@ -619,6 +621,8 @@ Skill Doctor 只保存 owner 隔離的 persona／Skill 建議，不再透過 `--
 檢索標示來源角色，排除未審查 legacy persona，以及尚未解決的明確單值矛盾；保留 T05 租戶隔離及既有過期／封存／supersede 過濾。原始記憶以引用資料放在真正最新使用者請求之前，不再取得 system 指令權限。Labeled precision／recall／forbidden-hit 評測可測淘汰品質；離線 gate fixture 不代表正式模型的品質已提升。
 
 ## Trace、評測與運維（T21）
+
+本次最終驗證：乾淨測試環境完整回歸 634 passed、7 skipped、35 subtests passed；另開啟 Docker／Chromium 的相關整合 40 passed、無 skip，Node 9 及實際 VS Code Extension Host 14 案例通過。語法檢查 222 個 tracked Python 檔、CI YAML、pip check 與 Git diff 檢查通過；詳細證據及外部限制見 `agent_execution/operations/verification_baseline.json` 與 `papers/todo.md`。
 
 `python -m agent_execution.operations doctor|readiness|traces|syntax|benchmark` 提供依賴診斷、storage readiness、owner 範圍 trace 與十項固定任務／失敗注入評測。Task／tool／model／retry／audio 保留 trace、父 span、task、episode 與子代理 node 關聯；token／費用採 T09 保守預算記帳，未知費率明確標記，不能當成 provider 帳單。Admin API `/api/ops/readiness`、`/api/ops/traces` 受既有身份／專案／會話限制。
 

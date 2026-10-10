@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-10",
+  "scope": "T17-T21 local implementation and supplemental OAuth/notification changes",
+  "implementation_commits": ["99922f0", "38f2eb9", "838bf86", "26eaed2", "7629e7f", "d4bc545", "4e45c76", "a775d0a", "1eb16d0"],
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "command": "python -m pytest -q",
+    "provider": "offline fixture environment; opt-ins disabled",
+    "passed": 634,
+    "skipped": 7,
+    "subtests_passed": 35,
+    "seconds": 482.16,
+    "skip_scope": "Docker/Chromium opt-in cases and actual provider",
+    "warning": "existing AnyIO BlockingPortal deprecation"
+  },
+  "native_integration": {
+    "command": "python -m pytest agent_execution/tests/test_docker_integration.py agent_execution/tests/test_auth_transport.py agent_execution/tests/test_extensions.py agent_execution/tests/test_media.py agent_execution/tests/test_schedule_notifications.py agent_execution/tests/test_oauth.py -q",
+    "environment": {"PYTHONAI_DOCKER_TEST": "1", "PYTHONAI_BROWSER_TEST": "1"},
+    "passed": 40,
+    "skipped": 0,
+    "seconds": 105.52,
+    "scope": "actual Docker/Chromium/Tesseract; native workers and local HTTP fixtures; no real provider or platform recipient"
+  },
+  "node_transport": {"passed": 9},
+  "vscode_host": {"version": "1.141.0", "passed": 14},
+  "syntax": {"tracked_python_files": 222, "passed": true},
+  "ci_yaml": {"jobs": 4, "parsed": true, "github_executed": false},
+  "pip_check": {"passed": true},
+  "fixed_benchmark": {"cases": 10, "completion_rate": 1.0, "recovery_success_rate": 1.0, "unexpected_tracked_source_changes": 0, "provider_cost_usd": null, "quality_scope": "curated offline/native acceptance fixtures"},
+  "external_provider": {"passed": false, "failure": "Request timed out", "seconds": 25.66},
+  "pending": ["real provider/platform delivery", "real OAuth consent/callback", "real STT/TTS quality and device playback", "production persona/Skill quality A/B", "GitHub CI execution"],
+  "raw_logs": "ignored temp directory; not published"
+}

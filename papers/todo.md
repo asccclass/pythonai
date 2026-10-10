@@ -161,6 +161,9 @@
 
 ## P3：自動化、整合、記憶與品質治理
 
+T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或品質驗收仍未完成。
+「現況」保留增修前基線，請依「實作／補齊／邊界」與最後驗證紀錄判斷下一步。
+
 - [ ] **T17 — Agent／Skill 排程與持續追蹤**
   - 現況：排程已有 command、maintenance.summary、SQLite 工作鎖，未實作 CLI help 提到的通用 script job。
   - 工作：新增 Agent／Skill job、自然語言排程、時區、會話 follow-up、停止條件、只在有意義變更通知；補 command timeout、鎖 lease、重啟／misfire 與 bounded retry。
@@ -170,6 +173,7 @@
   - 驗證：排程／policy 38 passed；最後排程／Hook／舊 scheduler 整合 32 passed。完整回歸先遇既有 CLI 測試載入本機 Laya 原生模型存取錯誤，改為離線 classifier fixture；後續舊 Hook fixture 需明確授予 owner 現行 admin，修正後相關案例通過。整體最終回歸結果集中記錄於 T21。
   - 通知推送補齊：通訊服務接入原會話 Telegram／Discord／LINE adapter；現行角色／allowlist 再驗、原子 claim、單訊息容量、shutdown 停止新 claim；失敗／crash 不確定狀態不重送，手動 disable 取消待送。其他入口保留 owner 查詢，不推定跨平台收件人。
   - Telegram long polling 亦啟動 scheduler 並於 poll 後推送；通知儲存故障不終止主通訊 loop。補強相關案例包含真實 adapter contract／併行認領／不確定發送／角色撤銷／取消與兩入口生命週期。
+  - 補強 Commit：`a775d0a`；相關 53 passed（22.25 秒）。
   - 邊界／後續：正式平台實際送達及真實 provider 追蹤尚待驗收，因此保留未勾選；未向正式收件人發送測試訊息。
 
 - [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**
@@ -180,6 +184,7 @@
   - Commit：`38f2eb9`；blocked pipe／JSON-RPC 補強 `838bf86`，補強相關 13 passed、1 skipped（Docker opt-in）。
   - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema；正式 remote provider 驗收仍未完成，保留未勾選。激活需重啟刷新 schema。
   - OAuth 補齊：trusted issuer／protected resource／OAuth 與 OIDC discovery、S256 PKCE、一次性 owner state／精確 callback、resource indicator、refresh rotation 與未知結果停止；人工 CLI 登入，不重播 401 tools/call。原生本機 HTTP 7 案例通過（含併行 refresh）；仍待正式帳號 consent／callback round trip。採預先註冊 public client，未提供 dynamic registration／confidential client／callback listener。
+  - OAuth Commit：`4e45c76`；MCP／OAuth 最終 18 passed、1 skipped（Docker opt-in，已於 T18 原先開啟驗證）。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。
@@ -203,10 +208,20 @@
   - 維護腳本：本次靜態掃描發現既有 `patch_server.py:1` 含字面 `\n` 而無法解析；確認用途後修復或移除過期腳本，將維護腳本語法檢查納入 CI，避免只跑 tests 而漏掉。
   - 驗收：報告區分 mock unit、Docker／browser integration、真實 provider／平台測試；顯示完成率、非預期副作用、恢復成功率與成本；日誌無 secret；備份可還原。
   - 實作（2026-10-10）：operations package 的 owner trace／task／episode／node、retry／保守預算 token／費用／延遲、redaction／readiness／dependency doctor；SQLite 線上 snapshot／hash／schema／新目錄 restore、先備份 offline migration；十項 fixed suite／failure injection 及完成／恢復率。修復 patch_server.py、pytest testpaths，增加分層 GitHub CI。
-  - 相關驗證：trace／Hook／budget 29 passed，運維首輪 7 passed、最後原生 child trace／API 補強 9 passed；固定 suite 含真正 crash 子程序與案例內副作用斷言，外部模型成本未知。本機完整回歸與乾淨 CI 環境驗證待彙整於下。
+  - Commit：`d4bc545`。
+  - 相關驗證：trace／Hook／budget 29 passed，運維首輪 7 passed、最後原生 child trace／API 補強 9 passed；固定 suite 含真正 crash 子程序與案例內副作用斷言，外部模型成本未知。
   - 本機基線：啟用 Docker／Chromium 的完整回歸 622 passed、1 skipped（外部 provider）、30 subtests passed（777.14 秒）；Node 9 passed，VS Code 1.141.0 原生 Extension Host 14 案例通過。最後運維／CKIP lazy import 11 passed、5 subtests passed；離線 fixed suite 10/10、恢復案例 100%，報告保存 operations/benchmark_baseline.json。
   - CI 乾淨環境發現舊測試依賴未列齊，補 PyNaCl／Jedi／敘事分析套件，文字切分不載入 CKIP 模型；補齊後 story／index 36 passed、5 subtests passed。實際 provider 單案請求逾時（25.66 秒），未通過；不以本機 fixture 替代此驗收。
+  - 最終驗證（所有本次程式增修後）：乾淨 requirements-ci 環境完整回歸 **634 passed、7 skipped、35 subtests passed（482.16 秒）**；skip 為 Docker／Chromium opt-in 及外部 provider，另開啟 opt-in 的 Docker／Chromium／OCR／MCP／OAuth／通知整合 **40 passed（105.52 秒）**，無 skip。保留 1 項既有 AnyIO 棄用警告。Node 9、實際 VS Code Extension Host 14、tracked Python 語法 222 檔、Git diff／CI YAML／pip check 均通過。fixed suite 重驗 10/10、完成／恢復率 100%，無 tracked source 異動；證據摘要保存 `agent_execution/operations/verification_baseline.json`，原始 log 在忽略的 temp/。
   - 尚待正式驗收：GitHub CI job 未推送／執行、真實 provider／通訊平台／語音與品質 benchmark；保留未勾選。固定 suite 的成功率是 fixture acceptance，不能當正式模型品質或完整 OS 副作用監測。
+
+### 下一輪正式驗收條件
+
+- T17：配置現行 admin identity／sender allowlist／正式 adapter，確認原會話的 quiet watch、完成／需人工通知及未知發送不重送；需明確指定測試收件人。
+- T18：正式 issuer 預先註冊 public client、精確 redirect URI；透過 OAuth CLI 完成真人 consent／callback，確認 remote initialize／tools／refresh。未配置 dynamic registration／confidential client 的 provider 不屬目前支援範圍。
+- T19：配置真正 STT／TTS 模型，以已標記語音驗證辨識品質和實際裝置播放；另外驗證目標外部網站登入及有權存取的文件。
+- T20：提供部署者信任的 AGENT_IMPROVEMENT_RUNNER／固定標記案例，以正常可用 provider 跑 A/B；保存品質差異，維持人工批准、撤回與 rollback gate。
+- T21：在獲授權的遠端發布流程執行分層 GitHub CI；provider 恢復可用後重跑 opt-in 測試。正式品質報告須保留非預期副作用／恢復／成本證據，不沿用 fixture 成功率。
 
 ## 開發與完成標準
 
