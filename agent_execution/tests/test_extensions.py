@@ -128,3 +128,11 @@ class MCPRoutingTests(unittest.TestCase):
         self.assertEqual(client.tools[0]['name'],'read_note')
         self.assertEqual(client.call_tool('read_note',{})['content'][0]['text'],'verified')
         client.stop();self.assertIsNotNone(client.process.poll())
+    def test_real_nonreading_pipe_has_bounded_write(self):
+        import subprocess,time
+        from mcp_manager import MCPClient
+        client=MCPClient('blocked',sys.executable,[])
+        client.process=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        client.running=True;self.addCleanup(client.stop);started=time.monotonic()
+        with self.assertRaises(TimeoutError):client._write('x'*1024*1024,.2)
+        self.assertLess(time.monotonic()-started,5);self.assertFalse(client.running)

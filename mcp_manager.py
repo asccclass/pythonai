@@ -132,6 +132,7 @@ class MCPClient:
 
     def _handle_message(self, message: Dict[str, Any]):
         """Handle incoming JSON-RPC messages."""
+        if not isinstance(message,dict) or message.get('jsonrpc')!='2.0':raise ValueError('Invalid MCP message')
         if "id" in message and ("result" in message or "error" in message):
             # This is a response to a request we sent
             msg_id = str(message["id"])
@@ -166,9 +167,7 @@ class MCPClient:
         try:
             req_str = json.dumps(request) + "\n"
             if len(req_str.encode())>1024*1024:raise ValueError('MCP request exceeds limit')
-            with self.write_lock:
-                self.process.stdin.write(req_str)
-                self.process.stdin.flush()
+            self._write(req_str,timeout)
             
             # Wait for response
             from agent_execution.policy import current_context
@@ -194,9 +193,23 @@ class MCPClient:
             "params": params
         }
         notif_str = json.dumps(notification) + "\n"
-        with self.write_lock:
-            self.process.stdin.write(notif_str)
-            self.process.stdin.flush()
+        self._write(notif_str,10)
+
+    def _write(self,data,timeout):
+        """A non-reading server must not block the host on a full pipe."""
+        done=threading.Event();failures=[]
+        def write():
+            try:
+                if not self.write_lock.acquire(timeout=timeout):raise TimeoutError('MCP writer busy')
+                try:self.process.stdin.write(data);self.process.stdin.flush()
+                finally:self.write_lock.release()
+            except Exception as error:failures.append(error)
+            finally:done.set()
+        thread=threading.Thread(target=write,daemon=True);thread.start()
+        if not done.wait(timeout):
+            self.stop();thread.join(3)
+            raise TimeoutError('MCP blocked pipe; outcome is uncertain')
+        if failures:raise failures[0]
 
     def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         """Call a specific tool exposed by the MCP server."""
@@ -307,7 +320,7 @@ class MCPManager:
         try:
             validate(arguments,tool.get('inputSchema',{}))
             result = self.clients[server_name].call_tool(tool['name'], arguments)
-            validate(result,{'type':'object','properties':{'content':{'type':'array','maxItems':256,'items':{'type':'object','required':['type'],'properties':{'type':{'enum':['text','image','audio','resource','resource_link']}}}},'isError':{'type':'boolean'}}})
+            validate(result,{'type':'object','required':['content'],'properties':{'content':{'type':'array','maxItems':256,'items':{'type':'object','required':['type'],'properties':{'type':{'enum':['text','image','audio','resource','resource_link']}}}},'isError':{'type':'boolean'}}})
             if 'outputSchema' in tool:
                 if 'structuredContent' not in result:raise ValueError('MCP structuredContent is required')
                 validate(result['structuredContent'],tool['outputSchema'])
