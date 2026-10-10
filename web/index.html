@@ -271,6 +271,9 @@
         width: 100%;
       }
     }
+    #task-review { padding: 16px; grid-column: 1 / -1; }
+    #review-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    #task-review pre { max-height: 360px; overflow: auto; }
   </style>
 </head>
 <body>
@@ -283,6 +286,7 @@
       <div class="stats" id="stats"></div>
       <label>API Token <input id="api-token" type="password" autocomplete="off" placeholder="輸入管理 Token"></label>
       <label>專案 <input id="api-project" value="default" maxlength="64"></label>
+      <label>會話 <input id="api-session" value="dashboard" maxlength="128"></label>
       <button id="login" type="button">登入</button>
     </div>
   </header>
@@ -334,6 +338,7 @@
         </div>
         <div class="task-list" id="tasks"></div>
       </section>
+
     </div>
 
     <section>
@@ -361,11 +366,20 @@
         </table>
       </div>
     </section>
+      <section id="task-review" aria-label="Agent 任務審查">
+        <h2>Agent 任務審查</h2>
+        <p id="review-scope"></p>
+        <button id="review-refresh" type="button">更新任務</button>
+        <div id="review-list"></div>
+        <div id="review-detail"></div>
+        <div id="review-approvals"></div>
+      </section>
   </main>
 
   <script>
     const state = { memories: [] };
-    const session = crypto.randomUUID();
+    let loadEpoch = 0;
+    const session = () => $('api-session').value;
     const $ = id => document.getElementById(id);
 
     function setStatus(message, isError = false) {
@@ -380,7 +394,7 @@
         headers: { 'Content-Type': 'application/json',
           'Authorization': `Bearer ${$('api-token').value}`,
           'X-Agent-Project': $('api-project').value,
-          'X-Agent-Session': session, ...(options.headers || {}) }
+          'X-Agent-Session': session(), ...(options.headers || {}) }
       });
       const payload = await response.json();
       if (response.status === 409 && payload.error === 'approval_required') {
@@ -531,6 +545,7 @@
     }
 
     async function loadAll() {
+      const epoch = ++loadEpoch, scope = reviewScope();
       setStatus('Loading...');
       const includeArchived = $('include-archived').checked ? '1' : '0';
       const [stats, memories, tasks] = await Promise.all([
@@ -538,12 +553,83 @@
         api(`/api/memories?limit=200&include_archived=${includeArchived}`),
         api('/api/tasks?limit=20')
       ]);
+      if (epoch !== loadEpoch || scope !== reviewScope()) return;
       state.memories = memories;
       renderStats(stats);
       renderMemories();
       renderTasks(tasks);
+      await loadReview();
       setStatus(`Loaded ${memories.length} memories`);
     }
+
+
+    let reviewEpoch = 0, reviewDetailEpoch = 0, reviewRole = 'viewer';
+    const reviewScope = () => JSON.stringify([$('api-token').value, $('api-project').value, session()]);
+    const currentReview = (epoch, scope) => epoch === reviewEpoch && scope === reviewScope();
+    function reviewBlock(title, value) {
+      const section = document.createElement('details'); section.open = true;
+      const heading = document.createElement('summary'); heading.textContent = title;
+      const text = document.createElement('pre'); text.style.whiteSpace = 'pre-wrap';
+      text.style.overflowWrap = 'anywhere';
+      text.textContent = value && typeof value === 'object' && 'text' in value
+        ? value.text + (value.truncated ? '\n[顯示已截斷]' : '') : JSON.stringify(value, null, 2);
+      section.append(heading, text); return section;
+    }
+    async function loadReview() {
+      const epoch = ++reviewEpoch, scope = reviewScope();
+      for (const id of ['review-list','review-detail','review-approvals']) $(id).replaceChildren();
+      const [context, tasks, approvals] = await Promise.all([
+        api('/api/review/context'), api('/api/review/tasks'), api('/api/approvals')]);
+      if (!currentReview(epoch, scope)) return;
+      reviewRole = context.role;
+      $('review-scope').textContent = `${context.identity} · ${context.project} · ${context.session} · ${context.role}`;
+      if (!tasks.length) $('review-list').textContent = '此會話尚無 Agent 任務。';
+      for (const task of tasks) {
+        const button = document.createElement('button'); button.type = 'button';
+        button.textContent = `${task.id} · ${task.state} · ${task.verification}`;
+        button.addEventListener('click', () => showReview(task.id, epoch, scope).catch(e => setStatus(e.message, true)));
+        $('review-list').append(button);
+      }
+      for (const approval of approvals) {
+        const block = reviewBlock(`批准 ${approval.id} · ${approval.action}`, approval.arguments);
+        for (const action of ['approve','deny']) {
+          const button = document.createElement('button'); button.textContent = action === 'approve' ? '批准' : '拒絕';
+          button.disabled = reviewRole !== 'admin';
+          button.addEventListener('click', async () => {
+            if (!currentReview(epoch, scope) || !confirm(`確認${button.textContent}以下操作？\n${approval.arguments}`)) return;
+            try { await api(`/api/approvals/${encodeURIComponent(approval.id)}/${action}`, {method:'POST'}); await loadReview(); }
+            catch(e) { setStatus(e.message, true); }
+          }); block.append(button);
+        } $('review-approvals').append(block);
+      }
+    }
+    async function showReview(id, epoch, scope) {
+      const detailEpoch = ++reviewDetailEpoch;
+      const detail = await api(`/api/review/tasks/${encodeURIComponent(id)}`);
+      if (!currentReview(epoch, scope) || detailEpoch !== reviewDetailEpoch) return;
+      const container = $('review-detail'); container.replaceChildren();
+      for (const [title, value] of [['任務',detail.task],['計畫',detail.plan],['驗收條件',detail.criteria],
+        ['驗收結果',detail.evaluation],['人工問題',detail.question],['回覆',detail.reply],['工具事件',detail.events]])
+        container.append(reviewBlock(title, value));
+      if (detail.events_truncated) container.append(reviewBlock('事件限制', '僅顯示前 100 個事件'));
+      for (const artifact of detail.artifacts) {
+        container.append(reviewBlock(`Artifact ${artifact.id} · ${artifact.kind} · ${artifact.state}`, {head:artifact.head,digest:artifact.digest}));
+        container.append(reviewBlock('套用前 diff',artifact.diff),reviewBlock('提交歷史 diff',artifact.history_diff),reviewBlock('交付證據',artifact.evidence));
+      }
+      const cancel = document.createElement('button'); cancel.textContent = '取消任務'; cancel.id = 'review-cancel';
+      cancel.disabled = reviewRole !== 'admin' || ['completed','failed','cancelled'].includes(detail.task.state);
+      cancel.addEventListener('click', async () => {
+        if (!currentReview(epoch, scope) || !confirm(`取消任務 ${id}？`)) return;
+        try { await api(`/api/review/tasks/${encodeURIComponent(id)}/cancel`, {method:'POST'}); await loadReview(); }
+        catch(e) { setStatus(e.message,true); }
+      }); container.append(cancel);
+    }
+    $('review-refresh').addEventListener('click', () => loadReview().catch(e => setStatus(e.message,true)));
+    for (const id of ['api-token','api-project','api-session']) $(id).addEventListener('input', () => {
+      ++reviewEpoch; ++reviewDetailEpoch; ++loadEpoch; state.memories = []; renderMemories(); resetForm();
+      $('stats').replaceChildren(); $('tasks').replaceChildren();
+      for (const target of ['review-list','review-detail','review-approvals','review-scope']) $(target).replaceChildren();
+    });
 
     $('memory-form').addEventListener('submit', async event => {
       event.preventDefault();

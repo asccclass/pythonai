@@ -2,7 +2,7 @@
   "name": "pythonai-inline-chat",
   "displayName": "PythonAI Inline Chat",
   "description": "Inline Chat and Refactoring powered by local ASCS/Ollama.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -11,14 +11,39 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:pythonai.inlineChat"
+    "onCommand:pythonai.inlineChat",
+    "onCommand:pythonai.setToken",
+    "onCommand:pythonai.applyProposal",
+    "onCommand:pythonai.undoProposal",
+    "onCommand:pythonai.discardProposal",
+    "onCommand:pythonai.reviewTasks"
   ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
         "command": "pythonai.inlineChat",
-        "title": "PythonAI: Inline Chat / Refactor"
+        "title": "PythonAI: Generate Replacement Diff"
+      },
+      {
+        "command": "pythonai.setToken",
+        "title": "PythonAI: Set API Token"
+      },
+      {
+        "command": "pythonai.applyProposal",
+        "title": "PythonAI: Apply Reviewed Proposal"
+      },
+      {
+        "command": "pythonai.undoProposal",
+        "title": "PythonAI: Undo Proposal"
+      },
+      {
+        "command": "pythonai.discardProposal",
+        "title": "PythonAI: Discard Proposal"
+      },
+      {
+        "command": "pythonai.reviewTasks",
+        "title": "PythonAI: Review Tasks in Dashboard"
       }
     ],
     "keybindings": [
@@ -28,9 +53,38 @@
         "mac": "cmd+i",
         "when": "editorTextFocus"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "PythonAI",
+      "properties": {
+        "pythonai.ideUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11435",
+          "description": "Authenticated IDE backend; HTTPS or loopback HTTP"
+        },
+        "pythonai.dashboardUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Unified communication Dashboard URL"
+        },
+        "pythonai.project": {
+          "type": "string",
+          "default": "default",
+          "description": "Authenticated project"
+        },
+        "pythonai.session": {
+          "type": "string",
+          "default": "dashboard",
+          "description": "Session scope; enter the same value in Dashboard"
+        }
+      }
+    }
   },
-  "dependencies": {
-    "axios": "^1.6.0"
+  "scripts": {
+    "test": "node --test tests/transport.test.js",
+    "test:host": "node tests/run-host.js"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2"
   }
 }

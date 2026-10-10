@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-10",
+  "scope": "local protocol/model fixtures; real Chromium and VS Code Extension Host; no external model verification",
+  "python_full": {
+    "command": "PYTHONAI_DOCKER_TEST=1 PYTHONAI_BROWSER_TEST=1 python -m pytest tests agent_execution/tests -q",
+    "passed": 576,
+    "skipped": 1,
+    "subtests_passed": 30,
+    "warnings": 1,
+    "seconds": 884.64
+  },
+  "python_final_ui": {
+    "command": "PYTHONAI_BROWSER_TEST=1 python -m pytest agent_execution/tests/test_review_ui.py agent_execution/tests/test_auth_transport.py -q",
+    "passed": 14,
+    "seconds": 24.7
+  },
+  "node": {
+    "command": "npm test --prefix vscode-extension",
+    "passed": 9
+  },
+  "vscode_host": {
+    "command": "npm run test:host --prefix vscode-extension",
+    "passed": 14,
+    "host": "1.141.0"
+  },
+  "evidence_files": [
+    "temp/t16-full.log",
+    "temp/t16-ui-verified.log",
+    "temp/t16-node-final.log",
+    "temp/t16-vscode-verified.log",
+    "temp/t16-dashboard-diff.png",
+    "temp/t16-dashboard-review.png"
+  ],
+  "evidence_retention": "temp logs/screenshots and downloaded VS Code are ignored; this result summary is tracked"
+}

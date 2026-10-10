@@ -140,3 +140,7 @@ delegate to the package. Unversioned legacy vectors are discarded and regenerate
 generated databases stay local. Search distinguishes literal, exact symbol and
 approximate vector modes, and syntactic candidates from semantic backend results.
 See code_index/README.md for configuration, filtering, resource limits and baseline.
+
+## T16 IDE／Dashboard 任務審查
+
+`ide/` 為受 Token／admin／workspace 與 T09 預算約束的提案服務；根目錄 ide_server.py 保留相容入口。`review.py` 提供 owner-bound 唯讀任務／驗收／artifact 投影及 admin 取消操作；API 不執行 patch、Git publish 或 merge。VS Code 提案 diff、atomic editor apply／undo、完整 UTF-8 串流與版本檢查見 `vscode-extension/README.md`。生成完成仍 unverified，身份不跨通道合併。

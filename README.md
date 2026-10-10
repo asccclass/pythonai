@@ -36,7 +36,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 程式碼理解與修改 | Python／Go／JS／TS 增量符號／引用、版本化向量、精確文字搜尋、LSH ANN、Jedi／可配置 LSP、AST 替換與回復 | 每次查詢同步；ignore／秘密過濾；語法候選與語意解析分開標示；一般 workspace 內索引、任務 worktree 使用外部 cache | `agent_execution/code_index/`, `build_codebase_index.py`, `tools/code_symbols.py`, `tools/search_codebase.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
 | 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
 | Patch／PR／CI | 多檔內容雜湊驗證、diff 預覽、GitHub PR／GitLab MR、確切 SHA 發布、CI／審查門檻、同 PR 修復與交付摘要 | 發布／合併各需一次性批准；平台 API 以本機 fixture 驗證，外部帳號尚未實測 | `agent_execution/patches.py`, `agent_execution/git_delivery.py`, `agent_execution/git_provider.py`, `tools/project_delivery.py` |
-| IDE 整合 | VS Code Inline Chat、Ghost Text、HTTP 串流替換選取程式碼 | 原型；獨立 ide_server.py，非完整 Agent 任務 UI，尚無修改預覽、驗收與 robust cancellation | `ide_server.py`, `vscode-extension/` |
+| IDE 整合與任務審查 | VS Code 提案 diff、明確單次套用／undo、Ghost Text；Dashboard 計畫／工具／驗收／批准／artifact | 已實作 T16；Token／角色／會話隔離、UTF-8 串流完整性與取消、文件版本檢查；跨通道身份連結與外部 provider 仍待驗證 | `ide_server.py`, `vscode-extension/` |
 | 觀測與診斷 | episodes／hooks／Skills／記憶健康 CLI、Skill Doctor 產生 agent_persona 建議 | 已實作；Doctor --apply 可寫記憶，尚無品質 A/B 評測及完整分散式 tracing／成本報表 | `observability.py`, `skill_doctor.py` |
 
 附帶資源包括 `skills/story/` 的敘事分析／motion 程式與測試，以及 `skills/security_audit/` 的安全審查指引及 Node 報告驗證器。它們是個別工作流程或應用；目錄存在不表示全部已註冊為可執行 Skill。`patch*.py`、`fix*.py`、`drill.py`、`demo_scenario.py` 等維護／示範腳本也不視為 Agent 正式入口。
@@ -47,13 +47,13 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 比較面向 | PythonAI 現況 | 相對差距與下一步 |
 | --- | --- | --- |
-| 編碼交付／Codex | 已有編輯、增量多語言索引、選檔 Git、測試、Judge、task worktree、patch、跨代理合併與 PR／CI 門檻 | 外部平台／正式 LSP 實測、IDE 整合與完整品質基準仍待完成 |
+| 編碼交付／Codex | 已有編輯、增量多語言索引、選檔 Git、測試、Judge、task worktree、patch、跨代理合併與 PR／CI 門檻 | 外部平台／正式 LSP 實測、跨通道身份連結與完整品質基準仍待完成 |
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
 | 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算、PR／CI 修復流程 | 已有步驟／checkpoint、跨代理 DAG、lease 與保守副作用恢復；品質 benchmark 待 T21 |
 | 完成度驗證／通用 Agentic | 已有驗收契約、結構化結果、Critic loop 與來源事件 | 補獨立 Reviewer／結果收斂及端到端品質評測；僅以通過的明確檢查作為驗收範圍 |
-| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
+| 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 提案與任務審查 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；已有執行 checkpoint 與 T16 審查 UI；跨通道身份連結仍需明確配置設計 |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
 | 擴充／整合 | Skills、動態工具、stdio MCP | 補 schema／結果驗證、受審核工具發布、remote MCP／OAuth、健康檢查、版本相容與故障恢復 |
 
@@ -573,3 +573,17 @@ ignore 採巢狀 `.gitignore`／`.agentignore`；另強制排除 Git metadata、
 技術依據：[Tree-sitter](https://tree-sitter.github.io/py-tree-sitter/)、[LSP 3.17](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)、[gitignore](https://git-scm.com/docs/gitignore)。
 
 T15 最終驗證（2026-10-10）：專項測試 27 passed、5 subtests passed；開啟 Docker／Chromium 的完整回歸 565 passed、1 skipped（外部 provider）、30 subtests passed，耗時 620.86 秒，另有 1 項既有 AnyIO 棄用警告。package／tools 語法與 Git diff 檢查通過。
+
+## IDE 提案與任務審查（T16）
+
+VS Code Inline Chat 改為完整接收後預覽 readonly diff，透過「Apply Reviewed Proposal」單次套用；支援原生 Undo 與具版本檢查的「Undo Proposal」。生成、斷線、取消、UTF-8 拆包及並行串流均不直接改動原始文件；同一文件同時生成會拒絕，文件有修改則拒絕舊提案與 undo。提案限 32 筆、僅保存在擴充套件記憶體，套用後由使用者儲存。
+
+`python ide_server.py` 仍是 IDE 入口（預設 127.0.0.1:11435），實作收攏於 `agent_execution/ide/`。現在必須使用既有 `AGENT_API_TOKENS` 與 `ROLES_CONFIG` 的 admin API 身份；不再接受匿名請求或 wildcard CORS。擴充套件「Set API Token」保存於 SecretStorage，設定 `pythonai.ideUrl`／`dashboardUrl`／`project`／`session`，Dashboard 填入相同專案與會話。遠端 URL 需 HTTPS，HTTP 僅允許 loopback。
+
+IDE 使用有界 NDJSON start／delta／done 協定，只有完整 done 才形成提案；provider 錯誤不混入替換內容。請求上限 128 KiB、選取 64 KiB、prompt 8 KiB、輸出 1 MiB，客戶端期限 100 秒；接入 T09 token／request／cost／concurrency 預算與無自動重試的 SDK。server 不讀磁碟內容作上下文、不修改檔案，僅接收既有 workspace 文件的編輯器選取。生成保存 T08 任務，完成仍是 unverified，不代表已套用、測試或交付。
+
+Dashboard 新增會話欄與 `/api/review/context`、`/api/review/tasks`、`/api/review/tasks/<id>`，按 API 身份／project／session 顯示計畫、實際工具步驟與依賴、驗收條件／結果、人工問題／回覆、artifact diff／history／證據，以及待批准操作。事件最多 100、artifacts 最多 20、各文字區最多 65536 字元，截斷明確標示；文字不執行 HTML。資料切換清除舊畫面並拒絕過期回覆。Admin 可取消自己的 task、批准／拒絕同會話操作，viewer 僅能閱讀；批准不自動重播工具或 publish／merge，須由原任務入口續跑。API、WebSocket、Telegram 等通道身份仍分離，未提供跨通道身份推定、任意 artifact 檔案下載或背景輪詢。
+
+使用／測試細節見 `vscode-extension/README.md`；技術依據：[VS Code API](https://code.visualstudio.com/api/references/vscode-api)、[diff command](https://code.visualstudio.com/api/references/commands)、[Extension Host testing](https://code.visualstudio.com/api/working-with-extensions/testing-extension)。
+
+T16 最終驗證（2026-10-10）：新增 11 項 Python 測試；最終 UI／API 與舊 Dashboard 整合重驗 14 passed（24.70 秒），Node 9 passed，實際 VS Code 1.141.0 Extension Host 14 案例通過。開啟 Docker／Chromium 的完整回歸 576 passed、1 skipped（外部 provider）、30 subtests passed（884.64 秒），另有 1 項既有 AnyIO 棄用警告；Python／Node 語法及 Git diff 檢查通過。證據摘要保存於 vscode-extension/tests/verification_baseline.json，原始 log／截圖保留於忽略的 temp/。

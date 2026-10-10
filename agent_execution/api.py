@@ -43,6 +43,9 @@ def authenticated_api(path, method, body, headers):
     route = urlparse(path).path.rstrip("/")
     session = f"{project}:{session}"
     with set_current_role(role), execution_scope(source="api", identity=identity, session=session, project=project):
+        if route.startswith('/api/review/'):
+            from .review import handle_review
+            return handle_review(route, method, role)
         if route == "/api/approvals" and method == "GET":
             return 200, ApprovalStore().pending(identity, session)
         parts = route.split("/")

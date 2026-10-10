@@ -150,10 +150,14 @@
   - 驗證紀錄：新增 27 項索引測試；索引／政策階段相關 39 passed、5 subtests passed，與協作整合 56 passed、9 subtests passed；增量／秘密／Unicode／原生 grammar／實際 Jedi／本機 LSP protocol／取消／ANN／品質與延遲均有案例。最終索引專項 27 passed、5 subtests passed（20.94 秒）；開啟 Docker／Chromium 的完整回歸 565 passed、1 skipped（外部 provider）、30 subtests passed（620.86 秒），另有 1 項既有 AnyIO 棄用警告。package／tools 語法與 Git diff 檢查通過。
   - 邊界：秘密檢測是可誤判／漏判的規則，須另設專案 ignore；只處理有界 UTF-8，未支援全部語言型別推導。LSP command 是受信任部署設定，host 依 T02；正式 gopls／TS server 與遠端 embedding 語意品質尚待外部環境驗證。provider 模型同名換版須由部署者更新 revision，LSH 屬近似搜尋，真實任務 benchmark 待 T21。
 
-- [ ] **T16 — IDE 與 Dashboard 的任務審查介面**
-  - 現況：VS Code 串流直接取代選取文字；Dashboard 主要管理記憶與觀察任務。
+- [x] **T16 — IDE 與 Dashboard 的任務審查介面**
+  - 原況：VS Code 串流直接取代選取文字；Dashboard 主要管理記憶與觀察任務。
   - 工作：套用前 diff、atomic apply／undo、串流 UTF-8 與取消處理；統一顯示 task plan、工具事件、驗收、批准與 artifacts。
   - 驗收：斷線／取消／並行串流不破壞原始選取；UI 操作與身份政策一致；瀏覽器與 VS Code 實測並留證據。依賴 T03、T06、T10、T14。
+  - 實作（2026-10-10）：既有 vscode-extension 新增 readonly diff 提案、明確 atomic editor apply／undo、原生 Undo、UTF-8 incremental decoder／done 完整性、abort／斷線拒絕、文件版本與並行保護、SecretStorage Token。ide_server.py 保留入口，實作收攏 agent_execution/ide/，admin Token／workspace／JSON 限額、T08 checkpoint／T09 模型預算，不讀檔上下文或寫入來源。
+  - 審查：新增 owner-bound review API／Dashboard 會話欄、計畫／工具事件／驗收／人工問題／artifact diff 與歷史證據／待批准操作；文字安全顯示、過期回覆拒絕、admin 取消／批准／拒絕，viewer 唯讀。批准仍從原 task 入口續跑，UI 不重播工具或發布／合併。
+  - 邊界：提案 process-local、僅支援既有 workspace 文件；空／未變替換拒絕、最多 32 提案。API 任務資料不跨通道身份推定；無背景輪詢／任意 artifact filesystem 下載。完成生成僅 unverified，不等同已套用或交付；provider cancel 受下一寫入／SDK timeout 約束，正式外部 LLM 尚待驗證。
+  - 驗證紀錄：T16 最終驗證（2026-10-10）：新增 11 項 Python 測試；最終 UI／API 與舊 Dashboard 整合重驗 14 passed（24.70 秒），Node 9 passed，實際 VS Code 1.141.0 Extension Host 14 案例通過。開啟 Docker／Chromium 的完整回歸 576 passed、1 skipped（外部 provider）、30 subtests passed（884.64 秒），另有 1 項既有 AnyIO 棄用警告；Python／Node 語法及 Git diff 檢查通過。證據摘要保存於 vscode-extension/tests/verification_baseline.json，原始 log／截圖保留於忽略的 temp/。
 
 ## P3：自動化、整合、記憶與品質治理
 

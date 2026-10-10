@@ -1,177 +1,46 @@
 const vscode = require('vscode');
-const http = require('http');
-
+const { ReviewController } = require('./review');
+const { endpoint, request } = require('./transport');
 function activate(context) {
-    console.log('PythonAI extension is now active!');
-
-    let disposable = vscode.commands.registerCommand('pythonai.inlineChat', async () => {
+    const controller = new ReviewController(vscode, context);
+    const register = (name, handler) => context.subscriptions.push(vscode.commands.registerCommand(name, async () => {
+        try { return await handler(); } catch (error) { vscode.window.showErrorMessage(error.message); }
+    }));
+    context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('pythonai-review', {
+        provideTextDocumentContent: uri => controller.content(uri)
+    }));
+    register('pythonai.setToken', async () => {
+        const token = await vscode.window.showInputBox({ password: true, prompt: 'PythonAI API Token (stored in SecretStorage)' });
+        if (token) await context.secrets.store('pythonai.apiToken', token);
+    });
+    register('pythonai.inlineChat', async () => {
         const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showInformationMessage('No active editor found.');
-            return;
-        }
-
-        const selection = editor.selection;
-        const selectedText = editor.document.getText(selection);
-        
-        if (!selectedText) {
-            vscode.window.showWarningMessage('Please select some code to use Inline Chat.');
-            return;
-        }
-
-        const prompt = await vscode.window.showInputBox({
-            placeHolder: 'e.g. Optimize this function, add typing, or rewrite it...',
-            prompt: 'PythonAI Inline Chat Request'
-        });
-
-        if (!prompt) {
-            return; // User cancelled
-        }
-
-        const payload = JSON.stringify({
-            file_path: editor.document.uri.fsPath,
-            selected_text: selectedText,
-            prompt: prompt,
-            start_line: selection.start.line + 1,
-            end_line: selection.end.line + 1
-        });
-
-        const options = {
-            hostname: '127.0.0.1',
-            port: 11435,
-            path: '/api/inline_chat',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payload)
-            }
-        };
-
-        vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: "PythonAI is generating code...",
-            cancellable: true
-        }, (progress, token) => {
-            return new Promise((resolve, reject) => {
-                const req = http.request(options, (res) => {
-                    let fullText = '';
-                    
-                    // We'll replace the selection with nothing first, then stream into it
-                    editor.edit(editBuilder => {
-                        editBuilder.replace(selection, '');
-                    }).then(() => {
-                        let currentPosition = selection.start;
-                        
-                        res.on('data', (chunk) => {
-                            if (token.isCancellationRequested) {
-                                res.destroy();
-                                return;
-                            }
-                            
-                            const textChunk = chunk.toString();
-                            fullText += textChunk;
-                            
-                            // To stream text in VSCode, we insert it at the current position
-                            editor.edit(editBuilder => {
-                                editBuilder.insert(currentPosition, textChunk);
-                            }).then(() => {
-                                // Update position based on inserted text lines
-                                const lines = textChunk.split('\n');
-                                if (lines.length > 1) {
-                                    currentPosition = currentPosition.translate(lines.length - 1, lines[lines.length - 1].length);
-                                } else {
-                                    currentPosition = currentPosition.translate(0, textChunk.length);
-                                }
-                            });
-                        });
-
-                        res.on('end', () => {
-                            vscode.window.showInformationMessage('Inline Chat completed!');
-                            resolve();
-                        });
-                    });
-                });
-
-                req.on('error', (e) => {
-                    vscode.window.showErrorMessage(`Failed to connect to PythonAI server: ${e.message}. Is ide_server.py running?`);
-                    reject(e);
-                });
-
-                req.write(payload);
-                req.end();
-                
-                token.onCancellationRequested(() => {
-                    req.destroy();
-                    reject(new Error("Cancelled"));
-                });
-            });
-        });
+        if (!editor || !editor.document.getText(editor.selection)) throw new Error('Select code first');
+        const originalVersion = editor.document.version;
+        const originalSelection = editor.selection;
+        const prompt = await vscode.window.showInputBox({ prompt: 'PythonAI replacement request' });
+        if (!prompt) return;
+        if (editor.document.version !== originalVersion || !editor.selection.isEqual(originalSelection)) throw new Error('Selection changed');
+        return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+            title: 'Generating a proposal; original source is retained', cancellable: true },
+            (_progress, token) => controller.propose(editor, prompt, token));
     });
-
-    // Register Ghost Text Autocomplete Provider
-    const provider = vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, {
-        async provideInlineCompletionItems(document, position, context, token) {
-            // Get text before and after cursor
-            const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-            const suffix = document.getText(new vscode.Range(position, new vscode.Position(document.lineCount, 0)));
-
-            const payload = JSON.stringify({
-                prefix: prefix,
-                suffix: suffix,
-                file_path: document.uri.fsPath
-            });
-
-            const options = {
-                hostname: '127.0.0.1',
-                port: 11435,
-                path: '/api/autocomplete',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(payload)
-                }
-            };
-
-            return new Promise((resolve, reject) => {
-                const req = http.request(options, (res) => {
-                    let fullText = '';
-                    res.on('data', chunk => fullText += chunk.toString());
-                    res.on('end', () => {
-                        if (token.isCancellationRequested) {
-                            resolve([]);
-                            return;
-                        }
-                        try {
-                            const result = JSON.parse(fullText);
-                            if (result.completion) {
-                                resolve([new vscode.InlineCompletionItem(result.completion)]);
-                            } else {
-                                resolve([]);
-                            }
-                        } catch (e) {
-                            resolve([]);
-                        }
-                    });
-                });
-
-                req.on('error', () => resolve([]));
-                req.write(payload);
-                req.end();
-                
-                token.onCancellationRequested(() => {
-                    req.destroy();
-                    resolve([]);
-                });
-            });
+    for (const action of ['apply', 'undo', 'discard']) register(`pythonai.${action}Proposal`, () => controller.choose(action));
+    register('pythonai.reviewTasks', () => vscode.env.openExternal(vscode.Uri.parse(
+        endpoint(controller.config().get('dashboardUrl', 'http://127.0.0.1:8000'), '/').toString())));
+    context.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider({ scheme: 'file' }, {
+        async provideInlineCompletionItems(document, position, _context, token) {
+            const version = document.version;
+            try {
+                const headers = await controller.headers();
+                const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position)).slice(-2000);
+                const result = await request(endpoint(controller.config().get('ideUrl', 'http://127.0.0.1:11435'), '/api/autocomplete'),
+                    { prefix, file_path: document.uri.fsPath }, headers, token);
+                return !token.isCancellationRequested && version === document.version && typeof result.completion === 'string'
+                    ? [new vscode.InlineCompletionItem(result.completion)] : [];
+            } catch { return []; }
         }
-    });
-
-    context.subscriptions.push(disposable, provider);
+    }));
+    return controller;
 }
-
-function deactivate() {}
-
-module.exports = {
-    activate,
-    deactivate
-}
+module.exports = { activate, deactivate() {} };
