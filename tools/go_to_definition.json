@@ -2,13 +2,13 @@
   "type": "function",
   "function": {
     "name": "go_to_definition",
-    "description": "LSP feature: Go to the definition of a variable, function, or class at the given line and column in a Python file.",
+    "description": "Resolve definition using a configured LSP server, bounded Jedi for Python, or explicitly unresolved syntax candidates for Go/JS/TS. Line is 1-based; column counts Unicode characters from 0.",
     "parameters": {
       "type": "object",
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Path to the python file"
+          "description": "Workspace-relative Python, Go, JS, JSX, TS or TSX file"
         },
         "line": {
           "type": "integer",
@@ -19,7 +19,11 @@
           "description": "Column number (0-indexed)"
         }
       },
-      "required": ["file_path", "line", "column"]
+      "required": [
+        "file_path",
+        "line",
+        "column"
+      ]
     }
   }
 }

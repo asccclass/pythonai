@@ -138,10 +138,17 @@
   - 邊界：支援 UTF-8 普通檔案，拒絕 links／越界／Git metadata，不宣稱多檔全域原子；patch 32 檔／8 MiB 單檔／16 MiB 合計，diff 2 MiB，delivery 256 檔／256 commit，artifact 10000 筆／64 MiB。中斷保留證據，人工 abandon 需 180 秒後查核 worker；不自動回復遠端或重試未知副作用。
   - 平台邊界：不支援 fork PR／MR。GitHub 以同作者在 comment 更新後對當前 SHA 的 APPROVED 確認 finding；GitLab 需 resolved DiffNote、approval reset-on-push 及 approvals API 權限。finding 重現欄位保存審查者原文，未自動執行。平台 branch protection 與實際帳號／CI／合併須部署者另驗；本次本機 fixture 不代表已建立外部 PR。`verified_delivery` 僅在明確確認 merge 後為 true，與 T10 task 驗收分開。
 
-- [ ] **T15 — 程式碼索引與跨語言理解**
-  - 現況：Python Tree-sitter／Jedi、手動 embedding 建索引；語意搜尋讀取候選並算 cosine。
+- [x] **T15 — 程式碼索引與跨語言理解**
+  - 原況：Python Tree-sitter／Jedi、手動 embedding 建索引；語意搜尋讀取候選並算 cosine。
   - 工作：增量索引與檔案變更追蹤、embedding 模型版本、ignore／secret 過濾、精確文字搜尋、LSP／多語言符號、較大資料的 ANN。
   - 驗收：修改／刪除／更換模型不殘留舊索引；Python、Go、JS／TS 的符號與引用以 fixture 驗證；建立品質與延遲基準。依賴 T01、T09。
+  - 實作（2026-10-10）：新增既有 `agent_execution/code_index/`，SHA-256 增量同步／刪除清理、workspace／grammar／embedding 版本、nested ignore／秘密過濾、literal／symbol／semantic 三種查詢、Python／Go／JS／TS／JSX／TSX 語法符號、接收者 qualified name、持久化 LSH ANN（最多 512 候選）。原 build／search／definition／references entry points 接入，新增 refresh_code_index／code_symbols，接入協作角色工具清單。舊無版本向量首次查詢即重建；generated DB 停止 Git 追蹤，原本機檔案保留。
+  - 解析與治理：Python Jedi 與部署者配置的 stdio LSP 均用 bounded worker，支援 initialize／didOpen／definition／references／documentSymbol／shutdown、UTF-16／Unicode 轉換、越界／排除檔過濾、程序樹 timeout／cancel。未配置 LSP 的 Go／JS／TS 明確回傳 unresolved syntax candidates，不猜測 binding。Windows Tree-sitter 0.26 Point 屬性在 700 函式壓測觸發原生崩潰，改依 byte offsets 計算位置，保留大索引回歸測試。
+  - 向量治理：預設離線 hashing；遠端 opt-in 身份包括 endpoint／model／revision／dimension。refresh 最多 32 API，首錯即停止、不 retry／fallback 混用；搜尋不做 remote backfill，保留 pending 狀態及 T09 預算。單檔 1 MiB／檔案合計 64 MiB／10000 files／20000 symbols／200000 identifiers／256 MiB DB，超過 aggregate 額度拒絕。
+  - 品質基準：四語言 fixture + 1000 合成函式，1017 symbols、10 query；symbol recall 1.0、ANN recall@5 1.0，build 1301.994 ms／unchanged refresh 35.907 ms／query median 59.504 ms、max 81.722 ms。重現 `python -m agent_execution.code_index.benchmark --symbols 1000 --queries 10`，紀錄 `agent_execution/code_index/benchmark_baseline.json`；完整 chunk query 對照 exhaustive cosine，不代表自然語言模型品質或正式工程延遲。
+  - 索引快照：查詢期間重驗原始內容，並行 refresh 不能令舊 LSP 結果通過；task worktree 的 cache 自動放在外部 TaskStore 同層，支援受信任 AGENT_CODE_INDEX_DIR，以 workspace 雜湊隔離，不讓搜尋破壞 T14 的 clean-worktree 門檻。
+  - 驗證紀錄：新增 27 項索引測試；索引／政策階段相關 39 passed、5 subtests passed，與協作整合 56 passed、9 subtests passed；增量／秘密／Unicode／原生 grammar／實際 Jedi／本機 LSP protocol／取消／ANN／品質與延遲均有案例。最終索引專項 27 passed、5 subtests passed（20.94 秒）；開啟 Docker／Chromium 的完整回歸 565 passed、1 skipped（外部 provider）、30 subtests passed（620.86 秒），另有 1 項既有 AnyIO 棄用警告。package／tools 語法與 Git diff 檢查通過。
+  - 邊界：秘密檢測是可誤判／漏判的規則，須另設專案 ignore；只處理有界 UTF-8，未支援全部語言型別推導。LSP command 是受信任部署設定，host 依 T02；正式 gopls／TS server 與遠端 embedding 語意品質尚待外部環境驗證。provider 模型同名換版須由部署者更新 revision，LSH 屬近似搜尋，真實任務 benchmark 待 T21。
 
 - [ ] **T16 — IDE 與 Dashboard 的任務審查介面**
   - 現況：VS Code 串流直接取代選取文字；Dashboard 主要管理記憶與觀察任務。

@@ -33,7 +33,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
 | 子代理 | 持久化 DAG、planner／coder／reviewer 獨立程序、follow-up／等待／取消／合併 | 獨立工具範圍、checkpoint、worktree；共享根預算；Coder 須通過獨立 Reviewer，內容衝突禁止覆寫 | `agent_execution/coordinator.py`, `tools/manage_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
-| 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
+| 程式碼理解與修改 | Python／Go／JS／TS 增量符號／引用、版本化向量、精確文字搜尋、LSH ANN、Jedi／可配置 LSP、AST 替換與回復 | 每次查詢同步；ignore／秘密過濾；語法候選與語意解析分開標示；一般 workspace 內索引、任務 worktree 使用外部 cache | `agent_execution/code_index/`, `build_codebase_index.py`, `tools/code_symbols.py`, `tools/search_codebase.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
 | 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
 | Patch／PR／CI | 多檔內容雜湊驗證、diff 預覽、GitHub PR／GitLab MR、確切 SHA 發布、CI／審查門檻、同 PR 修復與交付摘要 | 發布／合併各需一次性批准；平台 API 以本機 fixture 驗證，外部帳號尚未實測 | `agent_execution/patches.py`, `agent_execution/git_delivery.py`, `agent_execution/git_provider.py`, `tools/project_delivery.py` |
 | IDE 整合 | VS Code Inline Chat、Ghost Text、HTTP 串流替換選取程式碼 | 原型；獨立 ide_server.py，非完整 Agent 任務 UI，尚無修改預覽、驗收與 robust cancellation | `ide_server.py`, `vscode-extension/` |
@@ -47,7 +47,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 比較面向 | PythonAI 現況 | 相對差距與下一步 |
 | --- | --- | --- |
-| 編碼交付／Codex | 已有編輯、選檔 Git、測試、Judge、task worktree、patch、跨代理合併與 PR／CI 門檻 | 外部平台實測、跨語言理解、IDE 整合與品質基準仍待完成 |
+| 編碼交付／Codex | 已有編輯、增量多語言索引、選檔 Git、測試、Judge、task worktree、patch、跨代理合併與 PR／CI 門檻 | 外部平台／正式 LSP 實測、IDE 整合與完整品質基準仍待完成 |
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
@@ -553,3 +553,23 @@ API 每次操作最多 32 請求／30 秒，單請求最多 10 秒、回應 2 Mi
 實作依據：[GitHub Pull Requests](https://docs.github.com/en/rest/pulls/pulls)、[Checks](https://docs.github.com/en/rest/checks/runs)、[Reviews](https://docs.github.com/en/rest/pulls/reviews)、[GitLab Merge Requests](https://docs.gitlab.com/api/merge_requests/)、[Jobs](https://docs.gitlab.com/api/jobs/)、[Approvals](https://docs.gitlab.com/api/merge_request_approvals/)。測試使用真實 Git bare remote、localhost HTTP fixture 與實際 pytest；CI／review／合併 API 回應是 fixture，尚未對外部帳號建立或合併 PR／MR。
 
 最終完整回歸（2026-10-10，Docker／Chromium opt-in 開啟）：538 passed、1 skipped（外部 provider）、25 subtests passed，耗時 548.94 秒。新增 27 項 T14 測試，亦驗證 Windows Git metadata 路徑別名、空檔 diff、未知合併的 SHA 核對與慢速 HTTP 期限；package／tools 語法及 Git diff 檢查通過。
+
+## 增量程式碼索引與跨語言理解（T15）
+
+`refresh_code_index()` 或既有 `python build_codebase_index.py` 以檔案內容 SHA-256 同步配置 workspace。每次搜尋亦同步本機內容；修改／刪除檔案、刪除函式、改 ignore 規則、切換 workspace／grammar／embedding 版本均會移除過期資料，未變內容重用向量。建立期間內容改變則拒絕本次結果。舊的無版本 code_index 表在首次同步時丟棄並重建；codebase_index.db 是可重建資料，不再追蹤於 Git，原有本機檔案保留。
+
+一般 workspace 保留既有 codebase_index.db 路徑；T12／T13 任務 worktree 自動將 cache 放在 workspace 外的 TaskStore 同層，以 workspace 雜湊分檔，避免索引讓 Git 交付目錄變 dirty。其他 repository 可設定 `AGENT_CODE_INDEX_DIR` 為絕對、workspace 外的目錄；未設定則須自行加入 codebase_index.db 的 ignore 規則。切換外部 cache 不刪原本機 DB，亦不讀取舊向量。
+
+`search_codebase(query, limit=5, mode="semantic")` 回傳 JSON，mode 可選 `text`（精確、大小寫敏感的 literal）或 `symbol`（精確名稱／qualified name）。`code_symbols(file_path="", backend="syntax", limit=100)` 列出 Python、Go、JS／JSX、TS／TSX 的語法宣告與位置。預設離線 hashing-64 向量，256 筆以下 exhaustive cosine，較大索引使用持久化 LSH buckets、最多 512 候選；回傳 backend／approximate／candidate_count／版本／同步統計，不宣稱近似結果為完整搜尋。
+
+`go_to_definition`／`find_references` 的輸入為 1-based line、0-based Unicode column。Python 保留 Jedi，改由有界 worker 執行；其他語言預設回傳 `syntax_candidates`、`resolved=false` 的同名候選，JS／TS 共用語言家族，不能據此判斷型別或遮蔽。設定 `AGENT_CODE_LSP_SERVERS` JSON（例如 `{"go":{"command":["gopls"],"timeout":10}}`）可改用已安裝的 LSP server；工具不接受模型提供的 command。支援 initialize／didOpen／definition／references／documentSymbol／shutdown、UTF-16 位置轉換，過濾 workspace 外與已排除檔案。worker 預設 10 秒、最多 30 秒、2 MiB 輸出，沿用程序樹取消與清理；Jedi 固定 10 秒。
+
+ignore 採巢狀 `.gitignore`／`.agentignore`；另強制排除 Git metadata、venv、node_modules、build／dist／temp、symlink／junction、`.env*`、金鑰／credentials 名稱與已知秘密內容。秘密辨識有漏判／誤判的可能，應補專案規則。只索引 UTF-8 普通文字，單檔 1 MiB、10000 檔／64 MiB、20000 symbols／200000 identifiers，DB 上限 256 MiB。語法錯誤移除舊符號，允許文字搜尋；超過總額度拒絕，不回傳旧索引。完整配置與邊界见 `agent_execution/code_index/README.md`。
+
+遠端 embedding 為部署者 opt-in：`AGENT_CODE_EMBEDDING_CONFIG={"kind":"openai","model":"MODEL","dimensions":768,"revision":"deployment-v1","max_requests":16}`，沿用既有 server client／認證。dimension 須符合服務輸出（8..2048）；endpoint／model／revision／dimension 納入版本，同名模型換版本時須更新 revision。明確 refresh 最多 32 次 API，首個錯誤即停止；搜尋不做遠端 backfill，有合法向量時只查一次 query embedding。無重試、不把失敗降級成另一模型的向量，並受 T09 request／token／cost 預算約束。預設 hashing 只提供離線可重現檢索，不保證訓練模型的同義詞理解品質。
+
+離線基準可執行 `python -m agent_execution.code_index.benchmark --symbols 1000 --queries 10`；結果保存於 `agent_execution/code_index/benchmark_baseline.json`。本機 1017 symbols，語法 symbol recall 與 ANN recall@5 均為 1.0；build 1301.994 ms、無改動 refresh 35.907 ms、query median 59.504 ms／max 81.722 ms。此基準使用完整合成 chunk 查詢、比對 exhaustive cosine；不代表自然語言搜尋品質或正式專案延遲。真實 grammar／Jedi 與本機 LSP protocol fixture 均有測試，正式 gopls／TS server 與遠端模型品質尚待部署環境實測。
+
+技術依據：[Tree-sitter](https://tree-sitter.github.io/py-tree-sitter/)、[LSP 3.17](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)、[gitignore](https://git-scm.com/docs/gitignore)。
+
+T15 最終驗證（2026-10-10）：專項測試 27 passed、5 subtests passed；開啟 Docker／Chromium 的完整回歸 565 passed、1 skipped（外部 provider）、30 subtests passed，耗時 620.86 秒，另有 1 項既有 AnyIO 棄用警告。package／tools 語法與 Git diff 檢查通過。

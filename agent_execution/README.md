@@ -130,3 +130,13 @@ Tests in tests/test_project_delivery.py exercise real Git remotes, actual proces
 exit during patch application, real local tests and localhost provider fixtures.
 External provider credentials, CI and PR merges require separate live validation.
 See the root README for the operation sequence, limits and platform references.
+
+## Incremental code intelligence (T15)
+
+code_index/ contains transactional file synchronization, versioned embeddings,
+Tree-sitter declarations/occurrences, bounded Jedi/LSP workers, persistent LSH
+candidates and an offline benchmark. Existing build/search/navigation entry points
+delegate to the package. Unversioned legacy vectors are discarded and regenerated;
+generated databases stay local. Search distinguishes literal, exact symbol and
+approximate vector modes, and syntactic candidates from semantic backend results.
+See code_index/README.md for configuration, filtering, resource limits and baseline.

@@ -1,0 +1,1 @@
+{"type":"function","function":{"name":"refresh_code_index","description":"Incrementally synchronize current workspace files, declarations, references and versioned vectors. Deletes stale or excluded records. Remote embeddings require trusted deployment configuration and at most 32 calls per refresh.","parameters":{"type":"object","properties":{},"required":[]}}}

@@ -135,14 +135,8 @@ class PolicyTests(unittest.TestCase):
         from build_codebase_index import build_index
         from tools.search_codebase import search_codebase
         (self.root / "sample.py").write_text("def hello(): pass", encoding="utf-8")
-        provider = Mock()
-        provider.embed.return_value = [1.0, 0.0]
-        node = {"type": "function_definition", "name": "hello", "start_line": 1,
-                "end_line": 1, "docstring": "Hello"}
-        with patch("vector_search.OpenAICompatibleEmbeddingProvider", return_value=provider), \
-             patch("build_codebase_index.extract_nodes_from_file", return_value=[node]):
-            build_index(".")
-            self.assertIn("hello", search_codebase("hello"))
+        build_index(".")
+        self.assertIn("hello", search_codebase("hello",mode='symbol'))
         self.assertTrue((self.root / "codebase_index.db").exists())
 
     def test_command_option_assignment_cannot_escape(self):

@@ -2,7 +2,7 @@
   "type": "function",
   "function": {
     "name": "search_codebase",
-    "description": "Codebase RAG Tool: Search the entire project semantically using vector embeddings to find relevant classes and functions based on a natural language query.",
+    "description": "Incremental workspace code search: semantic versioned vectors, exact literal text, or exact symbol name. Approximate LSH candidates are explicitly labeled; ignores and secrets are excluded. Remote backfill is explicit.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -13,9 +13,19 @@
         "limit": {
           "type": "integer",
           "description": "Maximum number of results to return (default 5)"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "semantic",
+            "text",
+            "symbol"
+          ]
         }
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
     }
   }
 }

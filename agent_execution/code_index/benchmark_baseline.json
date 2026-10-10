@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "dataset": "four-language-fixtures-and-deterministic-python-functions",
+  "symbols": 1017,
+  "queries": 10,
+  "embedding": "hashing-64-revision-1",
+  "backend": "lsh_approximate",
+  "build_ms": 1301.994,
+  "unchanged_refresh_ms": 35.907,
+  "symbol_recall": 1.0,
+  "ann_recall_at_5": 1.0,
+  "query_p50_ms": 59.50449999999999,
+  "query_max_ms": 81.722,
+  "max_candidates": 512,
+  "candidate_limit": 512,
+  "scope": "offline syntactic symbols and approximate retrieval; not production LSP or model semantic quality"
+}

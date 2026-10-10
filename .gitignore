@@ -16,3 +16,5 @@ memory/*.lock
 communication/*.db
 communication/*.db-*
 temp/*
+codebase_index.db
+codebase_index.db-*

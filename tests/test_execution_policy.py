@@ -6,6 +6,7 @@ from agent_execution.tests import test_hook_policies
 from agent_execution.tests import test_worktrees
 from agent_execution.tests import test_coordinator
 from agent_execution.tests import test_project_delivery
+from agent_execution.tests import test_code_index
 
 
 def load_tests(loader, tests, pattern):
@@ -23,4 +24,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_worktrees))
     tests.addTests(loader.loadTestsFromModule(test_coordinator))
     tests.addTests(loader.loadTestsFromModule(test_project_delivery))
+    tests.addTests(loader.loadTestsFromModule(test_code_index))
     return tests

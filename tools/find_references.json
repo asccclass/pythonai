@@ -2,13 +2,13 @@
   "type": "function",
   "function": {
     "name": "find_references",
-    "description": "LSP feature: Find all references of a variable, function, or class at the given line and column in a Python file.",
+    "description": "Resolve project references using configured LSP or bounded Python Jedi. Go/JS/TS fallback reports same-name syntactic candidates, not semantic bindings.",
     "parameters": {
       "type": "object",
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Path to the python file"
+          "description": "Workspace-relative Python, Go, JS, JSX, TS or TSX file"
         },
         "line": {
           "type": "integer",
@@ -19,7 +19,11 @@
           "description": "Column number (0-indexed)"
         }
       },
-      "required": ["file_path", "line", "column"]
+      "required": [
+        "file_path",
+        "line",
+        "column"
+      ]
     }
   }
 }

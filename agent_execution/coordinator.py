@@ -25,13 +25,13 @@ PERSONAS={
         '{"approve":true|false,"findings":[{"path":"relative/file","line":1,"message":"finding"}]}. '
         'Approve only with no unresolved findings; never change implementation files.',
 }
-READ_TOOLS=frozenset({'read_file','list_files','git_status','git_diff','search_codebase','go_to_definition','find_references','read_image'})
+READ_TOOLS=frozenset({'read_file','list_files','git_status','git_diff','search_codebase','code_symbols','go_to_definition','find_references','read_image'})
 TOOLS_BY_ROLE={
     'planner':READ_TOOLS,
     'reviewer':READ_TOOLS|{'run_test_suite'},
     'coder':READ_TOOLS|{'write_file','edit_file','ast_edit','run_command','run_test_suite','git_commit',
         'ask_user','run_skill','invoke_subagent','check_subagent','manage_subagent',
-        'prepare_project_patch','apply_project_patch','project_delivery'},
+        'prepare_project_patch','apply_project_patch','project_delivery','refresh_code_index'},
 }
 SUCCESS={'completed','reviewed','merged'}
 STOPPED={'failed','rejected','cancelled','timed_out','needs_input','needs_resolution','conflict'}
