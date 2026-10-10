@@ -24,6 +24,13 @@ class ServerTests(unittest.TestCase):
             lambda provider,text,allow_remote=True:provider.fallback_embed(text))
         offline.start()
         self.addCleanup(offline.stop)
+        # These CLI unit tests must not mmap real local neural-model files.
+        from memory_classifier import MemoryCandidateDecision
+        from types import SimpleNamespace
+        classifier=SimpleNamespace(assess_episode=lambda events:MemoryCandidateDecision(available=False))
+        offline_classifier=patch('server.LayaMemoryClassifier',return_value=classifier)
+        offline_classifier.start()
+        self.addCleanup(offline_classifier.stop)
 
     def test_create_ollama_client_uses_remote_ollama_settings(self):
         with (

@@ -133,7 +133,7 @@ class PolicyHookTests(unittest.TestCase):
     def test_scheduler_hooks_preserve_owner_and_do_not_repeat_command(self):
         effect=Mock(return_value=subprocess.CompletedProcess([],0,'done',''))
         job={'job_type':'command','job_payload':json.dumps({'command':['echo','hi']}),'owner_identity':'owner','owner_role':'admin'}
-        with patch('base.run_command',effect):
+        with patch('base.run_command',effect),patch('agent_execution.scheduling.engine.get_user_role',return_value='admin'):
             result=execute_job(job)
         self.assertEqual(result[0],'completed')
         effect.assert_called_once()

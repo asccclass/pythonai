@@ -134,7 +134,13 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
         assets = _context.get().trusted_assets if name == "run_command" else ()
         _validate_paths(arguments, assets)
         external_delivery=name=='project_delivery' and values.get('action') in {'publish','merge'}
-        if name == 'git_rollback' or external_delivery or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):
+        if name=='manage_schedule' and values.get('action')=='add':
+            from .scheduling.store import natural_cron,validate_job
+            schedule=values.get('schedule','')
+            expression=schedule if isinstance(schedule,str) and len(schedule.split())==5 else natural_cron(schedule)
+            validate_job(values.get('name',''),expression,values.get('job_type','watch'),values.get('payload') or {},
+                         values.get('timezone','Asia/Taipei'),values.get('timeout',60),values.get('max_runs',1000))
+        if name == 'git_rollback' or external_delivery or (name == 'manage_schedule' and values.get('action') == 'add') or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):
             if name=='manage_memory':values = {"reason": "", "superseded_by": None, **values}
             context = _context.get()
             action = f"{context.project}:{name}" + (f':{context.task_id}' if name=='git_rollback' or external_delivery else '')

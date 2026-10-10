@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 import json
 
 @pytest.fixture
-def temp_db():
+def temp_db(monkeypatch):
     fd, path = tempfile.mkstemp()
     os.close(fd)
-    os.environ["SCHEDULER_DB_PATH"] = path
+    monkeypatch.setenv("SCHEDULER_DB_PATH", path)
     yield path
     try:
         os.remove(path)

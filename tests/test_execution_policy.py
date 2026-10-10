@@ -8,6 +8,7 @@ from agent_execution.tests import test_coordinator
 from agent_execution.tests import test_project_delivery
 from agent_execution.tests import test_code_index
 from agent_execution.tests import test_review_ui
+from agent_execution.tests import test_scheduling
 
 
 def load_tests(loader, tests, pattern):
@@ -27,4 +28,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_project_delivery))
     tests.addTests(loader.loadTestsFromModule(test_code_index))
     tests.addTests(loader.loadTestsFromModule(test_review_ui))
+    tests.addTests(loader.loadTestsFromModule(test_scheduling))
     return tests

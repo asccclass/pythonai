@@ -587,3 +587,11 @@ Dashboard 新增會話欄與 `/api/review/context`、`/api/review/tasks`、`/api
 使用／測試細節見 `vscode-extension/README.md`；技術依據：[VS Code API](https://code.visualstudio.com/api/references/vscode-api)、[diff command](https://code.visualstudio.com/api/references/commands)、[Extension Host testing](https://code.visualstudio.com/api/working-with-extensions/testing-extension)。
 
 T16 最終驗證（2026-10-10）：新增 11 項 Python 測試；最終 UI／API 與舊 Dashboard 整合重驗 14 passed（24.70 秒），Node 9 passed，實際 VS Code 1.141.0 Extension Host 14 案例通過。開啟 Docker／Chromium 的完整回歸 576 passed、1 skipped（外部 provider）、30 subtests passed（884.64 秒），另有 1 項既有 AnyIO 棄用警告；Python／Node 語法及 Git diff 檢查通過。證據摘要保存於 vscode-extension/tests/verification_baseline.json，原始 log／截圖保留於忽略的 temp/。
+
+## Agent／Skill 排程與追蹤（T17）
+
+排程實作收攏於 `agent_execution/scheduling/`，支援 command、workspace Python script、Agent、Skill、唯讀 watch 及摘要維護。`schedule_cli.py add` 可選五欄 `--cron` 或 `--schedule "每天 09:30"`／`"每 5 分鐘"`，預設 `--timezone Asia/Taipei`；不明確的自然語句會拒絕。`--timeout` 限 1–300 秒，`--max-runs` 限 1–1000。`list`、`disable JOB_ID`、`notifications` 僅操作自身 source／identity／project／session 的工作；模型使用 `manage_schedule` 建立排程須先取得對應參數的一次性人工批准。
+
+Worker 使用 SQLite 原子領取、10 秒 lease 與 2 秒續租；舊執行者不能提交結果或清除新鎖。每次工作由有期限、可取消的原生子程序執行，恢復原會話與 workspace，重新查核遠端角色。錯過多個時間點合併為一次；未知寫入效果暫停待人工查核，唯讀 watch 最多重試兩次。舊遠端排程缺少可信會話資料時停用，不轉給本機身份。
+
+Watch 保存最近四次觀察，回傳 waiting／completed／needs_input；第一次等待與相同狀態保持安靜，變更、失敗或完成寫入 owner 範圍的通知佇列。完成、人工處理、取消或執行次數上限會停止工作。通知由工具／CLI 讀取，尚未接入各通訊平台的自動推送；外部模型與實際平台送達不由離線測試證明。排程 DB 限 64 MiB、1000 工作、10000 runs／notifications，達上限須依管理政策整理。

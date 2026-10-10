@@ -165,6 +165,9 @@
   - 現況：排程已有 command、maintenance.summary、SQLite 工作鎖，未實作 CLI help 提到的通用 script job。
   - 工作：新增 Agent／Skill job、自然語言排程、時區、會話 follow-up、停止條件、只在有意義變更通知；補 command timeout、鎖 lease、重啟／misfire 與 bounded retry。
   - 驗收：多入口同時啟動不重複執行；Asia/Taipei 排程時間正確；長工作／crash 不永久卡住；狀態未變保持安靜，完成或需人處理才通知。依賴 T01、T05、T08、T09。
+  - 實作（2026-10-10）：獨立 scheduling package、Agent／Skill／script／唯讀 watch、明確自然語句與 ZoneInfo、owner／會話／workspace 還原、人工批准；原子 claim／續租／fencing、原生 worker timeout／取消、misfire 合併、未知副作用停用與唯讀最多兩次 retry。通知去重、四次歷史與停止條件，舊遠端工作隔離停用。
+  - 驗證：排程／policy 38 passed；最後排程／Hook／舊 scheduler 整合 32 passed。完整回歸先遇既有 CLI 測試載入本機 Laya 原生模型存取錯誤，改為離線 classifier fixture；後續舊 Hook fixture 需明確授予 owner 現行 admin，修正後相關案例通過。整體最終回歸結果集中記錄於 T21。
+  - 邊界／後續：通知持久化且可透過工具／CLI 查詢；正式平台自動推送及真實 provider 追蹤尚待驗收，因此保留未勾選。
 
 - [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**
   - 現況：stdio MCP 與工具熱載入可用；動態 Python 模組直接載入；MCP 路由依工具名稱分割，需補 server 名含底線案例。

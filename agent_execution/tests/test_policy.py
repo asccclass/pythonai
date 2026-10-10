@@ -157,17 +157,17 @@ class PolicyTests(unittest.TestCase):
         store = SchedulerStore(self.root / "scheduler.db")
         with execution_scope(identity="telegram:123"):
             store.add_job("test", "* * * * *", "command", {"command": ["echo", "hello"]})
-        job = store.list_jobs()[0]
+            job = store.list_jobs()[0]
+        self.assertEqual(store.list_jobs(), [])
         self.assertEqual(job["owner_identity"], "telegram:123")
         def command(**kwargs):
-            self.assertEqual(current_context().source, "scheduler")
+            self.assertEqual(current_context().source, "local")
             self.assertEqual(current_context().identity, "telegram:123")
             return subprocess.CompletedProcess([], 0, "hello", "")
-        with patch("base.run_command", side_effect=command):
+        with patch("base.run_command", side_effect=command), patch("agent_execution.scheduling.engine.get_user_role", return_value="admin"):
             self.assertEqual(execute_job(job), ("completed", "hello", ""))
-        job["owner_role"] = "viewer"
-        with patch("base.run_command") as run:
-            self.assertEqual(execute_job(job)[0], "failed")
+        with patch("base.run_command") as run, patch("agent_execution.scheduling.engine.get_user_role", return_value="viewer"):
+            self.assertEqual(execute_job(job)[0], "needs_input")
             run.assert_not_called()
 
     def test_scheduler_rejects_shell_strings_and_outside_cwd(self):
