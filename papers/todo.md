@@ -176,7 +176,8 @@
   - 驗收：缺 server／網路斷線不阻塞其他工具；名稱碰撞／底線不誤路由；惡意 schema 或未通過測試的生成工具不能啟用。依賴 T01、T03、T10。
   - 實作（2026-10-10）：exact MCP route／碰撞雜湊、離線有界 JSON Schema 與 structuredContent／isError 驗證、stdio EOF／取消／程序樹清理、四 worker startup、health／明確 reconnect；2025-11-25 remote POST JSON／SSE、session／token_env。生成工具只 stage，工具／Skill 版本來源與 digest、Docker tests、人工批准、撤回與批准 rollback；提交的 builtin inventory。
   - Commit：`38f2eb9`；blocked pipe／JSON-RPC 補強 `838bf86`，補強相關 13 passed、1 skipped（Docker opt-in）。
-  - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema。尚缺完整互動 OAuth discovery／PKCE／refresh 和正式 remote provider 驗收，保留未勾選；激活需重啟刷新 schema。
+  - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema；正式 remote provider 驗收仍未完成，保留未勾選。激活需重啟刷新 schema。
+  - OAuth 補齊：trusted issuer／protected resource／OAuth 與 OIDC discovery、S256 PKCE、一次性 owner state／精確 callback、resource indicator、refresh rotation 與未知結果停止；人工 CLI 登入，不重播 401 tools/call。原生本機 HTTP 7 案例通過（含併行 refresh）；仍待正式帳號 consent／callback round trip。採預先註冊 public client，未提供 dynamic registration／confidential client／callback listener。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。

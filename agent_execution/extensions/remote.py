@@ -19,6 +19,11 @@ class RemoteMCPClient:
         self.timeout=float(config.get('timeout',10))
         if not 1<=self.timeout<=30:raise ValueError('MCP timeout must be 1..30 seconds')
         self.token_env=config.get('token_env');self.guard=threading.Lock();self.last_error=None
+        self.oauth=None
+        if config.get('oauth'):
+            if self.token_env:raise ValueError('Configure either token_env or OAuth')
+            from .oauth import OAuthClient
+            self.oauth=OAuthClient(self.url,config['oauth'])
         self.http=httpx.Client(timeout=self.timeout,follow_redirects=False,trust_env=False)
     def start(self):
         with self.guard:
@@ -41,7 +46,7 @@ class RemoteMCPClient:
         cancelled=current_context().check_cancelled
         if cancelled and cancelled():raise InterruptedError('MCP request cancelled')
         headers={'Accept':'application/json, text/event-stream','MCP-Protocol-Version':'2025-11-25'}
-        token=os.environ.get(self.token_env,'') if self.token_env else ''
+        token=self.oauth.access_token() if self.oauth else os.environ.get(self.token_env,'') if self.token_env else ''
         if self.token_env and not token:raise PermissionError('MCP OAuth access token required')
         if token:headers['Authorization']='Bearer '+token
         if self.session:headers['Mcp-Session-Id']=self.session
@@ -85,4 +90,6 @@ class RemoteMCPClient:
     def health(self):
         try:self.send_request('ping',{});return {'ready':self.running,'error':self.last_error}
         except Exception as error:return {'ready':False,'error':type(error).__name__}
-    def stop(self):self.running=False;self.http.close()
+    def stop(self):
+        self.running=False;self.http.close()
+        if self.oauth:self.oauth.close()

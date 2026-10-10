@@ -13,6 +13,7 @@ from agent_execution.tests import test_extensions
 from agent_execution.tests import test_media
 from agent_execution.tests import test_improvement
 from agent_execution.tests import test_operations
+from agent_execution.tests import test_oauth
 
 
 def load_tests(loader, tests, pattern):
@@ -37,4 +38,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_media))
     tests.addTests(loader.loadTestsFromModule(test_improvement))
     tests.addTests(loader.loadTestsFromModule(test_operations))
+    tests.addTests(loader.loadTestsFromModule(test_oauth))
     return tests

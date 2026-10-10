@@ -598,7 +598,9 @@ Watch 保存最近四次觀察，回傳 waiting／completed／needs_input；第�
 
 ## MCP 與可信擴充套件（T18）
 
-MCP 使用明確路由表，server／tool 名稱含底線及名稱碰撞均不靠字串切割判斷；參數與 structuredContent 以有界、離線 JSON Schema 驗證，工具錯誤不再混成成功文字。stdio 支援 EOF、取消及有界請求，remote 支援 HTTPS Streamable HTTP 的 JSON／SSE、session 與部署者提供的 OAuth access token；未知寫入結果不自動重播。完整互動 OAuth／refresh 尚待補齊，協定版本明確固定為 2025-11-25。[MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)。
+MCP 使用明確路由表，server／tool 名稱含底線及名稱碰撞均不靠字串切割判斷；參數與 structuredContent 以有界、離線 JSON Schema 驗證，工具錯誤不再混成成功文字。stdio 支援 EOF、取消及有界請求，remote 支援 HTTPS Streamable HTTP 的 JSON／SSE、session 與 access token；也提供人工 OAuth discovery／PKCE／一次性 callback／refresh rotation。未知寫入結果與 401 工具呼叫不自動重播。協定版本固定為 2025-11-25。[MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)。
+
+OAuth 使用預先註冊的 public client、明確 issuer 與原始 redirect URI；CLI 回收 callback URL，不啟動 callback listener。Token 依 owner 保存在私有 SQLite；不跨身份继承授權。配置與操作見 `agent_execution/extensions/README.md`；正式 provider 登入／同意流程仍待實測。[MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)。
 
 `create_dynamic_tool` 改為只保存版本提案，不寫入 tools/ 或立即執行。Python 工具與 Skill 版本保存在 owner 隔離的提案庫，通過 Docker unittest 與一次性人工批准後啟用；可撤回或批准切回舊版本。自動載入僅限提交的 builtins 清單。已批准 Python 是受信任 host 程式；來源、雜湊與測試不代替程式審查。CLI、package 格式、容量及限制見 `agent_execution/extensions/README.md`。
 

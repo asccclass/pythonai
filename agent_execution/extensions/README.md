@@ -27,10 +27,38 @@ third-party stderr. Startup uses four independent workers; missing/invalid serve
 are skipped. Reconnect refreshes discovery; tools/call is never retried after an
 uncertain response. Remote config uses url (HTTPS or loopback HTTP), timeout
 (1..30, default 10), optional token_env for a pre-obtained OAuth access token.
-2025-11-25 POST JSON/SSE and server session headers are supported. Interactive
-OAuth discovery, PKCE, refresh and older HTTP+SSE transport remain pending.
+2025-11-25 POST JSON/SSE and server session headers are supported. OAuth public
+clients support resource metadata discovery, OAuth/OIDC issuer metadata, S256 PKCE,
+one-use owner-bound state, exact redirect validation and serialized refresh rotation.
+Older HTTP+SSE transport remains unsupported.
 Remote responses are capped at 1 MiB; unsupported recursive/$ref/regex schemas
 are rejected without network resolution. No sampling/roots authority advertised.
+
+For interactive OAuth, configure oauth instead of token_env:
+```json
+{"url":"https://mcp.example.com/mcp","oauth":{"issuer":"https://auth.example.com/tenant","client_id":"pre-registered-public-client","redirect_uri":"http://127.0.0.1:8765/callback","scope":"files:read"}}
+```
+Human CLI: `python -m agent_execution.extensions.oauth_cli begin server.json`.
+Open authorization_url, complete the provider login, then pass the resulting URL
+to `finish server.json --callback-url URL`. The redirect is validated exactly;
+this CLI does not start a callback listener. Configure a registered redirect you
+can inspect. `revoke server.json` removes local credentials; revoke grants with
+provider account controls too. No tokens/verifiers are printed. State lasts ten
+minutes; credentials are private SQLite at AGENT_MCP_OAUTH_DB (default
+LOCALAPPDATA/PythonAI/mcp-oauth.db), bounded 16 MiB, 100 pending states/1000 grants.
+Protect it with OS account permissions and include it in private backups.
+
+The trusted issuer must match protected resource metadata exactly. Resource
+metadata origins are bound to the MCP resource; authorization/token endpoints
+must use the issuer origin or explicitly configured allowed_endpoint_origins.
+Redirects are never followed and responses are bounded 64 KiB/10 seconds. Public
+client registration is supplied by the deployment; dynamic registration and
+confidential-client authentication are not implemented. Token exchange includes
+the resource indicator. Refresh occurs before a request, never by replaying a
+401 tools/call. Unknown refresh outcomes remove local tokens and require a new
+human login. An OAuth client belongs to its creation owner; service-wide local
+grants are not inherited by another remote identity. Initialize/discover clients
+under the intended owner. Real provider login/consent is not proven by fixtures.
 
 Protocol references: [MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports),
 [authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization),
