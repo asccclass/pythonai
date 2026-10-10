@@ -196,17 +196,17 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(PolicyDenied):
                 function(*args)
 
-    def test_subagent_thread_inherits_role_and_identity(self):
+    def test_subagent_submission_preserves_role_and_identity(self):
         import tools.invoke_subagent as module
         seen = []
-        done = threading.Event()
         def worker(*args):
             seen.append((current_role(), current_context().identity))
-            done.set()
+            return 'a'*32
         # A narrow test policy allows spawning under viewer to prove context propagation.
         with set_current_role("viewer"), execution_scope(identity="telegram:123"), \
              patch("agent_execution.policy.check_tool_permission", return_value=True), \
-             patch.object(module, "subagent_worker", side_effect=worker):
-            module.invoke_subagent("reviewer", "read only")
-            self.assertTrue(done.wait(2))
+             patch.object(module, "Coordinator") as coordinator, patch.object(module,'start_coordinator'):
+            coordinator.return_value.submit.side_effect=worker
+            result=module.invoke_subagent("reviewer", "read only")
+            self.assertEqual(result.evidence['agent_id'],'a'*32)
         self.assertEqual(seen, [("viewer", "telegram:123")])

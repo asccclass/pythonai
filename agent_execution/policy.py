@@ -30,6 +30,9 @@ class ExecutionContext:
     trusted_assets: tuple[Path, ...] = ()
     check_cancelled: Callable[[], bool] | None = None
     tool_hook_managed: str | None = None
+    allowed_tools: frozenset[str] | None = None
+    coordinator_node: str | None = None
+    coordinator_owner: str | None = None
 
 
 _context: ContextVar[ExecutionContext] = ContextVar("execution_context", default=ExecutionContext())
@@ -126,6 +129,8 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
                 raise BudgetExhausted('Task cancelled before tool execution')
         if not check_tool_permission(name):
             raise PolicyDenied(f"Role '{current_role()}' cannot execute {name}")
+        if current_context().allowed_tools is not None and name not in current_context().allowed_tools:
+            raise PolicyDenied(f'Tool is outside this agent role: {name}')
         assets = _context.get().trusted_assets if name == "run_command" else ()
         _validate_paths(arguments, assets)
         if name == 'git_rollback' or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):

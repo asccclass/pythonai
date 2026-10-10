@@ -1,18 +1,1 @@
-{
-    "name": "invoke_subagent",
-    "description": "Spawns a subagent asynchronously to handle a specific role/task. Returns an agent_id. Use check_subagent to poll its status and result.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "persona": {
-                "type": "string",
-                "description": "The role of the subagent. Must be one of: 'planner', 'coder', 'reviewer'."
-            },
-            "task": {
-                "type": "string",
-                "description": "The detailed task description for the subagent to execute."
-            }
-        },
-        "required": ["persona", "task"]
-    }
-}
+{"type":"function","function":{"name":"invoke_subagent","description":"Queue a durable isolated agent. Coder results require independent verified review before merge. Dependencies must be earlier nodes in the same root task.","parameters":{"type":"object","properties":{"persona":{"type":"string","enum":["planner","coder","reviewer"]},"task":{"type":"string"},"dependencies":{"type":"array","items":{"type":"string"}}},"required":["persona","task"]}}}

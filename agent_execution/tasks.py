@@ -223,7 +223,7 @@ def save_checkpoint(phase, messages, **metadata):
     store.checkpoint(owner,key,token,phase,{'messages':messages,**metadata},step)
 
 
-def durable_invoke(function, messages, episode, resume=False, skill=False, skill_arguments=None, verify_skill=None):
+def durable_invoke(function, messages, episode, resume=False, skill=False, skill_arguments=None, verify_skill=None, acceptance_contract=None):
     from .policy import current_context, execution_scope
     import threading
     context = current_context()
@@ -246,7 +246,7 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
     if previous and not resume and previous['goal'] != goal:
         raise RecoveryRequired('Task ID cannot be reused with a different goal')
     from .acceptance import load_contract
-    token = store.claim(owner,key,goal,messages,episode,criteria=load_contract(goal) if previous is None else None)
+    token = store.claim(owner,key,goal,messages,episode,criteria=(acceptance_contract if acceptance_contract is not None else load_contract(goal)) if previous is None else None)
     if token is None:
         row = store.get(owner,key)
         return row['checkpoint']['skill_result'] if skill else row['reply'] or ''
@@ -349,6 +349,10 @@ def dispatch_task_input(text, runtime):
         return AgentTurnResult('Session cleared; suspended tasks will not be resumed.',None)
     if command == '/tasks':
         return AgentTurnResult(json.dumps(store.list(owner),ensure_ascii=False),None)
+    if command == '/agents':
+        from .coordinator import human_agent_command
+        try:return AgentTurnResult(human_agent_command(text),None)
+        except (KeyError,ValueError,PermissionError,RuntimeError) as error:return AgentTurnResult(f'Error: {error}',None)
     if command == '/worktree':
         from .worktrees import human_worktree_command
         try:

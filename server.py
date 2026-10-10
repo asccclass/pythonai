@@ -223,7 +223,10 @@ def run_agent(
             assistant_message = ChatCompletionMessage(**next(m for m in reversed(messages) if m.get('role')=='assistant'))
         if assistant_message is None:
             iteration += 1
-            request={'model':OLLAMA_MODEL,'tools':TOOLS_SCHEMAS}
+            from agent_execution.policy import current_context
+            allowed=current_context().allowed_tools
+            schemas=TOOLS_SCHEMAS if allowed is None else [schema for schema in TOOLS_SCHEMAS if schema.get('function',{}).get('name') in allowed]
+            request={'model':OLLAMA_MODEL,'tools':schemas}
             if hook_manager is not None:
                 hook_context = HookContext(
                     lifecycle=HookLifecycle.PRE_MODEL_CALL,
@@ -628,6 +631,8 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
 
 
 def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
+    from agent_execution.coordinator import resume_coordinator
+    coordinator_service=resume_coordinator()
     hook_manager=default_hook_manager(diagnose=True)
     messages = [{"role": "system", "content": build_system_prompt()}]
     guard = LayaGuard()
@@ -722,6 +727,8 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
             worker.join()
         worker.stop()
         scheduler_worker.stop()
+        from agent_execution.coordinator import close_coordinator
+        close_coordinator()
 
 if __name__ == "__main__":
     main()

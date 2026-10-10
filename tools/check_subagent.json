@@ -1,14 +1,1 @@
-{
-    "name": "check_subagent",
-    "description": "Checks the status of a subagent and retrieves its output if completed.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "agent_id": {
-                "type": "string",
-                "description": "The unique ID of the subagent to check."
-            }
-        },
-        "required": ["agent_id"]
-    }
-}
+{"type":"function","function":{"name":"check_subagent","description":"Read an owned durable agent's state, evidence and review status. A completed response alone is not reviewed delivery.","parameters":{"type":"object","properties":{"agent_id":{"type":"string"}},"required":["agent_id"]}}}

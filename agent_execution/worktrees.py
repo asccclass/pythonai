@@ -202,7 +202,7 @@ class WorktreeStore:
         records=git(self.repository,'worktree','list','--porcelain').splitlines()
         return any(line.startswith('worktree ') and Path(line[9:]).resolve()==path for line in records)
 
-    def create(self,owner,task):
+    def create(self,owner,task,base=None):
         if not isinstance(task,str) or not task or len(task)>256:raise ValueError('Invalid task ID')
         path=self.location(owner,task)
         with closing(self.connect()) as conn,conn:
@@ -214,7 +214,11 @@ class WorktreeStore:
             if path.exists():raise ValueError('Unregistered path exists; refusing to overwrite it')
             if conn.execute('SELECT COUNT(*) FROM worktrees WHERE state!=?',('archived',)).fetchone()[0]>=256:
                 raise ValueError('Worktree capacity reached')
-            base=git(self.repository,'rev-parse','HEAD').strip()
+            if base is not None:
+                import re
+                if not isinstance(base,str) or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}',base):raise ValueError('Invalid base commit')
+                base=git(self.repository,'rev-parse','--verify',base+'^{commit}').strip()
+            else:base=git(self.repository,'rev-parse','HEAD').strip()
             git(self.repository,'worktree','add','--detach',str(path),base)
             conn.execute('INSERT OR REPLACE INTO worktrees VALUES(?,?,?,?,?,?,?)',
                 (owner,task,str(self.repository),base,'ready',None,time.time()))

@@ -77,6 +77,8 @@ class MultiWebhookService:
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self.worker.drain(timeout=2.0)
+        from agent_execution.coordinator import close_coordinator
+        close_coordinator()
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -111,6 +113,8 @@ class TelegramWebhookService(MultiWebhookService):
         return super().handle_webhook(*args, **kwargs)
 
 def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
+    from agent_execution.coordinator import resume_coordinator
+    resume_coordinator()
     import server
     from base import workspace_root
     from hooks import default_hook_manager

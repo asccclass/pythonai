@@ -51,6 +51,23 @@ class ProcessTests(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 os.kill(pid, 0)
 
+    @unittest.skipUnless(os.name=='nt','Windows job attachment')
+    def test_fast_exit_parent_cannot_leave_a_descendant_before_job_assignment(self):
+        code="import subprocess,sys; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']); print(p.pid,flush=True)"
+        result=run_process([sys.executable,'-c',code],timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        from memory_worker import windows_pid_exists
+        self.assertFalse(windows_pid_exists(int(result.stdout.strip())))
+
+    @unittest.skipUnless(os.name=='nt','Windows suspended startup')
+    def test_job_assignment_failure_prevents_child_side_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker=Path(directory)/'unexpected.txt'
+            code='from pathlib import Path; Path('+repr(str(marker))+').write_text("effect")'
+            with patch('agent_execution.process.WindowsJob',side_effect=PermissionError('fixture')),self.assertRaises(PermissionError):
+                run_process([sys.executable,'-c',code],timeout=5)
+            self.assertFalse(marker.exists())
+
     def test_invalid_timeout_fails_before_launch(self):
         for timeout in (0, -1, float("nan"), float("inf")):
             with patch("subprocess.Popen") as launch, self.assertRaises(ValueError):

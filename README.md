@@ -8,7 +8,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 功能領域 | 現有能力 | 狀態與限制 | 實作依據 |
 | --- | --- | --- | --- |
-| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；15 次迭代、持久化 task／checkpoint／循序依賴、總 token／request／deadline／子代理預算；跨代理 DAG 待增修 | `server.py`, `agent_runtime.py`, `agent_execution/budgets.py` |
+| Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；15 次迭代、持久化 task／checkpoint／循序依賴、總 token／request／deadline／子代理預算；跨代理 DAG、獨立 Reviewer 與結果合併 | `server.py`, `agent_runtime.py`, `agent_execution/budgets.py` |
 | Provider 相容與重試 | OpenAI-compatible endpoint、文字／視覺／embedding 模型設定、能力探測、Retry-After | 已實作；關閉 SDK 隱藏重試，task 預算涵蓋重試；成本上限須配置模型費率，多 provider failover 尚未提供 | `server.py`, `agent_execution/budgets.py`, `agent_execution/model_probe.py` |
 | 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；共用政策檢查角色與路徑／symlink，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
 | Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、共用政策、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
@@ -31,7 +31,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Hook Pipeline | Pre/PostModelCall、Pre/PostToolExecute；六項內建政策、可配置啟停／排序／fail-closed、啟動診斷、阻擋／提前回覆／回饋與身份稽核 | 已實作；模型、直接工具、Skill／排程共用政策；核心權限／路徑／批准不受停用 Hook 影響 | `hooks.py`, `agent_execution/hook_policies.py`, `server.py` |
 | 任務驗收與自修正 | 凍結驗收契約、結構化工具結果、檔案／語法、JUnit／process、Judge 與 Critic | 明確條件及證據才能 verified_completed；Judge 無效／失效拒絕、不可修正失敗直接交人工；直接 Skill 亦驗收 | `task_evaluator.py`, `agent_execution/acceptance.py`, `agent_execution/results.py` |
 | Sandbox | 明確 host/container 模式、Docker-only、唯讀工作副本、禁網路、CPU／RAM／PID／tmpfs 配額、安全 artifacts 匯出 | 已實作；container 無 Docker 即拒絕，不轉交主機 credentials，限 Linux 指令 | `sandbox.py`, `tests/test_sandbox.py` |
-| 子代理 | planner／coder／reviewer daemon thread、JSON 狀態、invoke／check | 繼承角色／身份及父取消、共享根預算、独立 checkpoint；可選 task worktree 隔離，DAG、durable coordinator 及結果合併待 T13 | `tools/invoke_subagent.py`, `tools/check_subagent.py` |
+| 子代理 | 持久化 DAG、planner／coder／reviewer 獨立程序、follow-up／等待／取消／合併 | 獨立工具範圍、checkpoint、worktree；共享根預算；Coder 須通過獨立 Reviewer，內容衝突禁止覆寫 | `agent_execution/coordinator.py`, `tools/manage_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
 | 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
 | 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；PR／CI 流程待 T14；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
@@ -50,7 +50,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
-| 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算 | 已有循序步驟／checkpoint、lease 與保守副作用恢復；跨代理 DAG／結果收斂待 T13 |
+| 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算 | 已有步驟／checkpoint、跨代理 DAG、lease 與保守副作用恢復；PR／CI 閉環待 T14 |
 | 完成度驗證／通用 Agentic | 已有驗收契約、結構化結果、Critic loop 與來源事件 | 補獨立 Reviewer／結果收斂及端到端品質評測；僅以通過的明確檢查作為驗收範圍 |
 | 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
@@ -440,7 +440,7 @@ checkpoint 包含 model_pending／model_received、tool_started／tool_done、ev
 
 `ask_user` 已列入預設 schema 並經工具政策驗證問題長度。CLI／WebSocket 重啟後，對同一身份／project／session 的普通回答會續接最近的 suspended task；通訊亦沿用持久化問答機制。tool call/result 配對及原 episode ID 保留。CLI `AGENT_SESSION_ID` 預設 local，需分開多個終端時設定不同且穩定的 session ID，重啟使用相同值。未知平台身份不自動合併。
 
-task 最多 10000 筆／256 MiB（`AGENT_TASK_LIMIT`、`AGENT_TASK_STORAGE_BYTES`），單 checkpoint 64 MiB、人類回答／resolve 1 MiB。達上限拒絕新工作／checkpoint，不刪舊資料；管理者須規劃保留與匯出。task state=completed 表示迴圈已回覆，verification=verified_completed 另要求 T10 契約與證據；`/tasks` 可見 verification，舊資料預設 unverified。多代理計畫 DAG／worktree 分別由 T13／T12 擴充。
+task 最多 10000 筆／256 MiB（`AGENT_TASK_LIMIT`、`AGENT_TASK_STORAGE_BYTES`），單 checkpoint 64 MiB、人類回答／resolve 1 MiB。達上限拒絕新工作／checkpoint，不刪舊資料；管理者須規劃保留與匯出。task state=completed 表示迴圈已回覆，verification=verified_completed 另要求 T10 契約與證據；`/tasks` 可見 verification，舊資料預設 unverified。多代理 DAG 與 worktree 已分別接入 T13／T12。
 
 驗證包含以子程序 `os._exit` 在實際已提交的 checkpoint 結束、在新執行環境續跑；模型回覆後、工具結果後與驗收前後均不重複檔案寫入，工具開始但未保存結果時停待人工。另測試 lease／舊 token／owner、取消、快取、容量交易、Skill stdout、人類回答與原 episode、WebSocket runtime 重建後問答續接。
 
@@ -468,7 +468,7 @@ SDK `max_retries=0`、單請求 timeout 最多 60 秒且不超過剩餘 deadline
 
 可選的實際 provider 探測（每請求最長 15 秒、無隱藏重試、不傳 workspace 內容）：`python -m agent_execution.model_probe --model <id>`，加 `--vision` 測圖像，或 `--embedding` 測 embedding。成功僅證明請求可接受，不驗證語意品質；任何失敗回報 unknown 與錯誤類別／HTTP status，不洩露完整 provider error 或 credentials，也不自動更改配置。
 
-模型輸入超限時只刪完整舊訊息組，保留 system／developer、最新使用者輸入、task goal／criteria、批准及其工具配對；hook feedback 排在完整工具結果後。壓縮資料保持 user 權限，不提升為 system 指令。無法在上限內保留必要內容則拒絕，權威 checkpoint 不被裁剪。未知副作用與完整交付品質仍分別依 T08／T10 處理；可啟用 T12 worktree 避免檔案互覆，durable coordinator、合併衝突治理與 reviewer 收斂待 T13。
+模型輸入超限時只刪完整舊訊息組，保留 system／developer、最新使用者輸入、task goal／criteria、批准及其工具配對；hook feedback 排在完整工具結果後。壓縮資料保持 user 權限，不提升為 system 指令。無法在上限內保留必要內容則拒絕，權威 checkpoint 不被裁剪。未知副作用與完整交付品質仍分別依 T08／T10 處理；可啟用 T12 worktree 避免檔案互覆，T13 提供 durable coordinator、合併衝突治理與 Reviewer gate。
 
 完整驗證（Docker／Chromium 開啟）：444 passed、1 skipped（外部 provider）、7 subtests passed；新增預算與上下文測試包含真實 SDK 的 HTTP 429 無隱藏重試、root deadline 取消 Windows host 程序與 blocked stream、併發扣额、重啟與子代理額度／checkpoint。實際部署模型能力及費率未由這些 fixture 驗證。
 
@@ -507,3 +507,23 @@ Git 專案可設定 `AGENT_TASK_WORKTREE=1`，在 durable task 取得 lease 後�
 最多 256 個 active worktree、每次快照 10000 檔／256 MiB、單檔 64 MiB；repository objects 與 history.bundle 上限各 256 MiB。symlink／junction、submodule、嵌套 Git repository 拒絕自動封存，需人工保存。封存保留在本機，不自動刪舊成果；維運者須管理磁碟保留。封存期間須停止其他編輯者，系統會重檢狀態、HEAD 與內容；host 模式的任意程式仍受 T02 已記載的隔離邊界限制。
 
 最終 Docker／Chromium 完整驗證：492 passed、1 skipped（外部 provider）、13 subtests passed；新增 19 項 worktree 測試，涵蓋真實 Git、選檔 hook 防繞過、批准、archive／restore、真正程序退出後恢復與模型／Skill 驗收 workspace。
+
+## 持久化多代理協作（T13）
+
+`invoke_subagent(persona, task, dependencies=[...])` 建立 SQLite 節點，`check_subagent(agent_id)` 查詢結果，`manage_subagent` 支援 `wait`、`cancel`、`followup`、`merge`。依賴只能指向同一根任務已建立的節點，形成 DAG；取消涵蓋後代及該節點的 Reviewer。`wait` 最多 30 秒，並檢查父取消與剩餘預算。CLI／通訊服務啟動會恢復未完成佇列，停止時關閉工作程序。
+
+每個節點使用獨立程序、對話、checkpoint 及 detached worktree；工具範圍由可信 persona 固定。Planner 只能讀取，Reviewer 可讀取及執行測試，Coder 可修改與委派。遠端身份執行時重新檢查角色，沒有藉由子代理提升權限。獨立程序方便恢復與取消，host 命令及測試的 OS 隔離邊界仍依 T02。
+
+模型請求只提供 persona 允許的工具，執行端再次檢查。Windows 原生程序先以 CREATE_SUSPENDED 建立，加入 Job Object 後才恢復執行；加入失敗不執行命令，快速退出父程序的後代仍由 Job 清除。可交付的 Coder 任務需先配置 T10 acceptance checks；沒有明確契約的回覆不會通過驗證 gate。
+
+協作需要 Git repository root，使用 private index 將目前父 workspace 的 working-copy bytes 建成不可變快照；保留父 HEAD、index 與 staged changes，忽略檔不複製。依賴 Coder 的成果 patch 只套入下游 worktree，衝突會停止。此快照與 T12 一般任務從已提交 HEAD 開始的預設不同。
+
+建立快照前拒絕越界、symlink／junction 與非普通檔案，限制 10000 檔／256 MiB、單檔 64 MiB；路徑檢查先於 Git 添加內容。
+
+`AGENT_SUBAGENT_CONCURRENCY` 預設 2、範圍 1–8，SQLite lease 跨 supervisor 控制工作數；lease 90 秒、每 15 秒續租。`AGENT_SUBAGENT_TIMEOUT_SECONDS` 預設 120、最大 600 秒，仍受根任務 deadline 限制。子代理共用 T09 根 request／token／費用額度；每次委派、follow-up 與自動 Reviewer 均扣累計 children，Reviewer 與所審 Coder 同深度。預設 children=4、depth=2，可容納兩組 Coder／Reviewer；無額度時不繞過審查。節點最多 10000、邏輯資料 64 MiB，單結果 1 MiB。
+
+Coder 只有 frozen acceptance checks 通過才进入 review_pending；獨立 Reviewer 使用同一契約並回傳嚴格的 approve／findings JSON。Reviewer 失敗、逾時、不合法 JSON 或有 finding，均禁止交付。`merge` 限 immediate parent／admin，確認 Reviewer 驗證通過，逐檔比對父內容與原 base，再交付最多 128 檔／32 MiB。父內容變更會標記 conflict；保留合併前備份，HEAD／index 不變。多檔寫入不是全域原子交易，中途失敗保守回復仍屬本次寫入的內容；程序 crash 標 needs_resolution，保留現場供人工查核。
+
+安全 checkpoint 可恢復且舊 lease 被隔離；tool_started／skill_started 不自動重播。`/agents <root_task> list` 列狀態，`cancel <agent_id>` 取消。Admin 可用 `answer <agent_id> <回答>` 回覆暫停，或 `resolve <agent_id> <tool_call_id> <觀察結果>` 保存已查核結果後續跑。合併／準備中斷無工具結果可補時，先人工檢查父內容與 worktree，待 lease 結束，用 `abandon <agent_id> <查核紀錄>` 結束舊節點，再建立 follow-up；不重播未知效果。取消不留執行程序，但會保留 worktree／證據供查核與 T12 封存。
+
+舊 daemon JSON 狀態不自動遷移，需人工查核後建立新節點。模型 Reviewer 的品質仍需 T21 benchmark；本機測試使用離線 SDK fixture 驅動真實工作程序、Git worktree 與取消流程，不能據此宣稱外部模型或平台已驗證。完整 Docker／Chromium 回歸為 510 passed、1 skipped（外部 provider）、17 subtests passed；最後快照路徑補強的模組重驗另記錄於 `papers/todo.md`。

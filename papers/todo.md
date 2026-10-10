@@ -110,15 +110,23 @@
   - 現況：有 git status／diff／commit／rollback，但任務與子代理共享 checkout。
   - 工作：建立／回收 task worktree、保留使用者 dirty changes、限定修改／staging 範圍、diff 預覽、選檔回復、commit 與 artifacts；對破壞性 rollback 明確批准。
   - 驗收：兩任務可獨立修改同檔且不互覆；失敗回復不刪使用者既有變更；只有任務檔案入 commit；清理前可恢復成果。依賴 T02、T08。
-  - 實作（2026-10-10）：可選 AGENT_TASK_WORKTREE=1、owner/task detached worktree、TaskStore 固定綁定與 scoped evaluator；選檔獨立 index commit、批准後選檔 rollback 與備份。人類 `/worktree` preview／archive／restore；清理前保存 committed bundle、dirty／ignored／deleted 檔及 digest manifest。來源 dirty changes 不複製進 worktree，保留原 checkout。
+  - 實作（2026-10-10，commit `bfdde21`）：可選 AGENT_TASK_WORKTREE=1、owner/task detached worktree、TaskStore 固定綁定與 scoped evaluator；選檔獨立 index commit、批准後選檔 rollback 與備份。人類 `/worktree` preview／archive／restore；清理前保存 committed bundle、dirty／ignored／deleted 檔及 digest manifest。來源 dirty changes 不複製進 worktree，保留原 checkout。
   - 相關測試：底層 8 passed、6 subtests passed；接入任務／驗收後 41 passed、10 subtests passed；增加真正退出程序及防覆寫／ZIP 逃逸／digest 驗證後 worktree 16 passed、6 subtests passed。完整初次 486 passed、1 skipped、13 subtests passed；補強 hook 選檔與 archive limits 後完整重驗另記錄。
   - 最終 Docker／Chromium 完整驗證：492 passed、1 skipped（外部 provider）、13 subtests passed；新增 19 項 worktree 測試，包含實際 Git hook 添加未選檔案的對照、staged 刪除回復、真正退出程序恢復與 Skill 的 worktree 契約驗收。批准／任務／worktree 相關 40 passed、10 subtests passed；語法／diff 檢查通過。
   - 邊界：預設支援非 Git workspace 不開啟 worktree；不自動合併任務成果。scoped commit 停用 repository hooks，驗收需先執行；symlink／junction、submodule、nested repo、過大成果拒絕自動清理。封存需無其他編輯者，壞 archive／中途 crash 的殘留保留供人工處理；封存磁碟保留待 T21，合作結果合併待 T13、外部 PR 待 T14。
 
-- [ ] **T13 — 可管理的多代理協作**
-  - 現況：planner／coder／reviewer daemon thread 與 JSON 狀態，無 durable coordinator。
+- [x] **T13 — 可管理的多代理協作**
+  - 原況：planner／coder／reviewer daemon thread 與 JSON 狀態，無 durable coordinator。
   - 工作：父子任務與 DAG、並行上限、獨立上下文／工具／預算／worktree、follow-up、等待／取消／超時、Reviewer 驗收、結果合併與衝突治理。
   - 驗收：子代理 crash／程序重啟／衝突時主代理可收斂；取消無殘留工作；Reviewer 未通過不交付；不自動遞迴超過限制。依賴 T05、T08、T09、T12。
+  - 實作（2026-10-10）：SQLite 父子／依賴 DAG、跨 supervisor lease／併發與啟動恢復；獨立工作程序、persona 工具範圍、checkpoint 與 immutable working-copy snapshot／worktree，保留父 HEAD／index。invoke／check／manage 提供 follow-up、wait、子樹 cancel、deadline 及 Reviewer 通過後明確 merge；子代理與 Reviewer 共享且扣除根額度，限制深度與總數。
+  - 收斂：safe checkpoint 恢復不重播已完成工具，舊 lease publication 拒絕；未知工具／準備／合併效果停止，`/agents` 提供 answer／resolve／人工查核後 abandon。Reviewer 失敗、逾時、未驗證或 findings 未清，均不交付；父內容衝突不覆寫，合併前保存備份，失敗保守回復並保留現場。
+  - 相關驗證：16 passed、4 subtests passed；離線 SDK fixture 驅動真實 subprocess／Git worktree，測試實際 crash 後副作用計數一次、程序重啟、取消後 PID 退出、DAG／follow-up、owner／工具隔離、並行／深度上限、Reviewer 拒絕／程序失敗、晚到結果拒絕、衝突與 IO 失敗備份。語法／diff 檢查通過。
+  - 回歸修正：首次完整測試發現旧 daemon test 需遷移，以及快速 Git 程序在 Job Object assignment 前退出的 Windows race。改為 CREATE_SUSPENDED、加入 Job 後 ResumeThread；加入失敗不執行命令，父程序快速退出亦清除後代。執行器／政策／協作相關重驗 48 passed、4 subtests passed；模型端工具清單亦限制於 persona，執行端再次檢查。
+  - 快照補強：添加 Git 內容前驗證候選檔案與每層路徑，拒絕越界／symlink／junction，限制 10000 檔／256 MiB／單檔 64 MiB；使用真實 Windows junction 的前置拒絕與 DAG 相關測試 2 passed。
+  - Docker／Chromium 完整回歸：510 passed、1 skipped（外部 provider）、17 subtests passed。最後快照前置檢查補強另以最終協作模組重驗，不將新增測試混算為本輪完整回歸數量。
+  - 最終協作模組重驗（含快照補強）：17 passed、4 subtests passed；最終語法與 staged diff 檢查通過。
+  - 邊界：需要 Git root；忽略檔不複製，舊 daemon JSON 不自動遷移，需人工查核後重建節點。原生工作程序不是 OS sandbox，仍依 T02。多檔 merge 非全域原子；未知效果不自動重播，需人工查核，取消保留 worktree／證據供 T12 封存。模型 Reviewer 品質與外部模型／平台未由離線測試證明，品質 benchmark 待 T21；外部 PR／CI 待 T14。
 
 - [ ] **T14 — Patch、PR／CI 與審查閉環**
   - 現況：edit_file 字串替換、Python AST 編輯與 Git 工具已有實作，未見完整 PR／CI 流程。

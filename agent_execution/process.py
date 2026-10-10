@@ -82,6 +82,40 @@ class WindowsJob:
             self.kernel.CloseHandle(self.handle)
             self.handle = None
 
+    def resume(self, process):
+        """Resume the primary thread only after the suspended child joins its job."""
+        import ctypes
+        from ctypes import wintypes
+        class ThreadEntry(ctypes.Structure):
+            _fields_=[('dwSize',wintypes.DWORD),('cntUsage',wintypes.DWORD),
+                ('th32ThreadID',wintypes.DWORD),('th32OwnerProcessID',wintypes.DWORD),
+                ('tpBasePri',wintypes.LONG),('tpDeltaPri',wintypes.LONG),('dwFlags',wintypes.DWORD)]
+        kernel=self.kernel
+        kernel.CreateToolhelp32Snapshot.argtypes=[wintypes.DWORD,wintypes.DWORD]
+        kernel.CreateToolhelp32Snapshot.restype=wintypes.HANDLE
+        kernel.Thread32First.argtypes=[wintypes.HANDLE,ctypes.POINTER(ThreadEntry)]
+        kernel.Thread32Next.argtypes=kernel.Thread32First.argtypes
+        kernel.OpenThread.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel.OpenThread.restype=wintypes.HANDLE
+        kernel.ResumeThread.argtypes=[wintypes.HANDLE];kernel.ResumeThread.restype=wintypes.DWORD
+        snapshot=kernel.CreateToolhelp32Snapshot(4,0)  # TH32CS_SNAPTHREAD
+        if snapshot==wintypes.HANDLE(-1).value:raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            entry=ThreadEntry();entry.dwSize=ctypes.sizeof(entry)
+            found=kernel.Thread32First(snapshot,ctypes.byref(entry))
+            while found:
+                if entry.th32OwnerProcessID==process.pid:
+                    thread=kernel.OpenThread(2,False,entry.th32ThreadID)  # THREAD_SUSPEND_RESUME
+                    if not thread:raise ctypes.WinError(ctypes.get_last_error())
+                    try:
+                        if kernel.ResumeThread(thread)==0xffffffff:raise ctypes.WinError(ctypes.get_last_error())
+                        return
+                    finally:kernel.CloseHandle(thread)
+                entry.dwSize=ctypes.sizeof(entry)
+                found=kernel.Thread32Next(snapshot,ctypes.byref(entry))
+            raise RuntimeError('Suspended child primary thread not found')
+        finally:kernel.CloseHandle(snapshot)
+
 
 def run_process(command, *, cwd=None, env=None, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=None,
@@ -104,7 +138,7 @@ def run_process(command, *, cwd=None, env=None, capture_output=True, text=True,
     if capture_output:
         options.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if os.name == "nt":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW | 0x4  # CREATE_SUSPENDED
     else:
         options["start_new_session"] = True
     process = subprocess.Popen(command, **options)
@@ -128,6 +162,7 @@ def run_process(command, *, cwd=None, env=None, capture_output=True, text=True,
     try:
         if os.name == "nt":
             job = WindowsJob(process)
+            job.resume(process)
         for stream, buffer in ((process.stdout, stdout_buffer), (process.stderr, stderr_buffer)):
             if stream is not None:
                 reader = threading.Thread(target=read, args=(stream, buffer), daemon=True)
