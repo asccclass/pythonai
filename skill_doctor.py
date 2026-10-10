@@ -1,12 +1,13 @@
 import sys
 import io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+if __name__=='__main__' and hasattr(sys.stdout,'reconfigure'):sys.stdout.reconfigure(encoding='utf-8')
 import json
 import os
 from pathlib import Path
 from collections import Counter
 from datetime import datetime, timedelta
 import argparse
+from contextlib import closing
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -32,11 +33,11 @@ Your Output MUST be in JSON format matching this schema:
     ]
 }
 
-The `new_agent_personas` will be injected into the agent's semantic memory (as 'agent_persona' memory_type) to permanently fix these anti-patterns and improve the macro self-correction loop. Be very specific in your directives.
+The `new_agent_personas` are untrusted proposals. They will be staged for source review, measured A/B evaluation and human approval. They must never activate themselves or override security policies.
 """
 
 def gather_diagnostics(store: MemoryStore, limit: int = 20) -> str:
-    with store.connect() as conn:
+    with closing(store.connect()) as conn:
         rows = conn.execute(
             """
             SELECT id, started_at, ended_at, status, summary
@@ -96,7 +97,7 @@ def run_doctor(db_path: str = "memory/memory.db", limit: int = 20, auto_apply: b
         
     client = OpenAI(
         base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
-        api_key=os.environ.get("OLLAMA_API_KEY", "ollama")
+        api_key=os.environ.get("OLLAMA_API_KEY", "ollama"),timeout=10,max_retries=0
     )
     
     model = os.environ.get("OLLAMA_MODEL", "llama3.2")
@@ -119,6 +120,11 @@ def run_doctor(db_path: str = "memory/memory.db", limit: int = 20, auto_apply: b
         print(f"[!] Doctor 分析失敗: {e}")
         return
         
+    from agent_execution.extensions.schema import validate
+    validate(result,{'type':'object','required':['report'],'properties':{'report':{'type':'string','maxLength':32768},
+        'new_agent_personas':{'type':'array','maxItems':20,'items':{'type':'object','required':['subject','predicate','object'],
+            'properties':{k:{'type':'string','minLength':1,'maxLength':1000} for k in ('subject','predicate','object')},'additionalProperties':False}},
+        'new_skill_proposals':{'type':'array','maxItems':5,'items':{'type':'object','required':['name','files']}}}})
     report = result.get("report", "")
     new_personas = result.get("new_agent_personas", [])
     
@@ -128,29 +134,23 @@ def run_doctor(db_path: str = "memory/memory.db", limit: int = 20, auto_apply: b
     print(report)
     print("="*50)
     
+    key=None
     if new_personas:
         print("\n[*] 建議的新增 Agent Personas (巨觀級別自癒準則):")
         for p in new_personas:
             print(f"  - {p['subject']} {p['predicate']} {p['object']}")
             
-        if auto_apply:
-            print("\n[*] 正在自動將新的 Personas 注入至記憶庫中...")
-            doc_ep = store.start_episode()
-            doc_ev = store.add_event(doc_ep, "doctor_report", "system", report)
-            store.finish_episode(doc_ep, status="verified_completed", summary="Skill Doctor injected new personas.")
-            for p in new_personas:
-                store.add_semantic_memory(
-                    subject=p.get("subject", "agent"),
-                    predicate=p.get("predicate", "must"),
-                    object_value=p.get("object", ""),
-                    source_event_id=doc_ev,
-                    memory_type="agent_persona",
-                    scope="global",
-                    confidence=0.95
-                )
-            print("[+] Personas 注入成功！Agent 往後將自動遵守這些全域規則。")
-        else:
-            print("\n請加入 --apply 參數來將這些準則自動注入至 Agent 的 Semantic Memory 中。")
+        from agent_execution.improvement.store import ImprovementStore,digest
+        key=ImprovementStore().propose('doctor_persona',new_personas,'doctor-diagnostics:'+digest(diagnostics))
+        print(f'\n[Doctor] 提案 {key} 已保存；須通過 A/B 評測與人工批准，尚未啟用。')
+        if auto_apply:print('--apply 已停用自動注入；僅保存待審查提案。')
+    for package in result.get('new_skill_proposals',[]):
+        from agent_execution.extensions.store import ExtensionStore
+        from agent_execution.improvement.store import ImprovementStore,digest
+        version=ExtensionStore().stage(package['name'],'skill',package['files'],'doctor-diagnostics:'+digest(diagnostics))
+        proposal=ImprovementStore().propose(package['name'],{'extension_version':version},'doctor skill suggestion',kind='skill')
+        print(f'[Doctor] Skill 提案 {proposal}，未測試／未啟用；須依 T18 與 A/B gate 審查。')
+    return key
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Skill Doctor - Agent Performance Diagnostics")

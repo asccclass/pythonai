@@ -739,13 +739,11 @@ class ServerTests(unittest.TestCase):
 
             events = store.recent_events(limit=10)
 
-        self.assertIn(
-            {
-                "role": "system",
-                "content": "Relevant long-term memory:\n- user prefers Python\n\nRelevant reusable workflows:\n- run_command [python tests]",
-            },
-            captured_messages,
-        )
+        reference=next(item for item in captured_messages if item.get('content','').startswith('Retrieved reference data'))
+        self.assertEqual(reference['role'],'user')
+        self.assertEqual(json.loads(reference['content'].split('\n',1)[1]),
+            "Relevant long-term memory:\n- user prefers Python\n\nRelevant reusable workflows:\n- run_command [python tests]")
+        self.assertEqual(captured_messages[-1],{'role':'user','content':'hello'})
         self.assertIn("retrieval_context", [event["event_type"] for event in events])
         self.assertIn("memory_retrieval_stats", [event["event_type"] for event in events])
         budget_events = [event for event in events if event["event_type"] == "memory_budget"]

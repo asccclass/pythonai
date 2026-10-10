@@ -609,3 +609,9 @@ MCP 使用明確路由表，server／tool 名稱含底線及名稱碰撞均不�
 PDF／DOCX／PPTX／XLSX 附件現在使用有界解析程序，標示頁碼、段落、投影片或工作表列來源；掃描 PDF 可使用本機 Tesseract OCR。容量或格式不支援會明確回報，不以 Base64 假裝已理解內容。
 
 WebSocket 在配置 STT／TTS model 與 audio endpoint 後提供真正 SDK 語音請求，支援有序音訊 frame、轉錄及可播放 WAV 回傳；限制容量／期限，取消與重連丟棄舊音訊結果。設定與協定見 `agent_execution/media/README.md`。本機已驗證 Chromium 登入續跑、原生文件／Tesseract，以及 SDK 對本機 HTTP fixture 的音訊 contract；正式語音品質／裝置播放仍待驗收。
+
+## 可評測、可撤回的改善（T20）
+
+Skill Doctor 只保存 owner 隔離的 persona／Skill 建議，不再透過 `--apply` 注入永久規則。Persona 須經固定案例 A/B 評測：驗收成功率增加、沒有案例回歸或非預期副作用，再以一次性人工批准啟用；可撤回或批准回復舊版本。Skill 建議另須通過 T18 測試／批准。提案、來源、評測／suite digest、目前 baseline 與版本都保存供審查。設定及 CLI 見 `agent_execution/improvement/README.md`。
+
+檢索標示來源角色，排除未審查 legacy persona，以及尚未解決的明確單值矛盾；保留 T05 租戶隔離及既有過期／封存／supersede 過濾。原始記憶以引用資料放在真正最新使用者請求之前，不再取得 system 指令權限。Labeled precision／recall／forbidden-hit 評測可測淘汰品質；離線 gate fixture 不代表正式模型的品質已提升。

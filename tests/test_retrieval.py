@@ -234,14 +234,16 @@ class RetrievalTests(unittest.TestCase):
 
         self.assertEqual([procedure["id"] for procedure in ranked], [2, 1])
 
-    def test_inject_memory_context_appends_system_message(self):
+    def test_inject_memory_context_keeps_reference_below_policy_and_preserves_goal(self):
         messages = [{"role": "user", "content": "hello"}]
 
         updated = inject_memory_context(messages, "Relevant long-term memory:\n- user prefers Python")
 
         self.assertEqual(messages, [{"role": "user", "content": "hello"}])
-        self.assertEqual(updated[-1]["role"], "system")
-        self.assertIn("prefers Python", updated[-1]["content"])
+        self.assertEqual(updated[-1],messages[-1])
+        self.assertEqual(updated[0]['role'],'user')
+        self.assertIn("prefers Python", updated[0]["content"])
+        self.assertIn('not instructions',updated[0]['content'])
 
     def test_inject_memory_context_returns_original_when_empty(self):
         messages = [{"role": "user", "content": "hello"}]

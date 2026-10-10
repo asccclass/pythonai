@@ -11,6 +11,7 @@ from agent_execution.tests import test_review_ui
 from agent_execution.tests import test_scheduling
 from agent_execution.tests import test_extensions
 from agent_execution.tests import test_media
+from agent_execution.tests import test_improvement
 
 
 def load_tests(loader, tests, pattern):
@@ -33,4 +34,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_scheduling))
     tests.addTests(loader.loadTestsFromModule(test_extensions))
     tests.addTests(loader.loadTestsFromModule(test_media))
+    tests.addTests(loader.loadTestsFromModule(test_improvement))
     return tests

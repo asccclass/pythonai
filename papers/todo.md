@@ -187,6 +187,8 @@
   - 現況：三類記憶、遺忘、背景更新與 Skill Doctor 已存在。
   - 工作：租戶／專案隔離、retrieval precision／recall 評測、來源信任與矛盾測試；Doctor persona／Skill 建議經版本審查、A/B 驗證、啟用及撤回，避免錯誤準則無限累積。
   - 驗收：跨使用者記憶不能注入；過期／矛盾資料可測試淘汰；新 persona 必須有可量測改善且可回復。依賴 T05、T09、T10。
+  - 實作（2026-10-10）：owner 版本提案、來源／suite／評測 digest；固定案例 A/B 成功率改善＋零回歸／非預期效果 gate，baseline 防過期、人工批准／撤回／批准 rollback、有界原生評測 runner。Doctor --apply 改 stage；Skill 建議引用 T18 版本且不能自動啟用。來源標示、legacy persona／單值矛盾排除、quoted reference 低權限注入與 labeled precision／recall／forbidden-hit 評測。
+  - 驗證：相關最終 58 passed；adapter scope 補強重驗 6 passed。涵蓋真實原生 adapter、Doctor 不注入、owner／過期／矛盾／來源、評測回歸／副作用／baseline／批准／rollback。正式 provider persona／Skill A/B 與較廣標記資料集品質尚待驗收，保留未勾選；未啟用任何 production persona。
 
 - [ ] **T21 — 端到端評測、成本觀測與運維**
   - 現況：已有 unittest 與 CLI events／health；缺整體成功率基準及分散式 tracing。
