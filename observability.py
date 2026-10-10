@@ -476,7 +476,8 @@ def main() -> None:
         if args.path is None:
             parser.error("--path is required for import")
         payload = import_memory_file(store, args.path)
-    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    from agent_execution.operations.redaction import redact
+    print(json.dumps(redact(payload), ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":

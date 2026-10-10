@@ -198,6 +198,11 @@ class HookManager:
             project=scope.project,task_id=scope.task_id,role=current_role())
         if error is not None:
             audit["error"] = error
+        from agent_execution.operations.redaction import redact
+        from agent_execution.operations.tracing import _span
+        current_span=_span.get()
+        if current_span:audit.update(trace_id=current_span['trace_id'],span_id=current_span['id'])
+        audit=redact(audit)
         context.audit_metadata.setdefault("hook_events", []).append(audit)
         memory = context.memory
         episode_id = context.episode_id

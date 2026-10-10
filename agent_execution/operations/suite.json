@@ -1,0 +1,12 @@
+[
+  {"id":"utf8-command","test":"agent_execution.tests.test_process.ProcessTests.test_native_success_and_utf8_output","layer":"native"},
+  {"id":"cancel-command","test":"agent_execution.tests.test_process.ProcessTests.test_native_cancel_propagates_from_execution_context","layer":"native"},
+  {"id":"no-success-prose","test":"agent_execution.tests.test_results.ResultTests.test_acceptance_rejects_path_escape_and_successful_prose_is_not_verification","layer":"offline acceptance"},
+  {"id":"skill-failure-stops-writes","test":"agent_execution.tests.test_results.ResultTests.test_skill_nonzero_exit_stops_following_side_effect","layer":"native Skill"},
+  {"id":"crash-safe-checkpoints","test":"agent_execution.tests.test_tasks.TaskTests.test_crash_at_model_tool_and_evaluation_boundaries_does_not_repeat_effects","layer":"native + offline SDK","recovery":true},
+  {"id":"uncertain-write-pauses","test":"agent_execution.tests.test_scheduling.SchedulingTests.test_crash_with_possible_write_pauses_for_human","layer":"SQLite failure injection","recovery":true},
+  {"id":"atomic-schedule","test":"agent_execution.tests.test_scheduling.SchedulingTests.test_atomic_claim_and_stale_due_snapshot","layer":"SQLite concurrency"},
+  {"id":"watch-notification-stop","test":"agent_execution.tests.test_scheduling.SchedulingTests.test_watch_silence_change_completion_and_stop","layer":"offline observation"},
+  {"id":"mcp-exact-route","test":"agent_execution.tests.test_extensions.MCPRoutingTests.test_underscore_collisions_have_exact_routes_and_validate_results","layer":"offline MCP"},
+  {"id":"memory-quality","test":"agent_execution.tests.test_improvement.ImprovementTests.test_retrieval_excludes_conflicts_expired_persona_and_marks_external_data","layer":"native SQLite + local embedding"}
+]

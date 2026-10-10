@@ -231,6 +231,9 @@ class MemoryStore:
         content: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> int:
+        from agent_execution.operations.redaction import redact
+        if event_type not in {'message','agent_message'}:
+            content=redact(content);metadata=redact(_jsonable(metadata or {}))
         metadata_json = json.dumps(_jsonable(metadata or {}), ensure_ascii=False)
         with closing(self.connect()) as connection:
             cursor = connection.execute(

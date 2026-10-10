@@ -166,6 +166,7 @@
   - 工作：新增 Agent／Skill job、自然語言排程、時區、會話 follow-up、停止條件、只在有意義變更通知；補 command timeout、鎖 lease、重啟／misfire 與 bounded retry。
   - 驗收：多入口同時啟動不重複執行；Asia/Taipei 排程時間正確；長工作／crash 不永久卡住；狀態未變保持安靜，完成或需人處理才通知。依賴 T01、T05、T08、T09。
   - 實作（2026-10-10）：獨立 scheduling package、Agent／Skill／script／唯讀 watch、明確自然語句與 ZoneInfo、owner／會話／workspace 還原、人工批准；原子 claim／續租／fencing、原生 worker timeout／取消、misfire 合併、未知副作用停用與唯讀最多兩次 retry。通知去重、四次歷史與停止條件，舊遠端工作隔離停用。
+  - Commit：`99922f0`。
   - 驗證：排程／policy 38 passed；最後排程／Hook／舊 scheduler 整合 32 passed。完整回歸先遇既有 CLI 測試載入本機 Laya 原生模型存取錯誤，改為離線 classifier fixture；後續舊 Hook fixture 需明確授予 owner 現行 admin，修正後相關案例通過。整體最終回歸結果集中記錄於 T21。
   - 邊界／後續：通知持久化且可透過工具／CLI 查詢；正式平台自動推送及真實 provider 追蹤尚待驗收，因此保留未勾選。
 
@@ -174,6 +175,7 @@
   - 工作：remote MCP transport／OAuth、timeout／重連／health、完整 schema 與結果驗證、明確工具到 server 映射；工具／Skill 安装、版本、來源、測試、核准啟用與 rollback。
   - 驗收：缺 server／網路斷線不阻塞其他工具；名稱碰撞／底線不誤路由；惡意 schema 或未通過測試的生成工具不能啟用。依賴 T01、T03、T10。
   - 實作（2026-10-10）：exact MCP route／碰撞雜湊、離線有界 JSON Schema 與 structuredContent／isError 驗證、stdio EOF／取消／程序樹清理、四 worker startup、health／明確 reconnect；2025-11-25 remote POST JSON／SSE、session／token_env。生成工具只 stage，工具／Skill 版本來源與 digest、Docker tests、人工批准、撤回與批准 rollback；提交的 builtin inventory。
+  - Commit：`38f2eb9`；blocked pipe／JSON-RPC 補強 `838bf86`，補強相關 13 passed、1 skipped（Docker opt-in）。
   - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema。尚缺完整互動 OAuth discovery／PKCE／refresh 和正式 remote provider 驗收，保留未勾選；激活需重啟刷新 schema。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
@@ -181,6 +183,7 @@
   - 工作：使用者隔離的持久 browser session、動作後斷言、下載 artifacts；PDF／Office 解析／OCR 與來源頁碼；真正 STT／TTS、音訊容量與取消。可分成三個獨立交付。
   - 驗收：多步登入／表單流程可續跑並驗證結果；PDF／Office 不以截斷 Base64 充作理解；語音可辨識及播放，重連／中斷不混流。依賴 T02、T05、T06、T07。
   - 實作（2026-10-10）：media package 的 owner profile／cookie state、嚴格動作斷言／私有下載、原生 worker timeout／取消；PDF／Office 來源單位、ZIP／XML 限制、實際 Tesseract OCR；真正 SDK STT／TTS worker、可播放 WAV、WebSocket 有序 frame／容量／取消／reconnect 隔離。
+  - Commit：`26eaed2`；私有 artifact 路徑最終重驗 8 passed。
   - 驗證：相關 51 passed，實際 Chromium cookie 登入／續跑／異主隔離／assert／下載，原生 DOCX／PPTX／XLSX 中文、扫描 PDF OCR，本機 HTTP SDK 語音 contract／WAV／取消。正式外部語音品質、真實裝置播放與外部網站尚未驗收，保持未勾選。profile admission limits 不是硬磁碟配額；host browser／document parser 仍需部署層隔離。
 
 - [ ] **T20 — 記憶品質與可控自我改善**
@@ -188,6 +191,7 @@
   - 工作：租戶／專案隔離、retrieval precision／recall 評測、來源信任與矛盾測試；Doctor persona／Skill 建議經版本審查、A/B 驗證、啟用及撤回，避免錯誤準則無限累積。
   - 驗收：跨使用者記憶不能注入；過期／矛盾資料可測試淘汰；新 persona 必須有可量測改善且可回復。依賴 T05、T09、T10。
   - 實作（2026-10-10）：owner 版本提案、來源／suite／評測 digest；固定案例 A/B 成功率改善＋零回歸／非預期效果 gate，baseline 防過期、人工批准／撤回／批准 rollback、有界原生評測 runner。Doctor --apply 改 stage；Skill 建議引用 T18 版本且不能自動啟用。來源標示、legacy persona／單值矛盾排除、quoted reference 低權限注入與 labeled precision／recall／forbidden-hit 評測。
+  - Commit：`7629e7f`。
   - 驗證：相關最終 58 passed；adapter scope 補強重驗 6 passed。涵蓋真實原生 adapter、Doctor 不注入、owner／過期／矛盾／來源、評測回歸／副作用／baseline／批准／rollback。正式 provider persona／Skill A/B 與較廣標記資料集品質尚待驗收，保留未勾選；未啟用任何 production persona。
 
 - [ ] **T21 — 端到端評測、成本觀測與運維**
@@ -195,6 +199,11 @@
   - 工作：task／episode／tool／子代理 trace ID、token／費用／延遲／重試統計、redaction、readiness；CI 測試層級、migration／備份還原、依賴 doctor；建立固定任務集與失敗注入。
   - 維護腳本：本次靜態掃描發現既有 `patch_server.py:1` 含字面 `\n` 而無法解析；確認用途後修復或移除過期腳本，將維護腳本語法檢查納入 CI，避免只跑 tests 而漏掉。
   - 驗收：報告區分 mock unit、Docker／browser integration、真實 provider／平台測試；顯示完成率、非預期副作用、恢復成功率與成本；日誌無 secret；備份可還原。
+  - 實作（2026-10-10）：operations package 的 owner trace／task／episode／node、retry／保守預算 token／費用／延遲、redaction／readiness／dependency doctor；SQLite 線上 snapshot／hash／schema／新目錄 restore、先備份 offline migration；十項 fixed suite／failure injection 及完成／恢復率。修復 patch_server.py、pytest testpaths，增加分層 GitHub CI。
+  - 相關驗證：trace／Hook／budget 29 passed，運維首輪 7 passed、最後原生 child trace／API 補強 9 passed；固定 suite 含真正 crash 子程序與案例內副作用斷言，外部模型成本未知。本機完整回歸與乾淨 CI 環境驗證待彙整於下。
+  - 本機基線：啟用 Docker／Chromium 的完整回歸 622 passed、1 skipped（外部 provider）、30 subtests passed（777.14 秒）；Node 9 passed，VS Code 1.141.0 原生 Extension Host 14 案例通過。最後運維／CKIP lazy import 11 passed、5 subtests passed；離線 fixed suite 10/10、恢復案例 100%，報告保存 operations/benchmark_baseline.json。
+  - CI 乾淨環境發現舊測試依賴未列齊，補 PyNaCl／Jedi／敘事分析套件，文字切分不載入 CKIP 模型；補齊後 story／index 36 passed、5 subtests passed。實際 provider 單案請求逾時（25.66 秒），未通過；不以本機 fixture 替代此驗收。
+  - 尚待正式驗收：GitHub CI job 未推送／執行、真實 provider／通訊平台／語音與品質 benchmark；保留未勾選。固定 suite 的成功率是 fixture acceptance，不能當正式模型品質或完整 OS 副作用監測。
 
 ## 開發與完成標準
 

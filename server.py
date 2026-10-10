@@ -245,14 +245,16 @@ def run_agent(
             attempts = 0
             while True:
                 try:
-                    if event_callback is not None:
-                        from agent_execution.streaming import streamed_completion
-                        event_callback("model.start", {"iteration": iteration, "model": request['model']})
-                        assistant_message = streamed_completion(budget_client(get_client()), request['model'], messages,
-                                                                request['tools'], event_callback, check_cancelled)
-                    else:
-                        response = budget_client(get_client()).chat.completions.create(model=request['model'], messages=messages, tools=request['tools'])
-                        assistant_message = response.choices[0].message
+                    from agent_execution.operations.tracing import span
+                    with span('attempt','model.attempt',{'retry':attempts>0,'attempt':attempts+1,'iteration':iteration}):
+                        if event_callback is not None:
+                            from agent_execution.streaming import streamed_completion
+                            event_callback("model.start", {"iteration": iteration, "model": request['model']})
+                            assistant_message = streamed_completion(budget_client(get_client()), request['model'], messages,
+                                                                    request['tools'], event_callback, check_cancelled)
+                        else:
+                            response = budget_client(get_client()).chat.completions.create(model=request['model'], messages=messages, tools=request['tools'])
+                            assistant_message = response.choices[0].message
                     break
                 except BudgetExhausted as error:
                     if event_callback:

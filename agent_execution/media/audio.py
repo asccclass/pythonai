@@ -46,6 +46,9 @@ class AudioTurn:
         return data
 
 
+from ..operations.tracing import traced
+
+@traced('audio','audio.provider')
 def voice_call(kind,data=None,format='wav',text='',voice='alloy',cancelled=None):
     config=features()
     if kind not in {'stt','tts'} or not config[kind]:raise ValueError('Audio capability is not configured')

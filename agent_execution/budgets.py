@@ -283,6 +283,8 @@ class BudgetEndpoint:
     def __init__(self,client,kind):
         self.client,self.kind=client,kind
 
+    from .operations.tracing import traced
+    @traced('model','model.request')
     def create(self,**kwargs):
         from .policy import current_context
         from .context import govern_messages, route_model, model_capabilities

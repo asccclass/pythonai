@@ -76,7 +76,9 @@ class DocumentTests(unittest.TestCase):
         import shutil
         if not shutil.which('tesseract'):self.skipTest('Tesseract not installed')
         from PIL import Image,ImageDraw,ImageFont
-        image=Image.new('RGB',(900,300),'white');font=ImageFont.truetype('arial.ttf',64)
+        image=Image.new('RGB',(900,300),'white')
+        try:font=ImageFont.truetype('arial.ttf',64)
+        except OSError:font=ImageFont.truetype('DejaVuSans.ttf',64)
         ImageDraw.Draw(image).text((40,80),'HELLO 123',fill='black',font=font)
         output=io.BytesIO();image.save(output,format='PDF')
         result=parse_document(output.getvalue(),'scan.pdf');self.assertTrue(result['success']);self.assertEqual(result['units'][0]['source'],'page:1')

@@ -223,6 +223,9 @@ def save_checkpoint(phase, messages, **metadata):
     store.checkpoint(owner,key,token,phase,{'messages':messages,**metadata},step)
 
 
+from .operations.tracing import traced
+
+@traced('task','agent.task')
 def durable_invoke(function, messages, episode, resume=False, skill=False, skill_arguments=None, verify_skill=None, acceptance_contract=None):
     from .policy import current_context, execution_scope
     import threading

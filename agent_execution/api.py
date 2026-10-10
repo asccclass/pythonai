@@ -43,6 +43,15 @@ def authenticated_api(path, method, body, headers):
     route = urlparse(path).path.rstrip("/")
     session = f"{project}:{session}"
     with set_current_role(role), execution_scope(source="api", identity=identity, session=session, project=project):
+        if route.startswith('/api/ops/'):
+            if method!='GET' or role!='admin':return 403,{'error':'forbidden'}
+            if route=='/api/ops/readiness':
+                from .operations.doctor import readiness
+                report=readiness();return (200 if report['ready'] else 503),report
+            if route=='/api/ops/traces':
+                from .operations.tracing import TraceStore
+                store=TraceStore();return 200,{'summary':store.summary(),'spans':store.list()}
+            return 404,{'error':'not_found'}
         if route.startswith('/api/review/'):
             from .review import handle_review
             return handle_review(route, method, role)

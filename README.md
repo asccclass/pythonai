@@ -615,3 +615,11 @@ WebSocket 在配置 STT／TTS model 與 audio endpoint 後提供真正 SDK 語�
 Skill Doctor 只保存 owner 隔離的 persona／Skill 建議，不再透過 `--apply` 注入永久規則。Persona 須經固定案例 A/B 評測：驗收成功率增加、沒有案例回歸或非預期副作用，再以一次性人工批准啟用；可撤回或批准回復舊版本。Skill 建議另須通過 T18 測試／批准。提案、來源、評測／suite digest、目前 baseline 與版本都保存供審查。設定及 CLI 見 `agent_execution/improvement/README.md`。
 
 檢索標示來源角色，排除未審查 legacy persona，以及尚未解決的明確單值矛盾；保留 T05 租戶隔離及既有過期／封存／supersede 過濾。原始記憶以引用資料放在真正最新使用者請求之前，不再取得 system 指令權限。Labeled precision／recall／forbidden-hit 評測可測淘汰品質；離線 gate fixture 不代表正式模型的品質已提升。
+
+## Trace、評測與運維（T21）
+
+`python -m agent_execution.operations doctor|readiness|traces|syntax|benchmark` 提供依賴診斷、storage readiness、owner 範圍 trace 與十項固定任務／失敗注入評測。Task／tool／model／retry／audio 保留 trace、父 span、task、episode 與子代理 node 關聯；token／費用採 T09 保守預算記帳，未知費率明確標記，不能當成 provider 帳單。Admin API `/api/ops/readiness`、`/api/ops/traces` 受既有身份／專案／會話限制。
+
+SQLite `backup` 保存一致的單庫 snapshot、雜湊及 schema 證據，`restore` 只還原至新目錄；跨資料庫備份需先停止 workers。`migrate --offline` 先備份再使用正式 store migration。稽核／trace 與觀測 CLI 進行去密；原始對話與權威 checkpoint 仍是私有資料。操作與限制见 `agent_execution/operations/README.md`。
+
+正式 pytest 已設定 testpaths，不再收集 temp 舊實驗；維護腳本含既有 `patch_server.py` 的語法檢查納入 CI。GitHub workflow 分 Windows unit/native、Docker／Chromium、VS Code Host 與手動啟用外部 provider；本機結果與未執行的遠端 CI 分開記錄於 `papers/todo.md`。

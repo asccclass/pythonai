@@ -1,6 +1,8 @@
 import importlib.util
 import tempfile
 import unittest
+from unittest.mock import patch
+import sys
 from pathlib import Path
 
 
@@ -34,6 +36,11 @@ class ComputationalNarratologyAppTests(unittest.TestCase):
             chunks = app.load_and_split_novel(str(novel_path), chunk_size=3)
 
         self.assertEqual(chunks, ["甲乙丙", "丁戊己"])
+
+    def test_neural_analysis_requires_explicit_optional_runtime(self):
+        with patch.dict(sys.modules, {'ckip_transformers.nlp': None}):
+            with self.assertRaises(ModuleNotFoundError):
+                self.story_app.ComputationalNarratologyApp()
 
 
 if __name__ == "__main__":

@@ -5,12 +5,13 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import pandas as pd
 from snownlp import SnowNLP
-from ckip_transformers.nlp import CkipWordSegmenter, CkipNerChunker
 
 class ComputationalNarratologyApp:
     """計算敘事學大篇幅小說分析核心專案包"""
     
     def __init__(self, use_gpu=False):
+        # Text loading does not require the optional neural model runtime.
+        from ckip_transformers.nlp import CkipNerChunker
         device = 0 if use_gpu else -1
         print(" [系統初始化] 正在載入中研院 CKIP Transformer 模型 (預設使用輕量版 albert-tiny)...")
         # 為了平衡運行大篇幅文本的速度，預設使用 albert-tiny，若求極致精準可改為 bert-base

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from permissions import check_tool_permission, current_role
+from .operations.tracing import traced
 
 
 class PolicyDenied(PermissionError):
@@ -103,6 +104,7 @@ def _audit_denial(name: str, reason: str) -> None:
                                  metadata=metadata)
 
 
+@traced('tool')
 def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any], *, _skip_hooks=False) -> Any:
     from .approvals import ApprovalStore, ApprovalRequired, canonical
     from .budgets import active_budget, BudgetExhausted

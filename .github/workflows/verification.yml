@@ -1,0 +1,76 @@
+name: Layered verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Run the configured real provider test
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  unit-native:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      OLLAMA_API_KEY: sk-ci-offline
+      OLLAMA_BASE_URL: http://127.0.0.1:9/v1
+      OLLAMA_MODEL: fixture
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r agent_execution/operations/requirements-ci.txt
+      - run: python -m agent_execution.operations syntax
+      - run: python -m pytest -q --junitxml=unit-native.xml
+      - run: python -m agent_execution.operations benchmark
+  docker-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONAI_DOCKER_TEST: '1'
+      PYTHONAI_BROWSER_TEST: '1'
+      OLLAMA_API_KEY: sk-ci-offline
+      OLLAMA_BASE_URL: http://127.0.0.1:9/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r agent_execution/operations/requirements-ci.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: docker pull python:3.12-slim
+      - run: python -m pytest agent_execution/tests/test_docker_integration.py agent_execution/tests/test_auth_transport.py agent_execution/tests/test_extensions.py agent_execution/tests/test_media.py -q --junitxml=integration.xml
+  ide:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:host
+  external-provider:
+    if: github.event_name == 'workflow_dispatch' && inputs.provider
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONAI_PROVIDER_TEST: '1'
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
+      OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r agent_execution/operations/requirements-ci.txt
+      - run: python -m pytest agent_execution/tests/test_streaming.py -q
