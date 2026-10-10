@@ -168,7 +168,9 @@
   - 實作（2026-10-10）：獨立 scheduling package、Agent／Skill／script／唯讀 watch、明確自然語句與 ZoneInfo、owner／會話／workspace 還原、人工批准；原子 claim／續租／fencing、原生 worker timeout／取消、misfire 合併、未知副作用停用與唯讀最多兩次 retry。通知去重、四次歷史與停止條件，舊遠端工作隔離停用。
   - Commit：`99922f0`。
   - 驗證：排程／policy 38 passed；最後排程／Hook／舊 scheduler 整合 32 passed。完整回歸先遇既有 CLI 測試載入本機 Laya 原生模型存取錯誤，改為離線 classifier fixture；後續舊 Hook fixture 需明確授予 owner 現行 admin，修正後相關案例通過。整體最終回歸結果集中記錄於 T21。
-  - 邊界／後續：通知持久化且可透過工具／CLI 查詢；正式平台自動推送及真實 provider 追蹤尚待驗收，因此保留未勾選。
+  - 通知推送補齊：通訊服務接入原會話 Telegram／Discord／LINE adapter；現行角色／allowlist 再驗、原子 claim、單訊息容量、shutdown 停止新 claim；失敗／crash 不確定狀態不重送，手動 disable 取消待送。其他入口保留 owner 查詢，不推定跨平台收件人。
+  - Telegram long polling 亦啟動 scheduler 並於 poll 後推送；通知儲存故障不終止主通訊 loop。補強相關案例包含真實 adapter contract／併行認領／不確定發送／角色撤銷／取消與兩入口生命週期。
+  - 邊界／後續：正式平台實際送達及真實 provider 追蹤尚待驗收，因此保留未勾選；未向正式收件人發送測試訊息。
 
 - [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**
   - 現況：stdio MCP 與工具熱載入可用；動態 Python 模組直接載入；MCP 路由依工具名稱分割，需補 server 名含底線案例。

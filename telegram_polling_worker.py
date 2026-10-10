@@ -52,6 +52,11 @@ class TelegramPollingWorker:
         while self.worker.process_next() is not None:
             processed += 1
         self.worker.drain(timeout=2.0)
+        try:
+            from agent_execution.scheduling.notifications import NotificationDispatcher
+            processed += NotificationDispatcher({"telegram": self.adapter}, self.allowed_senders).dispatch_once()
+        except Exception as error:
+            print(f"Schedule notification dispatcher: {type(error).__name__}")
         return processed
 
     def run_forever(self) -> None:
@@ -88,6 +93,7 @@ scheduler_worker = SchedulerWorker()
 def main() -> None:
     polling_worker = create_telegram_polling_worker()
     print("Telegram polling worker ready. Press Ctrl+C to stop.")
+    scheduler_worker.start()
     try:
         polling_worker.run_forever()
     except KeyboardInterrupt:

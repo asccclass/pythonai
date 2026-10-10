@@ -62,7 +62,9 @@ class SchedulerStore:
               CREATE TABLE IF NOT EXISTS scheduled_job_locks (job_id TEXT PRIMARY KEY,locked_by TEXT NOT NULL,
               locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,expires_at TIMESTAMP NOT NULL);
               CREATE TABLE IF NOT EXISTS schedule_notifications (id TEXT PRIMARY KEY,job_id TEXT NOT NULL,owner TEXT NOT NULL,
-              state TEXT NOT NULL,output TEXT NOT NULL,created REAL NOT NULL);''')
+              state TEXT NOT NULL,output TEXT NOT NULL,created REAL NOT NULL);
+              CREATE TABLE IF NOT EXISTS schedule_notification_delivery(id TEXT PRIMARY KEY,status TEXT NOT NULL,token TEXT,
+              expires REAL,error_type TEXT,completed REAL);''')
             columns={row['name'] for row in conn.execute('PRAGMA table_info(scheduled_jobs)')}
             defaults={'owner_role':"TEXT NOT NULL DEFAULT 'admin'",'owner_identity':"TEXT NOT NULL DEFAULT 'local'",
                 'owner':'TEXT','context':'TEXT','timezone':"TEXT NOT NULL DEFAULT 'UTC'",'timeout': 'REAL NOT NULL DEFAULT 60',
@@ -104,11 +106,17 @@ class SchedulerStore:
 
     def disable(self,key):
         with closing(self.connect()) as conn,conn:
-            return conn.execute('UPDATE scheduled_jobs SET is_enabled=0 WHERE id=? AND owner=?',(key,task_owner(current_context()))).rowcount==1
+            changed=conn.execute('UPDATE scheduled_jobs SET is_enabled=0 WHERE id=? AND owner=?',(key,task_owner(current_context()))).rowcount==1
+            if changed:
+                conn.execute('INSERT OR IGNORE INTO schedule_notification_delivery SELECT id,\'cancelled\',NULL,0,NULL,NULL FROM schedule_notifications WHERE job_id=? AND owner=?',
+                    (key,task_owner(current_context())))
+            return changed
 
     def notifications(self):
         with closing(self.connect()) as conn:
-            return [dict(row) for row in conn.execute('SELECT id,job_id,state,output,created FROM schedule_notifications WHERE owner=? ORDER BY created DESC LIMIT 100',(task_owner(current_context()),))]
+            return [dict(row) for row in conn.execute('''SELECT n.id,n.job_id,n.state,n.output,n.created,
+                COALESCE(d.status,'pending') AS delivery,d.error_type FROM schedule_notifications n
+                LEFT JOIN schedule_notification_delivery d ON d.id=n.id WHERE n.owner=? ORDER BY n.created DESC LIMIT 100''',(task_owner(current_context()),))]
 
     def get_due_jobs(self):
         with closing(self.connect()) as conn:

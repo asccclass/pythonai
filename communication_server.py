@@ -81,8 +81,19 @@ class MultiWebhookService:
         close_coordinator()
 
     def _worker_loop(self) -> None:
+        from agent_execution.scheduling.notifications import NotificationDispatcher
+        try:
+            dispatcher = NotificationDispatcher(self.adapters, self.allowed_senders)
+        except Exception as error:
+            dispatcher = None
+            print(f"Schedule notification storage unavailable: {type(error).__name__}")
         while not self._stop_event.is_set():
             processed = self.process_pending_once()
+            try:
+                if dispatcher is not None:
+                    processed += dispatcher.dispatch_once(self._stop_event.is_set)
+            except Exception as error:
+                print(f"Schedule notification dispatcher: {type(error).__name__}")
             if processed == 0:
                 self._stop_event.wait(self.worker_interval_seconds)
 
