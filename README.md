@@ -601,3 +601,11 @@ Watch 保存最近四次觀察，回傳 waiting／completed／needs_input；第�
 MCP 使用明確路由表，server／tool 名稱含底線及名稱碰撞均不靠字串切割判斷；參數與 structuredContent 以有界、離線 JSON Schema 驗證，工具錯誤不再混成成功文字。stdio 支援 EOF、取消及有界請求，remote 支援 HTTPS Streamable HTTP 的 JSON／SSE、session 與部署者提供的 OAuth access token；未知寫入結果不自動重播。完整互動 OAuth／refresh 尚待補齊，協定版本明確固定為 2025-11-25。[MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)。
 
 `create_dynamic_tool` 改為只保存版本提案，不寫入 tools/ 或立即執行。Python 工具與 Skill 版本保存在 owner 隔離的提案庫，通過 Docker unittest 與一次性人工批准後啟用；可撤回或批准切回舊版本。自動載入僅限提交的 builtins 清單。已批准 Python 是受信任 host 程式；來源、雜湊與測試不代替程式審查。CLI、package 格式、容量及限制見 `agent_execution/extensions/README.md`。
+
+## 瀏覽器、文件與語音（T19）
+
+`browser_session` 使用隔離的 Chromium profile／cookie state，可跨工作程序續跑登入流程，動作支援明確文字／URL 斷言及下載；失敗停止後續動作，取消會清除程序樹。下載和截圖保存於私有 owner 儲存。Profile 保存 cookies／storage，沒有保留仍執行的頁面 JS／未提交表單；host 瀏覽器不是 OS sandbox。
+
+PDF／DOCX／PPTX／XLSX 附件現在使用有界解析程序，標示頁碼、段落、投影片或工作表列來源；掃描 PDF 可使用本機 Tesseract OCR。容量或格式不支援會明確回報，不以 Base64 假裝已理解內容。
+
+WebSocket 在配置 STT／TTS model 與 audio endpoint 後提供真正 SDK 語音請求，支援有序音訊 frame、轉錄及可播放 WAV 回傳；限制容量／期限，取消與重連丟棄舊音訊結果。設定與協定見 `agent_execution/media/README.md`。本機已驗證 Chromium 登入續跑、原生文件／Tesseract，以及 SDK 對本機 HTTP fixture 的音訊 contract；正式語音品質／裝置播放仍待驗收。

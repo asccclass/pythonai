@@ -10,6 +10,7 @@ from agent_execution.tests import test_code_index
 from agent_execution.tests import test_review_ui
 from agent_execution.tests import test_scheduling
 from agent_execution.tests import test_extensions
+from agent_execution.tests import test_media
 
 
 def load_tests(loader, tests, pattern):
@@ -31,4 +32,5 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_review_ui))
     tests.addTests(loader.loadTestsFromModule(test_scheduling))
     tests.addTests(loader.loadTestsFromModule(test_extensions))
+    tests.addTests(loader.loadTestsFromModule(test_media))
     return tests

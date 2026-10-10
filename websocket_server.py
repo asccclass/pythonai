@@ -66,6 +66,8 @@ class Session:
     cancel_chat: threading.Event | None = None
     event_store: Any = None
     request_id: str | None = None
+    audio_turn: Any = None
+    audio_task: asyncio.Task | None = None
 
     @property
     def owner(self):
@@ -295,6 +297,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if session.ws is not None:
             await session.ws.close(code=4409)
         session.ws = ws
+        if session.audio_turn:session.audio_turn.cancelled.set()
+        session.audio_turn=None
         def runtime_factory():
             template = getattr(ws.app.state, "agent_runtime", None)
             if template is None:
@@ -318,7 +322,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "session_id": new_id(),
                 "server_time": now_ms(),
                 "resumed": resumable,
-                "features": DEFAULT_FEATURES,
+                "features": __import__('agent_execution.media.audio',fromlist=['features']).features(),
                 "last_seq": session.seq,
                 "history_floor": floor,
             },
@@ -352,6 +356,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if session is not None and session.ws is ws:
             if session.cancel_chat is not None:
                 session.cancel_chat.set()
+            if session.audio_turn:session.audio_turn.cancelled.set();session.audio_turn=None
             session.ws = None
 
 
@@ -406,9 +411,22 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
             result = await asyncio.to_thread(human_command, f"/{decision} {approval_id}", identity, f"{session.project}:{session.device_id}")
         await session.send("approval.result", {"message": result}, ref=message_id)
     elif message_type == "audio.start":
-        session.state["audio"] = payload
+        from agent_execution.media.audio import AudioTurn,features
+        if not features()['stt']:raise ValueError('STT not configured')
+        if session.audio_turn:session.audio_turn.cancelled.set()
+        session.audio_turn=AudioTurn(payload.get('stream_id'),payload.get('format','wav'))
+        session.audio_frames.clear()
     elif message_type == "audio.end":
-        await session.send("stt.result", {"stream_id": payload.get("stream_id"), "text": "", "final": True}, ref=message_id)
+        turn=session.audio_turn
+        if turn is None or payload.get('stream_id')!=turn.stream_id or session.audio_task and not session.audio_task.done():raise ValueError('No matching idle audio stream')
+        data=turn.finish();session.audio_task=asyncio.create_task(audio_result(session,turn,'stt',message_id,data=data,format=turn.format))
+    elif message_type == 'audio.cancel':
+        if session.audio_turn:session.audio_turn.cancelled.set();session.audio_turn=None
+    elif message_type == 'tts.request':
+        from agent_execution.media.audio import AudioTurn,features
+        if not features()['tts'] or session.audio_task and not session.audio_task.done():raise ValueError('TTS unavailable/busy')
+        turn=AudioTurn(payload.get('stream_id'),'mp3');session.audio_turn=turn
+        session.audio_task=asyncio.create_task(audio_result(session,turn,'tts',message_id,text=payload.get('text',''),voice=payload.get('voice','alloy')))
     elif message_type == "event":
         await handle_event(session, payload)
     elif message_type == "state.report":
@@ -460,6 +478,7 @@ async def handle_event(session: Session, event: dict[str, Any]) -> None:
 
 
 def handle_audio_frame(session: Session, data: bytes) -> None:
+    if session.audio_turn:session.audio_turn.append(data)
     if len(session.audio_frames) >= 256:
         session.audio_frames.pop(0)
     if len(data) < 9:
@@ -473,6 +492,19 @@ def handle_audio_frame(session: Session, data: bytes) -> None:
             "size": len(data) - 9,
         }
     )
+
+
+async def audio_result(session,turn,kind,ref,**arguments):
+    from agent_execution.media.audio import voice_call
+    ws=session.ws
+    try:
+        value=await asyncio.to_thread(voice_call,kind,cancelled=turn.cancelled.is_set,**arguments)
+        if session.audio_turn is turn and session.ws is ws and not turn.cancelled.is_set():
+            await session.send('stt.result' if kind=='stt' else 'tts.result',{'stream_id':turn.stream_id,'final':True,**{k:v for k,v in value.items() if k!='success'}},ref=ref)
+    except Exception as error:
+        if session.audio_turn is turn and session.ws is ws and not turn.cancelled.is_set():await session.send('error',{'code':'audio_failed','message':type(error).__name__,'retryable':False},ref=ref)
+    finally:
+        if session.audio_turn is turn:session.audio_turn=None
 
 
 def handle_tool_result(session: Session, ref: str | None, payload: dict[str, Any]) -> None:

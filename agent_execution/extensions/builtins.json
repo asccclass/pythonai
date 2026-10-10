@@ -1,4 +1,4 @@
 {
-  "tools": ["apply_project_patch", "ast_edit", "browser_vision", "check_subagent", "code_symbols", "env_manager", "find_references", "get_weather_test", "git_commit", "git_diff", "git_rollback", "git_status", "go_to_definition", "invoke_subagent", "manage_schedule", "manage_subagent", "prepare_project_patch", "project_delivery", "project_scaffold", "refresh_code_index", "run_test_suite", "search_codebase", "web_research"],
+  "tools": ["apply_project_patch", "ast_edit", "browser_session", "browser_vision", "check_subagent", "code_symbols", "env_manager", "find_references", "get_weather_test", "git_commit", "git_diff", "git_rollback", "git_status", "go_to_definition", "invoke_subagent", "manage_schedule", "manage_subagent", "prepare_project_patch", "project_delivery", "project_scaffold", "refresh_code_index", "run_test_suite", "search_codebase", "web_research"],
   "skills": ["laya", "markitdown", "mybrain_query_cli", "security_audit", "story", "web_search"]
 }

@@ -1,0 +1,1 @@
+{"name":"browser_session","description":"Resume an owner-isolated Chromium profile, perform bounded actions with assertions, and return DOM/download/screenshot artifacts.","parameters":{"type":"object","properties":{"url":{"type":"string"},"actions":{"type":"array","items":{"type":"object"}},"session_id":{"type":"string"},"screenshot":{"type":"boolean"}},"required":["url"]}}

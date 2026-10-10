@@ -180,6 +180,8 @@
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。
   - 工作：使用者隔離的持久 browser session、動作後斷言、下載 artifacts；PDF／Office 解析／OCR 與來源頁碼；真正 STT／TTS、音訊容量與取消。可分成三個獨立交付。
   - 驗收：多步登入／表單流程可續跑並驗證結果；PDF／Office 不以截斷 Base64 充作理解；語音可辨識及播放，重連／中斷不混流。依賴 T02、T05、T06、T07。
+  - 實作（2026-10-10）：media package 的 owner profile／cookie state、嚴格動作斷言／私有下載、原生 worker timeout／取消；PDF／Office 來源單位、ZIP／XML 限制、實際 Tesseract OCR；真正 SDK STT／TTS worker、可播放 WAV、WebSocket 有序 frame／容量／取消／reconnect 隔離。
+  - 驗證：相關 51 passed，實際 Chromium cookie 登入／續跑／異主隔離／assert／下載，原生 DOCX／PPTX／XLSX 中文、扫描 PDF OCR，本機 HTTP SDK 語音 contract／WAV／取消。正式外部語音品質、真實裝置播放與外部網站尚未驗收，保持未勾選。profile admission limits 不是硬磁碟配額；host browser／document parser 仍需部署層隔離。
 
 - [ ] **T20 — 記憶品質與可控自我改善**
   - 現況：三類記憶、遺忘、背景更新與 Skill Doctor 已存在。

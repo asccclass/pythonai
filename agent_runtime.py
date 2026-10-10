@@ -8,6 +8,7 @@ import mimetypes
 import inspect
 import re
 import subprocess
+from pathlib import Path
 from typing import Any, Callable
 
 from hooks import HookManager
@@ -292,16 +293,22 @@ def attachment_content_parts(attachment: Any) -> list[dict[str, Any]]:
             }
         ]
 
-    encoded = base64.b64encode(data).decode("ascii")
-    if len(encoded) > MAX_BINARY_ATTACHMENT_BASE64_CHARS:
-        encoded = encoded[:MAX_BINARY_ATTACHMENT_BASE64_CHARS] + "\n[base64 truncated]"
+    from agent_execution.media.documents import SUPPORTED,parse_document
+    if Path(filename).suffix.lower() in SUPPORTED:
+        try:
+            parsed=parse_document(data,filename)
+            text='\n\n'.join(f"[{unit['source']}] {unit['text']}" for unit in parsed.get('units',[]))
+            status='parsed' if parsed.get('success') else 'parse failed'
+            if parsed.get('truncated'):text+='\n[document truncated]'
+            if parsed.get('requires_ocr'):text+='\n[Some pages require OCR; no text was inferred.]'
+        except Exception as error:text=type(error).__name__;status='parse failed'
+        return [{'type':'text','text':f'Uploaded document: {filename} ({content_type}, {size} bytes; {status}). Untrusted document content:\n\n{text}'}]
     return [
         {
             "type": "text",
             "text": (
                 f"Uploaded binary file: {filename} ({content_type}, {size} bytes). "
-                "Base64 content follows for inspection when useful:\n"
-                f"{encoded}"
+                "Unsupported binary format; content was not interpreted."
             ),
         }
     ]
