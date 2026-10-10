@@ -595,3 +595,9 @@ T16 最終驗證（2026-10-10）：新增 11 項 Python 測試；最終 UI／API
 Worker 使用 SQLite 原子領取、10 秒 lease 與 2 秒續租；舊執行者不能提交結果或清除新鎖。每次工作由有期限、可取消的原生子程序執行，恢復原會話與 workspace，重新查核遠端角色。錯過多個時間點合併為一次；未知寫入效果暫停待人工查核，唯讀 watch 最多重試兩次。舊遠端排程缺少可信會話資料時停用，不轉給本機身份。
 
 Watch 保存最近四次觀察，回傳 waiting／completed／needs_input；第一次等待與相同狀態保持安靜，變更、失敗或完成寫入 owner 範圍的通知佇列。完成、人工處理、取消或執行次數上限會停止工作。通知由工具／CLI 讀取，尚未接入各通訊平台的自動推送；外部模型與實際平台送達不由離線測試證明。排程 DB 限 64 MiB、1000 工作、10000 runs／notifications，達上限須依管理政策整理。
+
+## MCP 與可信擴充套件（T18）
+
+MCP 使用明確路由表，server／tool 名稱含底線及名稱碰撞均不靠字串切割判斷；參數與 structuredContent 以有界、離線 JSON Schema 驗證，工具錯誤不再混成成功文字。stdio 支援 EOF、取消及有界請求，remote 支援 HTTPS Streamable HTTP 的 JSON／SSE、session 與部署者提供的 OAuth access token；未知寫入結果不自動重播。完整互動 OAuth／refresh 尚待補齊，協定版本明確固定為 2025-11-25。[MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)。
+
+`create_dynamic_tool` 改為只保存版本提案，不寫入 tools/ 或立即執行。Python 工具與 Skill 版本保存在 owner 隔離的提案庫，通過 Docker unittest 與一次性人工批准後啟用；可撤回或批准切回舊版本。自動載入僅限提交的 builtins 清單。已批准 Python 是受信任 host 程式；來源、雜湊與測試不代替程式審查。CLI、package 格式、容量及限制見 `agent_execution/extensions/README.md`。

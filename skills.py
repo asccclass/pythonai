@@ -106,7 +106,11 @@ class SkillRegistry:
             return []
         results: list[tuple[Skill | None, str | None]] = []
         seen_names: set[str] = set()
+        builtins=None
+        if self.root.resolve()==DEFAULT_SKILLS_DIR.resolve():
+            builtins=json.loads((Path(__file__).parent/'agent_execution'/'extensions'/'builtins.json').read_text(encoding='utf-8'))['skills']
         for path in sorted(item for item in self.root.iterdir() if item.is_dir()):
+            if builtins is not None and path.name not in builtins:continue
             if (path / ".disabled").exists():
                 results.append((None, f"Skill disabled: {path.name}"))
                 continue
@@ -120,6 +124,11 @@ class SkillRegistry:
                 continue
             seen_names.add(skill.name)
             results.append((skill, None))
+        if builtins is not None:
+            from agent_execution.extensions.store import ExtensionStore
+            for skill in ExtensionStore().skills():
+                results=[entry for entry in results if entry[0] is None or entry[0].name!=skill.name]
+                results.append((skill,None))
         return results
 
     def get(self, name: str) -> Skill:

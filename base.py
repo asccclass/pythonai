@@ -673,7 +673,7 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "create_dynamic_tool",
-                "description": "Create a new Python tool dynamically. The tool will be saved and hot-reloaded into the environment immediately.",
+                "description": "Stage an immutable Python tool proposal. It requires tests and human approval before activation; staging never executes code.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -752,8 +752,10 @@ DYNAMIC_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 
 def load_dynamic_tools():
     import importlib.util, sys, json
+    manifest=json.loads((Path(__file__).parent/'agent_execution'/'extensions'/'builtins.json').read_text(encoding='utf-8'))
     for py_file in DYNAMIC_TOOLS_DIR.glob("*.py"):
         tool_name = py_file.stem
+        if tool_name not in manifest['tools']:continue
         schema_file = py_file.with_suffix(".json")
         if not schema_file.exists(): continue
         try:
@@ -774,6 +776,11 @@ def load_dynamic_tools():
             TOOLS_SCHEMAS.append(schema)
         except Exception as e:
             print(f"Failed to load dynamic tool {tool_name}: {e}")
+    from agent_execution.extensions.store import ExtensionStore
+    for name,function,schema in ExtensionStore().tools():
+        if name in TOOLS:continue
+        TOOLS[name]=function
+        TOOLS_SCHEMAS.append(schema)
 
 @policy_tool("create_dynamic_tool")
 def create_dynamic_tool(name: str, code: str, schema_json: str) -> str:
@@ -785,12 +792,10 @@ def create_dynamic_tool(name: str, code: str, schema_json: str) -> str:
         import re
         if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
             return "Error: Tool name must be a lowercase Python identifier"
-        py_file = DYNAMIC_TOOLS_DIR / f"{name}.py"
-        schema_file = DYNAMIC_TOOLS_DIR / f"{name}.json"
-        py_file.write_text(code, encoding="utf-8")
-        schema_file.write_text(json.dumps(schema, indent=2), encoding="utf-8")
-        load_dynamic_tools()
-        return f"Tool '{name}' successfully created and hot-reloaded!"
+        if name in TOOLS:return 'Error: Existing tool name cannot be replaced by generated code'
+        from agent_execution.extensions.store import ExtensionStore
+        key=ExtensionStore().stage(name,'tool',{'tool.py':code,'schema.json':json.dumps(schema)},'model-generated')
+        return json.dumps({'success':True,'version':key,'state':'staged','next':'Review source; stage a version with test_extension.py; Docker test; human approval; activate and restart.'})
     except Exception as e:
         return f"Failed to create tool: {e}"
 

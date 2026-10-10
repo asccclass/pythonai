@@ -173,6 +173,8 @@
   - 現況：stdio MCP 與工具熱載入可用；動態 Python 模組直接載入；MCP 路由依工具名稱分割，需補 server 名含底線案例。
   - 工作：remote MCP transport／OAuth、timeout／重連／health、完整 schema 與結果驗證、明確工具到 server 映射；工具／Skill 安装、版本、來源、測試、核准啟用與 rollback。
   - 驗收：缺 server／網路斷線不阻塞其他工具；名稱碰撞／底線不誤路由；惡意 schema 或未通過測試的生成工具不能啟用。依賴 T01、T03、T10。
+  - 實作（2026-10-10）：exact MCP route／碰撞雜湊、離線有界 JSON Schema 與 structuredContent／isError 驗證、stdio EOF／取消／程序樹清理、四 worker startup、health／明確 reconnect；2025-11-25 remote POST JSON／SSE、session／token_env。生成工具只 stage，工具／Skill 版本來源與 digest、Docker tests、人工批准、撤回與批准 rollback；提交的 builtin inventory。
+  - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema。尚缺完整互動 OAuth discovery／PKCE／refresh 和正式 remote provider 驗收，保留未勾選；激活需重啟刷新 schema。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。

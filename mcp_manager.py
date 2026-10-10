@@ -5,6 +5,11 @@ import queue
 import time
 import os
 import uuid
+import hashlib
+import re
+from concurrent.futures import ThreadPoolExecutor
+from agent_execution.extensions.schema import validator,validate
+from agent_execution.extensions.remote import RemoteMCPClient
 from typing import Dict, Any, List, Optional
 
 class MCPClient:
@@ -28,6 +33,9 @@ class MCPClient:
             
         self.process = None
         self.running = False
+        self.write_lock=threading.Lock()
+        self.request_lock=threading.Lock()
+        self.job=None
         
         # Store pending requests waiting for a response
         self._pending_requests: Dict[str, queue.Queue] = {}
@@ -47,8 +55,14 @@ class MCPClient:
             env=self.env,
             cwd=self.cwd,
             text=True,
+            encoding='utf-8',errors='strict',
+            start_new_session=os.name!='nt',
+            creationflags=(subprocess.CREATE_NO_WINDOW|0x4) if os.name=='nt' else 0,
             bufsize=1  # Line buffered
         )
+        if os.name=='nt':
+            from agent_execution.process import WindowsJob
+            self.job=WindowsJob(self.process);self.job.resume(self.process)
         self.running = True
         
         # Start reader thread
@@ -66,10 +80,7 @@ class MCPClient:
         """Send initialize request to the server."""
         response = self.send_request("initialize", {
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "roots": {"listChanged": True},
-                "sampling": {}
-            },
+            "capabilities": {},
             "clientInfo": {
                 "name": "pythonai-mcp-client",
                 "version": "1.0.0"
@@ -80,32 +91,42 @@ class MCPClient:
         self.send_notification("notifications/initialized", {})
         
         # Fetch tools
-        tools_resp = self.send_request("tools/list", {})
-        if tools_resp and "tools" in tools_resp:
-            self.tools = tools_resp["tools"]
+        self.tools=[];cursor=None
+        for _ in range(10):
+            tools_resp=self.send_request('tools/list',{'cursor':cursor} if cursor else {})
+            self.tools.extend(tools_resp.get('tools',[]))
+            if len(self.tools)>256:raise ValueError('MCP tool capacity exceeded')
+            cursor=tools_resp.get('nextCursor')
+            if not cursor:break
+        else:raise ValueError('MCP pagination limit')
 
     def _read_stdout(self):
         """Continuously read lines from the server's stdout."""
         while self.running and self.process and self.process.poll() is None:
             try:
-                line = self.process.stdout.readline()
+                line = self.process.stdout.readline(1024*1024+1)
                 if not line:
                     break
+                if len(line)>1024*1024:raise ValueError('MCP line exceeds limit')
                 line = line.strip()
                 if line:
                     self._handle_message(json.loads(line))
             except Exception as e:
-                print(f"[MCP {self.name}] stdout read error: {e}")
                 break
+        self.running=False
+        with self.request_lock:
+            for pending in self._pending_requests.values():
+                try:pending.put_nowait({'error':{'message':'MCP disconnected'}})
+                except queue.Full:pass
 
     def _read_stderr(self):
         """Continuously read lines from the server's stderr for logging."""
         while self.running and self.process and self.process.poll() is None:
             try:
-                line = self.process.stderr.readline()
+                line = self.process.stderr.readline(65536)
                 if not line:
                     break
-                print(f"[MCP {self.name} LOG] {line.strip()}")
+                # Third-party diagnostics may include credentials; drain without logging.
             except Exception:
                 break
 
@@ -114,15 +135,18 @@ class MCPClient:
         if "id" in message and ("result" in message or "error" in message):
             # This is a response to a request we sent
             msg_id = str(message["id"])
-            if msg_id in self._pending_requests:
-                self._pending_requests[msg_id].put(message)
+            with self.request_lock:
+                pending=self._pending_requests.get(msg_id)
+                if pending:
+                    try:pending.put_nowait(message)
+                    except queue.Full:pass
         elif "method" in message:
             # This is a notification or request from the server
             method = message["method"]
             # Ignore for now in this simple client
             pass
 
-    def send_request(self, method: str, params: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
+    def send_request(self, method: str, params: Dict[str, Any], timeout: float = 10.0) -> Dict[str, Any]:
         """Send a JSON-RPC request and wait for the response."""
         msg_id = str(uuid.uuid4())
         request = {
@@ -132,22 +156,35 @@ class MCPClient:
             "params": params
         }
         
-        q = queue.Queue()
-        self._pending_requests[msg_id] = q
+        if not self.running or not self.process:raise ConnectionError('MCP is not running')
+        if not 0<timeout<=30:raise ValueError('MCP timeout exceeds limit')
+        q = queue.Queue(maxsize=1)
+        with self.request_lock:
+            if len(self._pending_requests)>=32:raise RuntimeError('MCP concurrency limit')
+            self._pending_requests[msg_id] = q
         
         try:
             req_str = json.dumps(request) + "\n"
-            self.process.stdin.write(req_str)
-            self.process.stdin.flush()
+            if len(req_str.encode())>1024*1024:raise ValueError('MCP request exceeds limit')
+            with self.write_lock:
+                self.process.stdin.write(req_str)
+                self.process.stdin.flush()
             
             # Wait for response
-            response = q.get(timeout=timeout)
+            from agent_execution.policy import current_context
+            deadline=time.monotonic()+timeout
+            while True:
+                cancelled=current_context().check_cancelled
+                if cancelled and cancelled():raise InterruptedError('MCP request cancelled')
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise TimeoutError('MCP request timed out; not replayed')
+                try:response=q.get(timeout=min(.1,remaining));break
+                except queue.Empty:pass
             if "error" in response:
-                raise Exception(f"MCP Error: {response['error']}")
+                raise RuntimeError('MCP request failed')
             return response.get("result", {})
         finally:
-            if msg_id in self._pending_requests:
-                del self._pending_requests[msg_id]
+            with self.request_lock:self._pending_requests.pop(msg_id,None)
 
     def send_notification(self, method: str, params: Dict[str, Any]):
         """Send a JSON-RPC notification (no response expected)."""
@@ -157,8 +194,9 @@ class MCPClient:
             "params": params
         }
         notif_str = json.dumps(notification) + "\n"
-        self.process.stdin.write(notif_str)
-        self.process.stdin.flush()
+        with self.write_lock:
+            self.process.stdin.write(notif_str)
+            self.process.stdin.flush()
 
     def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         """Call a specific tool exposed by the MCP server."""
@@ -176,6 +214,13 @@ class MCPClient:
                 self.process.wait(timeout=3.0)
             except subprocess.TimeoutExpired:
                 self.process.kill()
+            self.process.wait(timeout=3)
+            if self.job:self.job.close();self.job=None
+            if os.name!='nt':
+                from agent_execution.process import terminate_tree
+                terminate_tree(self.process)
+            for stream in (self.process.stdin,self.process.stdout,self.process.stderr):
+                if stream:stream.close()
 
 
 class MCPManager:
@@ -183,6 +228,8 @@ class MCPManager:
         self.config_path = config_path
         self.clients: Dict[str, MCPClient] = {}
         self.skipped_servers: Dict[str, str] = {}
+        self.routes={}
+        self.server_configs={}
         
     def load_config_and_start(self):
         """Load the config file and start all configured MCP servers."""
@@ -192,60 +239,79 @@ class MCPManager:
             return
 
         with open(self.config_path, "r", encoding="utf-8") as f:
+            if os.fstat(f.fileno()).st_size>1024*1024:raise ValueError('MCP config exceeds 1 MiB')
             config = json.load(f)
             
         servers = config.get("mcpServers", {})
-        for name, server_config in servers.items():
-            command = server_config.get("command")
-            args = server_config.get("args", [])
-            env = server_config.get("env", {})
-            cwd = server_config.get("cwd")
-            
-            client = MCPClient(name, command, args, env, cwd)
+        if not isinstance(servers,dict) or len(servers)>32:raise ValueError('MCP server capacity exceeded')
+        self.server_configs=servers
+        def start_server(item):
+            name,server_config=item
+            client=None
             try:
+                if not isinstance(server_config,dict):raise ValueError('Invalid MCP server config')
+                command=server_config.get('command');args=server_config.get('args',[])
+                env=server_config.get('env',{});cwd=server_config.get('cwd')
+                client = RemoteMCPClient(name,server_config) if server_config.get('url') else MCPClient(name, command, args, env, cwd)
                 client.start()
                 self.clients[name] = client
             except Exception as e:
-                self.skipped_servers[name] = str(e)
+                self.skipped_servers[name] = str(e) if isinstance(e,FileNotFoundError) else type(e).__name__
                 try:
-                    client.stop()
+                    if client:client.stop()
                 except Exception:
                     pass
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(start_server,servers.items()))
 
     def get_all_tools(self) -> List[Dict[str, Any]]:
         """Get all tools from all registered MCP servers, formatted for OpenAI API."""
-        tools = []
+        tools = [];routes={};candidates=[]
         for server_name, client in self.clients.items():
             for tool in client.tools:
+                try:
+                    if not isinstance(tool.get('name'),str) or not 1<=len(tool['name'])<=128:raise ValueError('Invalid tool name')
+                    validator(tool.get('inputSchema',{}))
+                    if 'outputSchema' in tool:validator(tool['outputSchema'])
+                    if len(tool.get('description',''))>8192:raise ValueError('Description limit')
+                    candidates.append((server_name,client,tool))
+                except Exception:continue
+        counts={}
+        for server,client,tool in candidates:
+            raw=f"mcp_{server}_{tool['name']}";counts[raw]=counts.get(raw,0)+1
+        for server_name,client,tool in candidates:
+                raw=f"mcp_{server_name}_{tool['name']}"
+                name=raw if counts[raw]==1 and len(raw)<=64 and re.fullmatch('[a-zA-Z0-9_-]+',raw) else 'mcp_'+hashlib.sha256(json.dumps([server_name,tool['name']]).encode()).hexdigest()[:40]
+                if name in routes:raise ValueError('Duplicate MCP tool advertisement')
+                routes[name]=(server_name,tool)
                 # Transform MCP tool format to OpenAI function calling format
                 openai_tool = {
                     "type": "function",
                     "function": {
-                        "name": f"mcp_{server_name}_{tool['name']}",
+                        "name": name,
                         "description": tool.get("description", ""),
                         "parameters": tool.get("inputSchema", {})
                     }
                 }
                 tools.append(openai_tool)
+        self.routes=routes
         return tools
 
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Route the tool call to the appropriate MCP server."""
-        if not tool_name.startswith("mcp_"):
-            return f"Error: {tool_name} is not an MCP tool."
-            
-        parts = tool_name.split("_", 2)
-        if len(parts) < 3:
-            return "Error: Invalid MCP tool name format."
-            
-        server_name = parts[1]
-        original_tool_name = parts[2]
-        
-        if server_name not in self.clients:
-            return f"Error: MCP Server '{server_name}' not found."
+        if tool_name not in self.routes:self.get_all_tools()
+        route=self.routes.get(tool_name)
+        if not route:return json.dumps({'success':False,'error':'Unknown MCP route'})
+        server_name,tool=route
             
         try:
-            result = self.clients[server_name].call_tool(original_tool_name, arguments)
+            validate(arguments,tool.get('inputSchema',{}))
+            result = self.clients[server_name].call_tool(tool['name'], arguments)
+            validate(result,{'type':'object','properties':{'content':{'type':'array','maxItems':256,'items':{'type':'object','required':['type'],'properties':{'type':{'enum':['text','image','audio','resource','resource_link']}}}},'isError':{'type':'boolean'}}})
+            if 'outputSchema' in tool:
+                if 'structuredContent' not in result:raise ValueError('MCP structuredContent is required')
+                validate(result['structuredContent'],tool['outputSchema'])
+            if result.get('isError'):return json.dumps({'success':False,'error':'MCP tool reported failure'})
             
             # Format the output from MCP content blocks to a string
             if "content" in result and isinstance(result["content"], list):
@@ -255,11 +321,22 @@ class MCPManager:
                         outputs.append(content.get("text", ""))
                     else:
                         outputs.append(f"[{content.get('type')} content]")
-                return "\n".join(outputs)
+                return json.dumps({'success':True,'output':'\n'.join(outputs),'structuredContent':result.get('structuredContent')},ensure_ascii=False)
             
-            return json.dumps(result)
+            return json.dumps({'success':True,'output':result})
         except Exception as e:
-            return f"Error executing MCP tool: {str(e)}"
+            return json.dumps({'success':False,'error':type(e).__name__})
+
+    def health(self):
+        return {name:client.health() if isinstance(client,RemoteMCPClient) else {'ready':bool(client.running and client.process and client.process.poll() is None)} for name,client in self.clients.items()}
+
+    def reconnect(self,name):
+        # Discovery may reconnect, but an uncertain tools/call is never repeated.
+        config=self.server_configs[name]
+        if name in self.clients:self.clients.pop(name).stop()
+        client=RemoteMCPClient(name,config) if config.get('url') else MCPClient(name,config.get('command'),config.get('args',[]),config.get('env',{}),config.get('cwd'))
+        try:client.start();self.clients[name]=client;self.skipped_servers.pop(name,None);self.get_all_tools()
+        except Exception as error:client.stop();self.skipped_servers[name]=type(error).__name__;raise
 
     def shutdown(self):
         """Shutdown all MCP servers."""
