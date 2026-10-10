@@ -30,7 +30,8 @@ TOOLS_BY_ROLE={
     'planner':READ_TOOLS,
     'reviewer':READ_TOOLS|{'run_test_suite'},
     'coder':READ_TOOLS|{'write_file','edit_file','ast_edit','run_command','run_test_suite','git_commit',
-        'ask_user','run_skill','invoke_subagent','check_subagent','manage_subagent'},
+        'ask_user','run_skill','invoke_subagent','check_subagent','manage_subagent',
+        'prepare_project_patch','apply_project_patch','project_delivery'},
 }
 SUCCESS={'completed','reviewed','merged'}
 STOPPED={'failed','rejected','cancelled','timed_out','needs_input','needs_resolution','conflict'}

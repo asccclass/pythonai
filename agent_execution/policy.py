@@ -133,16 +133,24 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
             raise PolicyDenied(f'Tool is outside this agent role: {name}')
         assets = _context.get().trusted_assets if name == "run_command" else ()
         _validate_paths(arguments, assets)
-        if name == 'git_rollback' or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):
+        external_delivery=name=='project_delivery' and values.get('action') in {'publish','merge'}
+        if name == 'git_rollback' or external_delivery or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):
             if name=='manage_memory':values = {"reason": "", "superseded_by": None, **values}
             context = _context.get()
-            action = f"{context.project}:{name}" + (f':{context.task_id}' if name=='git_rollback' else '')
-            authorization = (context.identity, context.session, action, canonical(values))
+            action = f"{context.project}:{name}" + (f':{context.task_id}' if name=='git_rollback' or external_delivery else '')
+            approval_values=values
+            if external_delivery:
+                from .patches import ArtifactStore
+                plan=ArtifactStore().get(values.get('plan_id'),'delivery')
+                required='prepared' if values['action']=='publish' else 'ready'
+                if plan['state']!=required:raise ValueError('Prepare a reviewable/ready delivery before requesting approval')
+                approval_values={**values,'prepared_digest':plan['payload']['digest'],'commit':plan['payload']['head']}
+            authorization = (context.identity, context.session, action, canonical(approval_values))
             if _approved.get() != authorization:
                 store = ApprovalStore()
                 if not approval_id:
-                    raise ApprovalRequired(store.request(context.identity, context.session, action, values))
-                store.consume(approval_id, context.identity, context.session, action, values)
+                    raise ApprovalRequired(store.request(context.identity, context.session, action, approval_values))
+                store.consume(approval_id, context.identity, context.session, action, approval_values)
     except PermissionError as error:
         _audit_denial(name, str(error))
         if isinstance(error, ApprovalRequired):

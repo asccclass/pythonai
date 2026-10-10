@@ -353,6 +353,10 @@ def dispatch_task_input(text, runtime):
         from .coordinator import human_agent_command
         try:return AgentTurnResult(human_agent_command(text),None)
         except (KeyError,ValueError,PermissionError,RuntimeError) as error:return AgentTurnResult(f'Error: {error}',None)
+    if command == '/delivery':
+        from .git_delivery import human_delivery_command
+        try:return AgentTurnResult(human_delivery_command(text),None)
+        except (KeyError,ValueError,PermissionError,RuntimeError) as error:return AgentTurnResult(f'Error: {error}',None)
     if command == '/worktree':
         from .worktrees import human_worktree_command
         try:

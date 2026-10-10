@@ -1,0 +1,12 @@
+{
+  "kind": "github",
+  "api_url": "https://api.github.com",
+  "repository": "OWNER/REPOSITORY",
+  "remote_url": "https://github.com/OWNER/REPOSITORY.git",
+  "remote": "origin",
+  "base": "main",
+  "base_ref": "refs/remotes/origin/main",
+  "token_env": "GITHUB_TOKEN",
+  "required_ci": ["check:unit-tests"],
+  "required_reviewers": ["REVIEWER_LOGIN"]
+}

@@ -1,0 +1,7 @@
+[
+  {
+    "path": "docs/new-feature.md",
+    "before_sha256": null,
+    "content": "# 新功能\n\n此檔案只會在路徑仍不存在時建立。\n"
+  }
+]

@@ -108,7 +108,7 @@ class CommunicationWorker:
         if busy:
             # Control commands remain reachable while ordinary jobs wait durably.
             pending=[command for command in pending if command.text.strip().split(maxsplit=1)[0:1]
-                and command.text.strip().split(maxsplit=1)[0] in {'/status','/cancel','/clear','/reset','/approvals','/approve','/deny','/agents','/tasks','/steps','/budget','/cancel-task'}]
+                and command.text.strip().split(maxsplit=1)[0] in {'/status','/cancel','/clear','/reset','/approvals','/approve','/deny','/agents','/tasks','/steps','/budget','/cancel-task','/delivery'}]
         if not pending:
             return None
         command = pending[0]

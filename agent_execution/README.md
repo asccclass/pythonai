@@ -101,3 +101,32 @@ digest manifest. Archive/restore commands require terminal tasks and human appro
 Selected commits use a separate index and disable repository hooks to enforce
 scope. Rollback archives selected working/index versions and requires one-use
 approval; untracked files are retained. See root README for commands and limits.
+
+## Patch, PR and CI delivery loop (T14)
+
+patches.py persists owner/task/workspace-bound UTF-8 proposals with expected
+SHA-256 bytes, reviewable diffs, conflict preflight and conservative compensation.
+Its ArtifactStore shares the external TaskStore database; interrupted mutations
+require inspection, rather than automatic replay. Existing delivery.py remains
+the WebSocket outbox module.
+
+git_delivery.py freezes the selected commit history, final/history diffs, provider
+configuration and passing acceptance into a delivery plan. Publish and merge each
+require their own one-use approval through policy.py. Exact SHA pushes use leases;
+repairs retain the original PR and acceptance checks. git_provider.py implements
+bounded GitHub/GitLab REST reads and writes with head-bound CI/review gates. Only
+a confirmed merge produces verified_delivery; uncertain operations reconcile
+read-only and never infer verified completion from a historical merge.
+
+Configure AGENT_GIT_PROVIDER_CONFIG using examples/git_provider.json, and supply
+the token separately through its configured environment variable. Git credentials
+are configured independently. GitLab requires approval-reset-on-push and approvals
+API access; GitHub comment acknowledgement uses same-author approval of the current
+head after the comment update. Findings preserve the reviewer's reproduction text,
+without claiming it was executed. Fork requests are unsupported. Human /delivery
+status and guarded abandonment are transport commands, not model tools.
+
+Tests in tests/test_project_delivery.py exercise real Git remotes, actual process
+exit during patch application, real local tests and localhost provider fixtures.
+External provider credentials, CI and PR merges require separate live validation.
+See the root README for the operation sequence, limits and platform references.

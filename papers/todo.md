@@ -128,10 +128,15 @@
   - 最終協作模組重驗（含快照補強）：17 passed、4 subtests passed；最終語法與 staged diff 檢查通過。
   - 邊界：需要 Git root；忽略檔不複製，舊 daemon JSON 不自動遷移，需人工查核後重建節點。原生工作程序不是 OS sandbox，仍依 T02。多檔 merge 非全域原子；未知效果不自動重播，需人工查核，取消保留 worktree／證據供 T12 封存。模型 Reviewer 品質與外部模型／平台未由離線測試證明，品質 benchmark 待 T21；外部 PR／CI 待 T14。
 
-- [ ] **T14 — Patch、PR／CI 與審查閉環**
-  - 現況：edit_file 字串替換、Python AST 編輯與 Git 工具已有實作，未見完整 PR／CI 流程。
+- [x] **T14 — Patch、PR／CI 與審查閉環**
+  - 原況：edit_file 字串替換、Python AST 編輯與 Git 工具已有實作，未見完整 PR／CI 流程。
   - 工作：帶前置內容驗證的多檔 patch、衝突提示、diff 審查；可配置 GitHub／其他 Git 平台 PR、CI 狀態、review feedback 修復及交付摘要。
   - 驗收：過期 patch 不覆蓋新內容；review findings 有檔案／行號／重現；CI 未通過不宣稱完成；外部發布／合併遵守批准政策。依賴 T03、T10、T12。
+  - 實作（2026-10-10）：在既有 `agent_execution/` 加入 owner／task／workspace 綁定的 UTF-8 多檔 patch，完整 diff／前置 SHA-256／失敗補償；GitHub PR、GitLab MR、SHA 綁定的 CI／review 門檻、同 PR 修復、merge 摘要。沿用 T03 一次性批准，publish／merge 各自批准，修復保留原始 acceptance；納入 Coder 工具清單與人類 `/delivery` 查核命令。
+  - 發布範圍：選檔涵蓋 base 至 HEAD 全部新 commit 的變更，包含已刪除／還原的歷史檔案；提供 final diff 與 history_diff。要求乾淨 worktree、本機驗收通過，確切 SHA／branch lease push，過期 head／remote／配置拒絕；未知發布／合併只讀 reconcile，不重播 API 寫入。
+  - 最終驗證：新增 27 項 T14 測試，真實 Git bare remote、localhost HTTP server、實際 pytest 與真正退出程序，涵蓋過期 patch、並行修改、局部 IO 失敗、junction／Windows Git 路徑別名、身份／批准隔離、CI／review／過期 SHA、修復驗收不可弱化、不明結果、歷史選檔與慢速 HTTP 讀取期限。完整 Docker／Chromium 回歸 538 passed、1 skipped（外部 provider）、25 subtests passed（548.94 秒）；既有 outbox／批准早期整合另驗 40 passed、5 subtests passed，兩平台／慢速 HTTP 最終相關測試 3 passed。語法及 staged diff 檢查通過。
+  - 邊界：支援 UTF-8 普通檔案，拒絕 links／越界／Git metadata，不宣稱多檔全域原子；patch 32 檔／8 MiB 單檔／16 MiB 合計，diff 2 MiB，delivery 256 檔／256 commit，artifact 10000 筆／64 MiB。中斷保留證據，人工 abandon 需 180 秒後查核 worker；不自動回復遠端或重試未知副作用。
+  - 平台邊界：不支援 fork PR／MR。GitHub 以同作者在 comment 更新後對當前 SHA 的 APPROVED 確認 finding；GitLab 需 resolved DiffNote、approval reset-on-push 及 approvals API 權限。finding 重現欄位保存審查者原文，未自動執行。平台 branch protection 與實際帳號／CI／合併須部署者另驗；本次本機 fixture 不代表已建立外部 PR。`verified_delivery` 僅在明確確認 merge 後為 true，與 T10 task 驗收分開。
 
 - [ ] **T15 — 程式碼索引與跨語言理解**
   - 現況：Python Tree-sitter／Jedi、手動 embedding 建索引；語意搜尋讀取候選並算 cosine。

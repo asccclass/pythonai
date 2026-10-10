@@ -34,7 +34,8 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | 子代理 | 持久化 DAG、planner／coder／reviewer 獨立程序、follow-up／等待／取消／合併 | 獨立工具範圍、checkpoint、worktree；共享根預算；Coder 須通過獨立 Reviewer，內容衝突禁止覆寫 | `agent_execution/coordinator.py`, `tools/manage_subagent.py` |
 | 搜尋、網頁與視覺 | Wikipedia 搜尋（search_web）／DuckDuckGo（web_research）、網頁正文、Playwright 點擊／輸入／截圖、圖片模型分析及 DOM fallback | 基礎實作；需瀏覽器與相容模型，每次 browser_vision 建立新瀏覽器，尚無持久登入／桌面操作 | `base.py`, `tools/web_research.py`, `tools/browser_vision.py` |
 | 程式碼理解與修改 | Python Tree-sitter 節點／embedding 索引、語意搜尋、Jedi 定義／引用、AST 替換及語法／flake8 失敗回復 | 基礎實作；偏 Python、需先建索引；工具統一 workspace 邊界，索引位於 workspace/codebase_index.db | `build_codebase_index.py`, `tools/search_codebase.py`, `tools/ast_edit.py`, `tools/go_to_definition.py`, `tools/find_references.py` |
-| 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；PR／CI 流程待 T14；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
+| 開發工具 | Git status／diff、選檔 commit／批准後選檔 rollback、task worktree／封存／恢復、pytest／Python runner、venv／pip／npm、四種 scaffold | 已有 worktree 隔離與本機交付；測試 runner timeout 為 30 秒 | `agent_execution/worktrees.py`, `tools/git_*.py`, `tools/run_test_suite.py` |
+| Patch／PR／CI | 多檔內容雜湊驗證、diff 預覽、GitHub PR／GitLab MR、確切 SHA 發布、CI／審查門檻、同 PR 修復與交付摘要 | 發布／合併各需一次性批准；平台 API 以本機 fixture 驗證，外部帳號尚未實測 | `agent_execution/patches.py`, `agent_execution/git_delivery.py`, `agent_execution/git_provider.py`, `tools/project_delivery.py` |
 | IDE 整合 | VS Code Inline Chat、Ghost Text、HTTP 串流替換選取程式碼 | 原型；獨立 ide_server.py，非完整 Agent 任務 UI，尚無修改預覽、驗收與 robust cancellation | `ide_server.py`, `vscode-extension/` |
 | 觀測與診斷 | episodes／hooks／Skills／記憶健康 CLI、Skill Doctor 產生 agent_persona 建議 | 已實作；Doctor --apply 可寫記憶，尚無品質 A/B 評測及完整分散式 tracing／成本報表 | `observability.py`, `skill_doctor.py` |
 
@@ -46,11 +47,11 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 
 | 比較面向 | PythonAI 現況 | 相對差距與下一步 |
 | --- | --- | --- |
-| 編碼交付／Codex | 已有編輯、選檔 Git、測試、Judge、可選 task worktree 與可回復封存 | 補完整 diff 審查、patch 套用、PR／CI、多代理結果合併；本機交付尚不涵蓋外部發布流程 |
+| 編碼交付／Codex | 已有編輯、選檔 Git、測試、Judge、task worktree、patch、跨代理合併與 PR／CI 門檻 | 外部平台實測、跨語言理解、IDE 整合與品質基準仍待完成 |
 | 多代理／Codex | thread 委派與輪詢 | 補獨立上下文／權限／工作目錄、follow-up／cancel、結果收斂與衝突管理 |
 | 執行安全／Codex | 共用工具政策、Docker-only 隔離、禁網路、遠端最小權限與綁定批准 | 補工具信任／發布、網路按目的授權與更完整審查 UI；host 任意程式仍屬受信任執行 |
 | 自動化／Codex | cron command 與每日摘要 | 補自然語言 Agent／Skill 任務、會話 follow-up、只於有意義變更通知、停止條件及審查結果 |
-| 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算 | 已有步驟／checkpoint、跨代理 DAG、lease 與保守副作用恢復；PR／CI 閉環待 T14 |
+| 長任務／通用 Agentic | 有多輪、token 治理、持久暫停／續跑與總預算、PR／CI 修復流程 | 已有步驟／checkpoint、跨代理 DAG、lease 與保守副作用恢復；品質 benchmark 待 T21 |
 | 完成度驗證／通用 Agentic | 已有驗收契約、結構化結果、Critic loop 與來源事件 | 補獨立 Reviewer／結果收斂及端到端品質評測；僅以通過的明確檢查作為驗收範圍 |
 | 通訊／互動 | 多平台 adapters、WebSocket 協定、IDE 原型 | WebSocket 已串接隔離 runtime 與工具／批准事件；附件／可靠事件已持久化；尚需執行 checkpoint 及完整 UI |
 | 記憶／個人化 | 本專案已有完整度較高的本機記憶維護與稽核模組 | 已補租戶／專案隔離，仍需檢索品質測試及版本治理；不推論 Codex 缺少記憶能力 |
@@ -527,3 +528,28 @@ Coder 只有 frozen acceptance checks 通過才进入 review_pending；獨立 Re
 安全 checkpoint 可恢復且舊 lease 被隔離；tool_started／skill_started 不自動重播。`/agents <root_task> list` 列狀態，`cancel <agent_id>` 取消。Admin 可用 `answer <agent_id> <回答>` 回覆暫停，或 `resolve <agent_id> <tool_call_id> <觀察結果>` 保存已查核結果後續跑。合併／準備中斷無工具結果可補時，先人工檢查父內容與 worktree，待 lease 結束，用 `abandon <agent_id> <查核紀錄>` 結束舊節點，再建立 follow-up；不重播未知效果。取消不留執行程序，但會保留 worktree／證據供查核與 T12 封存。
 
 舊 daemon JSON 狀態不自動遷移，需人工查核後建立新節點。模型 Reviewer 的品質仍需 T21 benchmark；本機測試使用離線 SDK fixture 驅動真實工作程序、Git worktree 與取消流程，不能據此宣稱外部模型或平台已驗證。完整 Docker／Chromium 回歸為 510 passed、1 skipped（外部 provider）、17 subtests passed；最後快照路徑補強的模組重驗另記錄於 `papers/todo.md`。
+
+## Patch／PR／CI 審查閉環（T14）
+
+`prepare_project_patch(changes)` 接受 `path`、`before_sha256`、`content`，保存不可變提案並回傳完整 diff；建立檔案的前置雜湊為 null，刪除的 content 為 null。`apply_project_patch(patch_id)` 先核對所有檔案，再逐檔套用；過期內容拒絕，失敗只補償仍符合自身寫入的檔案，保留同時發生的人類修改。已套用提案不重播；程序退出後留下 applying 或 needs_resolution 時須人工檢查。支援 UTF-8 普通檔案，拒絕 symlink／junction、越界及 `.git`；每提案 32 檔、單檔 8 MiB、原／新內容合計 16 MiB、diff 2 MiB。多檔套用不是全域原子交易；建議使用 T12 task worktree。範例見 `agent_execution/examples/project_patch.json`。
+
+平台部署設定由 `AGENT_GIT_PROVIDER_CONFIG` JSON 提供，範例見 `agent_execution/examples/git_provider.json`。GitHub 使用 HTTPS API、`OWNER/REPOSITORY`、`GITHUB_TOKEN`；GitLab 使用 API v4 URL、namespace/project、`GITLAB_TOKEN`。`token_env` 可改用其他環境變數名稱；token 不存入提案。Git 原生 push 另外使用主機已配置的 credential helper／SSH，remote URL 不可嵌入 HTTP 帳密。`remote_url` 必須吻合 repository 的指定 remote；`base_ref` 必須是已取得的基底 commit/ref，服務不自動 fetch。必要 CI 名稱使用 GitHub `check:名稱`／`status:名稱` 或 GitLab `job:名稱`，`required_reviewers` 設定審查帳號，兩者均須非空。
+
+操作順序：
+
+1. 完成 patch、測試與選檔 commit，在乾淨 worktree 呼叫 `project_delivery(action="prepare", files=[...], branch="codex/...", title="...", body="...")`。會重新執行 T10 frozen acceptance；程式碼異動必須有實際通過的 tests check。files 必須涵蓋基底至 HEAD 的全部新 commit 所改過的檔案，包含後來刪除或還原的內容；最多 256 檔／256 個 commit。回傳 plan_id、SHA、最終 diff、history_diff 與驗收證據，便於審查完整發布範圍。
+2. `action="publish", plan_id="..."` 產生批准請求。人類 `/approve <approval_id>` 後，以相同參數及 approval_id 執行；批准綁定身份、session、project、task、提案 digest 與 SHA，僅可用一次。只 push 確切 SHA 到指定 codex/ 分支，使用 lease 防止覆蓋外部變動，並停用 pre-push hook；接著建立 GitHub PR／GitLab MR。
+3. `action="inspect"` 查詢當前 SHA 的 CI 與 review findings（檔案、行號、原始 comment／重現說明）。失敗、缺少必要 CI、未批准審查或過期 head 均不 ready。修復後 commit，使用 `action="prepare", previous_id="舊 plan_id", ...`，保存既有 PR、原始驗收與 feedback；重新批准 publish，再查 CI。`reproduction` 是審查者提供的內容，系統不宣稱已實際重現。
+4. ready 後 `action="merge"` 另需新的人類批准；執行前再次查詢 head、CI 與 review，再以確切 SHA 請求 squash merge。只有平台回傳明確合併 commit 才產生 `verified_delivery=true` 摘要；published、ready 或單純工具成功均不等同完整交付。摘要含 PR URL、head／merge SHA、本機測試、CI 與審查證據。
+
+GitHub 審查要求當前 SHA 的 APPROVED；REST review comments 沒有 thread resolved 欄位，因此採「同一作者在 comment 更新後對當前 SHA 明確批准」作為 finding 已確認的條件。GitLab 要求 resolved DiffNote、指定 reviewer、approvals_left=0、穩定的 approval 狀態及專案 `reset_approvals_on_push=true`；不支援該 approvals API 的方案／權限會拒絕合併。尚不支援跨 fork PR／MR。平台 branch protection 仍須由管理者設定，以執行伺服器端的原子合併門檻；本機查詢與 merge API 之間並非同一交易。
+
+Patch 套用與 plan 操作必須留在原 task／workspace；等待人類審查或批准時，Agent 應使用 T08 `ask_user` 暫停該 task，批准後回答待處理問題以續跑。一般新請求會建立另一個 task，不能直接套用舊提案；若原 task 已結束，須在新 task 的工作目錄重新準備。repair 的 previous_id 可讀同 owner 的舊 plan，但仍要求原發布 head 是新 commit 的祖先。
+
+發布／合併發生逾時、取消或不明結果時保存 needs_reconciliation，不自動重試寫入。`action="reconcile"` 只讀 API 與 remote，避免重複 PR／push；不明合併即使查到已合併，也只標 merged_unverified。人類 `/delivery <artifact_id> status` 可跨 task 查自己的提案；`/delivery <artifact_id> abandon <查核說明>` 限 admin，需距最後操作 180 秒並先檢查尚在執行的 worker，不回放或清除本機／遠端成果。提案保存於 workspace 外的 TaskStore，限制 10000 筆／64 MiB，達上限拒絕新增，保留與清理需人工管理。
+
+API 每次操作最多 32 請求／30 秒，單請求最多 10 秒、回應 2 MiB，最多 10 頁；拒絕 redirect、HTML 登入頁及不完整 checks，不將錯誤 body/token 寫入診斷。HTTP loopback 僅供明確啟用的本機測試。協作 Coder 可用上述工具，Planner／Reviewer 不取得發布／合併工具。
+
+實作依據：[GitHub Pull Requests](https://docs.github.com/en/rest/pulls/pulls)、[Checks](https://docs.github.com/en/rest/checks/runs)、[Reviews](https://docs.github.com/en/rest/pulls/reviews)、[GitLab Merge Requests](https://docs.gitlab.com/api/merge_requests/)、[Jobs](https://docs.gitlab.com/api/jobs/)、[Approvals](https://docs.gitlab.com/api/merge_request_approvals/)。測試使用真實 Git bare remote、localhost HTTP fixture 與實際 pytest；CI／review／合併 API 回應是 fixture，尚未對外部帳號建立或合併 PR／MR。
+
+最終完整回歸（2026-10-10，Docker／Chromium opt-in 開啟）：538 passed、1 skipped（外部 provider）、25 subtests passed，耗時 548.94 秒。新增 27 項 T14 測試，亦驗證 Windows Git metadata 路徑別名、空檔 diff、未知合併的 SHA 核對與慢速 HTTP 期限；package／tools 語法及 Git diff 檢查通過。

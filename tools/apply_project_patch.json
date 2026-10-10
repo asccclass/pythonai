@@ -1,0 +1,1 @@
+{"type":"function","function":{"name":"apply_project_patch","description":"Apply a prepared multi-file patch only if every original file digest still matches. Interrupted patches require human inspection and cannot be automatically replayed.","parameters":{"type":"object","properties":{"patch_id":{"type":"string"}},"required":["patch_id"]}}}
