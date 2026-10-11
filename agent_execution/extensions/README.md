@@ -78,3 +78,11 @@ under the intended owner. Real provider login/consent is not proven by fixtures.
 Protocol references: [MCP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports),
 [authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization),
 [JSON Schema validator](https://pypi.org/project/jsonschema/).
+
+Authorization endpoint query parameters supplied by the issuer are preserved.
+Collision with client-owned response_type/client_id/redirect_uri/state/PKCE/
+resource/scope parameters (including percent-encoded keys and blank values) is
+rejected before persisting pending state; existing grants are untouched.
+Query parsing admits at most 32 fields. This prevents ambiguous authorization
+URLs while retaining provider-specific tenant/prompt parameters. See
+[RFC 6749 section 3.1](https://www.rfc-editor.org/rfc/rfc6749#section-3.1).

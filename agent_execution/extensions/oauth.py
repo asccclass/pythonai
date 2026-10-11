@@ -105,6 +105,12 @@ class OAuthClient:
         return metadata
     def begin(self):
         self.check_owner();metadata=self.discover();state=secrets.token_urlsafe(32);verifier=secrets.token_urlsafe(48)
+        url=metadata['authorization_endpoint']
+        endpoint_params=parse_qs(urlsplit(url).query,keep_blank_values=True,max_num_fields=32)
+        reserved={'response_type','client_id','redirect_uri','state','code_challenge',
+                  'code_challenge_method','resource','scope'}
+        if reserved.intersection(endpoint_params):
+            raise ValueError('Authorization endpoint contains client-controlled OAuth parameters')
         challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE');conn.execute('DELETE FROM oauth_states WHERE expires<?',(time.time(),))
@@ -113,7 +119,7 @@ class OAuthClient:
         params={'response_type':'code','client_id':self.client_id,'redirect_uri':self.redirect,'state':state,
             'code_challenge':challenge,'code_challenge_method':'S256','resource':self.resource}
         if metadata['requested_scope']:params['scope']=metadata['requested_scope']
-        url=metadata['authorization_endpoint'];separator='&' if urlsplit(url).query else '?'
+        separator='&' if urlsplit(url).query else '?'
         return {'authorization_url':url+separator+urlencode(params),'expires_in':600,'redirect_uri':self.redirect}
     def token_data(self,result,metadata,old=None):
         token=result.get('access_token');refresh=result.get('refresh_token',(old or {}).get('refresh_token'))

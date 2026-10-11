@@ -20,7 +20,7 @@ from agent_execution.tests.test_oauth_callback import free_port
 class OAuthTests(unittest.TestCase):
     def setUp(self):
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup);self.root=Path(temporary.name)
-        owner=self;self.posts=[];self.challenge=None;self.reject_token=False;self.issuer_mismatch=False;self.resource_mismatch=False;self.oauth_fallback=False
+        owner=self;self.posts=[];self.challenge=None;self.reject_token=False;self.issuer_mismatch=False;self.resource_mismatch=False;self.oauth_fallback=False;self.authorization_query=''
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
             def output(self,value,status=200):
@@ -32,7 +32,7 @@ class OAuthTests(unittest.TestCase):
                 elif self.path=='/metadata':self.output({'resource':base+('/wrong' if owner.resource_mismatch else '/mcp'),'authorization_servers':[base+'/tenant']})
                 elif self.path=='/.well-known/oauth-authorization-server/tenant' and owner.oauth_fallback:self.output({},404)
                 elif self.path in {'/.well-known/oauth-authorization-server/tenant','/.well-known/openid-configuration/tenant'}:
-                    self.output({'issuer':base+('/wrong' if owner.issuer_mismatch else '/tenant'),'authorization_endpoint':base+'/authorize',
+                    self.output({'issuer':base+('/wrong' if owner.issuer_mismatch else '/tenant'),'authorization_endpoint':base+'/authorize'+owner.authorization_query,
                         'token_endpoint':base+'/token','code_challenge_methods_supported':['S256'],'token_endpoint_auth_methods_supported':['none']})
                 else:self.output({},404)
             def do_POST(self):
@@ -79,6 +79,27 @@ class OAuthTests(unittest.TestCase):
         with closing(self.client.connect()) as conn,conn:conn.execute('UPDATE oauth_states SET expires=0')
         callback=self.config['redirect_uri']+'?'+urlencode({'state':params['state'][0],'code':'human-code'})
         with self.assertRaises(PermissionError):self.client.finish(callback)
+    def test_discovered_authorization_query_collisions_fail_before_state_creation(self):
+        self.authorize()
+        for name in ('response_type','client_id','redirect_uri','state','code_challenge',
+                'code_challenge_method','resource','scope','%73tate'):
+            with self.subTest(parameter=name):
+                self.authorization_query='?'+name+'='
+                with self.assertRaises(ValueError):self.client.begin()
+                with closing(self.client.connect()) as conn:
+                    self.assertEqual(conn.execute('SELECT count(*) FROM oauth_states').fetchone()[0],0)
+                self.assertEqual(self.client.access_token(),'access-private')
+        self.assertEqual(len(self.posts),1)
+    def test_non_oauth_endpoint_query_is_preserved_through_real_exchange(self):
+        self.authorization_query='?tenant=company%2Fdivision&prompt=consent'
+        begin=self.client.begin();url=begin['authorization_url']
+        self.assertIn('/authorize'+self.authorization_query+'&',url)
+        params=parse_qs(urlsplit(url).query)
+        self.assertEqual(params['tenant'],['company/division']);self.assertEqual(len(params['state']),1)
+        self.challenge=params['code_challenge'][0]
+        callback=self.config['redirect_uri']+'?'+urlencode({'state':params['state'][0],'code':'human-code'})
+        self.assertTrue(self.client.finish(callback)['authorized'])
+        self.assertEqual(self.posts[-1]['redirect_uri'],[self.config['redirect_uri']])
     def test_serialized_refresh_rotation_and_uncertain_refresh_not_replayed(self):
         self.authorize()
         with closing(self.client.connect()) as conn,conn:conn.execute('UPDATE oauth_tokens SET expires=0')

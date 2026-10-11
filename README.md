@@ -639,3 +639,5 @@ SQLite `backup` 保存一致的單庫 snapshot、雜湊及 schema 證據，`rest
 乾淨 requirements-ci 完整回歸：642 passed、7 skipped、41 subtests passed（652.13 秒）。opt-in 整合首輪 55 passed、1 failed（Docker availability probe）；引擎確認可連線後，該案例單獨重驗通過。224 個 tracked Python 檔案語法及 pip check 通過。詳細證據見 `agent_execution/operations/verification_2026-10-11.json`；正式平台送達、OAuth 帳號 consent、語音品質、production A/B 與 GitHub CI 仍待驗收。
 
 排程停止／失敗原因會置於觀察內容之前，避免長輸出讓需人工處理的原因被通知容量限制截掉；原始 run output 仍分開保留。
+
+OAuth discovery 的授權網址若已有 state／client_id／redirect_uri／PKCE／resource／scope 等 client 管理參數，會在建立待登入 state 前拒絕；issuer 的其他 query 參數維持原樣，既有授權不受影響。

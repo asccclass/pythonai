@@ -188,6 +188,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - OAuth 補齊：trusted issuer／protected resource／OAuth 與 OIDC discovery、S256 PKCE、一次性 owner state／精確 callback、resource indicator、refresh rotation 與未知結果停止；人工 CLI 登入，不重播 401 tools/call。原生本機 HTTP 7 案例通過（含併行 refresh）；仍待正式帳號 consent／callback round trip。採預先註冊 public client，未提供 dynamic registration／confidential client／callback listener。
   - OAuth Commit：`4e45c76`；MCP／OAuth 最終 18 passed、1 skipped（Docker opt-in，已於 T18 原先開啟驗證）。
   - 2026-10-11 補齊：CLI login 的實際 loopback callback listener；原始 IP／port／path、不替換 redirect URI、Host／constant-time state／單次 callback、請求容量／slow-client deadline／timeout／取消及 socket／新 state 清理，port 衝突先於 begin 拒絕。原生 CLI ＋真實本機 HTTP PKCE／token exchange 通過；相關 MCP／OAuth 24 passed、1 skipped（Docker opt-in）、6 subtests passed（29.90 秒）。正式帳號 consent 仍待驗收；listener 缺口已補，dynamic registration／confidential client 仍未提供。
+  - 2026-10-11 第二輪補強：授權 endpoint 的 client 管理參數衝突（含 percent-encoded key／空值）在建立 state 前拒絕，query 最多 32 欄；保留非 OAuth query 與既有 grant。真實本機 HTTP discovery／exchange 回歸 **26 passed、1 skipped（Docker opt-in）、15 subtests passed（18.48 秒）**。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。
