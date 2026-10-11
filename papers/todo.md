@@ -214,8 +214,17 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 相關驗證：trace／Hook／budget 29 passed，運維首輪 7 passed、最後原生 child trace／API 補強 9 passed；固定 suite 含真正 crash 子程序與案例內副作用斷言，外部模型成本未知。
   - 本機基線：啟用 Docker／Chromium 的完整回歸 622 passed、1 skipped（外部 provider）、30 subtests passed（777.14 秒）；Node 9 passed，VS Code 1.141.0 原生 Extension Host 14 案例通過。最後運維／CKIP lazy import 11 passed、5 subtests passed；離線 fixed suite 10/10、恢復案例 100%，報告保存 operations/benchmark_baseline.json。
   - CI 乾淨環境發現舊測試依賴未列齊，補 PyNaCl／Jedi／敘事分析套件，文字切分不載入 CKIP 模型；補齊後 story／index 36 passed、5 subtests passed。實際 provider 單案請求逾時（25.66 秒），未通過；不以本機 fixture 替代此驗收。
-  - 最終驗證（所有本次程式增修後）：乾淨 requirements-ci 環境完整回歸 **634 passed、7 skipped、35 subtests passed（482.16 秒）**；skip 為 Docker／Chromium opt-in 及外部 provider，另開啟 opt-in 的 Docker／Chromium／OCR／MCP／OAuth／通知整合 **40 passed（105.52 秒）**，無 skip。保留 1 項既有 AnyIO 棄用警告。Node 9、實際 VS Code Extension Host 14、tracked Python 語法 222 檔、Git diff／CI YAML／pip check 均通過。fixed suite 重驗 10/10、完成／恢復率 100%，無 tracked source 異動；證據摘要保存 `agent_execution/operations/verification_baseline.json`，原始 log 在忽略的 temp/。
+  - 最終驗證（2026-10-10 所有當次程式增修後）：乾淨 requirements-ci 環境完整回歸 **634 passed、7 skipped、35 subtests passed（482.16 秒）**；skip 為 Docker／Chromium opt-in 及外部 provider，另開啟 opt-in 的 Docker／Chromium／OCR／MCP／OAuth／通知整合 **40 passed（105.52 秒）**，無 skip。保留 1 項既有 AnyIO 棄用警告。Node 9、實際 VS Code Extension Host 14、tracked Python 語法 222 檔、Git diff／CI YAML／pip check 均通過。fixed suite 重驗 10/10、完成／恢復率 100%，無 tracked source 異動；證據摘要保存 `agent_execution/operations/verification_baseline.json`，原始 log 在忽略的 temp/。
   - 尚待正式驗收：GitHub CI job 未推送／執行、真實 provider／通訊平台／語音與品質 benchmark；保留未勾選。固定 suite 的成功率是 fixture acceptance，不能當正式模型品質或完整 OS 副作用監測。
+
+### 2026-10-11 本機增修與驗證
+
+- 依使用者「先完成本機增修與驗證」：不發送正式平台訊息、不進行帳號 consent、不啟用 production persona、不 push。T04／T06／T17–T21 的外部驗收條件維持未勾選。
+- T17：`b033659` 補強 watch 上限、最終重試失敗及錯誤變更通知；T18：`4a9c7ee` 補齊有界 loopback callback CLI 登入。
+- T19／T20：將既有實際 SDK 本機 HTTP 語音契約／取消，以及人工批准 rollback／拒絕未審核版本納入固定驗收；語音品質、裝置播放與 production A/B 仍待正式驗收。
+- T21：固定 suite 由 10 項擴充為 15 項，新增 watch 上限、原生 OAuth CLI callback／PKCE、slow-client deadline、語音 SDK 契約、人工審核 rollback。固定 suite **15/15**，完成／恢復案例成功率 100%，無 tracked source 異動；不代表外部模型品質或完整 OS 副作用監測，provider 費用未測量。
+- 乾淨 requirements-ci 完整回歸 **642 passed、7 skipped、41 subtests passed（652.13 秒）**；保留既有 AnyIO 棄用警告。opt-in 整合首輪 **55 passed、1 failed、6 subtests passed（127.01 秒）**，失敗為 Docker availability probe 拒絕執行，確認引擎可連線後單案重驗 **1 passed（16.20 秒）**；實際 Chromium／Tesseract／Docker 與本機 HTTP／SDK workers 已驗證。運維 **9 passed、5 subtests passed**，tracked Python 語法 **224 檔**與乾淨環境 pip check 通過。
+- 證據：`agent_execution/operations/benchmark_baseline.json`、`agent_execution/operations/verification_2026-10-11.json`；上一輪日期基線保留於 `verification_baseline.json`。
 
 ### 下一輪正式驗收條件
 

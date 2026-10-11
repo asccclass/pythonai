@@ -8,5 +8,10 @@
   {"id":"atomic-schedule","test":"agent_execution.tests.test_scheduling.SchedulingTests.test_atomic_claim_and_stale_due_snapshot","layer":"SQLite concurrency"},
   {"id":"watch-notification-stop","test":"agent_execution.tests.test_scheduling.SchedulingTests.test_watch_silence_change_completion_and_stop","layer":"offline observation"},
   {"id":"mcp-exact-route","test":"agent_execution.tests.test_extensions.MCPRoutingTests.test_underscore_collisions_have_exact_routes_and_validate_results","layer":"offline MCP"},
-  {"id":"memory-quality","test":"agent_execution.tests.test_improvement.ImprovementTests.test_retrieval_excludes_conflicts_expired_persona_and_marks_external_data","layer":"native SQLite + local embedding"}
+  {"id":"memory-quality","test":"agent_execution.tests.test_improvement.ImprovementTests.test_retrieval_excludes_conflicts_expired_persona_and_marks_external_data","layer":"native SQLite + local embedding"},
+  {"id":"watch-run-limit","test":"agent_execution.tests.test_scheduling.SchedulingTests.test_watch_run_limit_notifies_even_when_observation_is_unchanged","layer":"SQLite terminal notification"},
+  {"id":"oauth-native-callback","test":"agent_execution.tests.test_oauth.OAuthTests.test_real_cli_listener_pkce_exchange_does_not_print_code_or_tokens","layer":"native CLI + local HTTP"},
+  {"id":"oauth-slow-callback","test":"agent_execution.tests.test_oauth_callback.CallbackTests.test_slow_partial_request_does_not_block_valid_callback","layer":"local HTTP failure injection"},
+  {"id":"audio-sdk-contract","test":"agent_execution.tests.test_media.AudioTests.test_real_sdk_http_transcription_speech_and_cancelled_worker","layer":"native SDK + local HTTP"},
+  {"id":"reviewed-persona-rollback","test":"agent_execution.tests.test_improvement.ImprovementTests.test_rollback_is_fresh_human_approval_and_never_enables_unreviewed_version","layer":"SQLite human review fixture"}
 ]

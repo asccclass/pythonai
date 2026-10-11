@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "suite_sha256": "6290ad0cdc03f0ad13eb75e1f106e5093c02662c295b6352af4c93b53e0f3724",
+  "suite_sha256": "4c7f6ad1a4399b708c97137283c1b805d07692b097a108dfcfe4178d2a85d679",
   "layer": "offline/native fixtures; no real provider/platform",
   "passed": true,
-  "completed_cases": 10,
-  "case_count": 10,
+  "completed_cases": 15,
+  "case_count": 15,
   "completion_rate": 1.0,
   "recovery_success_rate": 1.0,
-  "elapsed": 14.625,
+  "elapsed": 44.0,
   "provider_cost_usd": null,
   "provider_cost_note": "No external provider called; billing/model quality not measured",
   "cases": [
@@ -16,7 +16,7 @@
       "test": "agent_execution.tests.test_process.ProcessTests.test_native_success_and_utf8_output",
       "layer": "native",
       "passed": true,
-      "elapsed": 0.31200000003445894,
+      "elapsed": 0.6720000000204891,
       "failure_count": 0,
       "skipped": 0
     },
@@ -25,7 +25,7 @@
       "test": "agent_execution.tests.test_process.ProcessTests.test_native_cancel_propagates_from_execution_context",
       "layer": "native",
       "passed": true,
-      "elapsed": 0.5940000000409782,
+      "elapsed": 0.875,
       "failure_count": 0,
       "skipped": 0
     },
@@ -34,7 +34,7 @@
       "test": "agent_execution.tests.test_results.ResultTests.test_acceptance_rejects_path_escape_and_successful_prose_is_not_verification",
       "layer": "offline acceptance",
       "passed": true,
-      "elapsed": 2.280999999959022,
+      "elapsed": 6.077999999979511,
       "failure_count": 0,
       "skipped": 0
     },
@@ -43,7 +43,7 @@
       "test": "agent_execution.tests.test_results.ResultTests.test_skill_nonzero_exit_stops_following_side_effect",
       "layer": "native Skill",
       "passed": true,
-      "elapsed": 0.1720000000204891,
+      "elapsed": 0.18700000003445894,
       "failure_count": 0,
       "skipped": 0
     },
@@ -53,7 +53,7 @@
       "layer": "native + offline SDK",
       "recovery": true,
       "passed": true,
-      "elapsed": 9.594000000040978,
+      "elapsed": 19.42200000002049,
       "failure_count": 0,
       "skipped": 0
     },
@@ -63,7 +63,7 @@
       "layer": "SQLite failure injection",
       "recovery": true,
       "passed": true,
-      "elapsed": 0.3589999999385327,
+      "elapsed": 0.8279999999795109,
       "failure_count": 0,
       "skipped": 0
     },
@@ -72,7 +72,7 @@
       "test": "agent_execution.tests.test_scheduling.SchedulingTests.test_atomic_claim_and_stale_due_snapshot",
       "layer": "SQLite concurrency",
       "passed": true,
-      "elapsed": 0.40700000000651926,
+      "elapsed": 0.7970000000204891,
       "failure_count": 0,
       "skipped": 0
     },
@@ -81,7 +81,7 @@
       "test": "agent_execution.tests.test_scheduling.SchedulingTests.test_watch_silence_change_completion_and_stop",
       "layer": "offline observation",
       "passed": true,
-      "elapsed": 0.5309999999590218,
+      "elapsed": 1.172000000020489,
       "failure_count": 0,
       "skipped": 0
     },
@@ -90,7 +90,7 @@
       "test": "agent_execution.tests.test_extensions.MCPRoutingTests.test_underscore_collisions_have_exact_routes_and_validate_results",
       "layer": "offline MCP",
       "passed": true,
-      "elapsed": 0.03100000007543713,
+      "elapsed": 0.030999999959021807,
       "failure_count": 0,
       "skipped": 0
     },
@@ -99,11 +99,57 @@
       "test": "agent_execution.tests.test_improvement.ImprovementTests.test_retrieval_excludes_conflicts_expired_persona_and_marks_external_data",
       "layer": "native SQLite + local embedding",
       "passed": true,
-      "elapsed": 0.34399999992456287,
+      "elapsed": 0.7970000000204891,
+      "failure_count": 0,
+      "skipped": 0
+    },
+    {
+      "id": "watch-run-limit",
+      "test": "agent_execution.tests.test_scheduling.SchedulingTests.test_watch_run_limit_notifies_even_when_observation_is_unchanged",
+      "layer": "SQLite terminal notification",
+      "passed": true,
+      "elapsed": 0.890999999945052,
+      "failure_count": 0,
+      "skipped": 0
+    },
+    {
+      "id": "oauth-native-callback",
+      "test": "agent_execution.tests.test_oauth.OAuthTests.test_real_cli_listener_pkce_exchange_does_not_print_code_or_tokens",
+      "layer": "native CLI + local HTTP",
+      "passed": true,
+      "elapsed": 2.7030000000959262,
+      "failure_count": 0,
+      "skipped": 0
+    },
+    {
+      "id": "oauth-slow-callback",
+      "test": "agent_execution.tests.test_oauth_callback.CallbackTests.test_slow_partial_request_does_not_block_valid_callback",
+      "layer": "local HTTP failure injection",
+      "passed": true,
+      "elapsed": 1.0,
+      "failure_count": 0,
+      "skipped": 0
+    },
+    {
+      "id": "audio-sdk-contract",
+      "test": "agent_execution.tests.test_media.AudioTests.test_real_sdk_http_transcription_speech_and_cancelled_worker",
+      "layer": "native SDK + local HTTP",
+      "passed": true,
+      "elapsed": 6.061999999918044,
+      "failure_count": 0,
+      "skipped": 0
+    },
+    {
+      "id": "reviewed-persona-rollback",
+      "test": "agent_execution.tests.test_improvement.ImprovementTests.test_rollback_is_fresh_human_approval_and_never_enables_unreviewed_version",
+      "layer": "SQLite human review fixture",
+      "passed": true,
+      "elapsed": 2.48499999998603,
       "failure_count": 0,
       "skipped": 0
     }
   ],
   "unexpected_tracked_source_changes": 0,
-  "side_effect_scope": "tracked repository bytes; other effects are guarded by individual case assertions, not a global OS monitor"
+  "side_effect_scope": "tracked repository bytes; other effects are guarded by individual case assertions, not a global OS monitor",
+  "date": "2026-10-11"
 }

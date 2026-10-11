@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-11",
+  "scope": "Local-only T17 terminal notifications, T18 loopback OAuth callback, T21 expanded acceptance suite",
+  "implementation_commits": [
+    "b033659",
+    "4a9c7ee"
+  ],
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "command": "python -m pytest -q",
+    "provider": "offline fixture; Docker/browser/provider opt-ins disabled",
+    "passed": 642,
+    "skipped": 7,
+    "subtests_passed": 41,
+    "seconds": 652.13,
+    "warning": "existing AnyIO BlockingPortal deprecation"
+  },
+  "native_integration": {
+    "command": "python -m pytest agent_execution/tests/test_extensions.py agent_execution/tests/test_oauth.py agent_execution/tests/test_oauth_callback.py agent_execution/tests/test_media.py agent_execution/tests/test_scheduling.py agent_execution/tests/test_schedule_notifications.py -q",
+    "passed": 55,
+    "failed": 1,
+    "subtests_passed": 6,
+    "seconds": 127.01,
+    "first_failure": "Docker availability probe rejected sandbox setup",
+    "retry": {
+      "test": "ExtensionTests.test_real_docker_test_gate_and_failure",
+      "passed": 1,
+      "seconds": 16.2
+    },
+    "scope": "actual Chromium/Tesseract and Docker retry; local HTTP/SDK/native worker fixtures; no external recipient or provider"
+  },
+  "operations_tests": {
+    "passed": 9,
+    "subtests_passed": 5,
+    "seconds": 53.88
+  },
+  "syntax": {
+    "tracked_python_files": 224,
+    "passed": true
+  },
+  "pip_check": {
+    "runtime": "clean requirements-ci",
+    "passed": true
+  },
+  "fixed_benchmark": {
+    "cases": 15,
+    "completed_cases": 15,
+    "suite_sha256": "4c7f6ad1a4399b708c97137283c1b805d07692b097a108dfcfe4178d2a85d679",
+    "completion_rate": 1.0,
+    "recovery_success_rate": 1.0,
+    "unexpected_tracked_source_changes": 0,
+    "seconds": 44.0,
+    "provider_cost_usd": null,
+    "quality_scope": "curated offline/native acceptance fixtures"
+  },
+  "pending": [
+    "real platform delivery",
+    "real OAuth account consent",
+    "real STT/TTS quality and device playback",
+    "production persona/Skill quality A/B",
+    "GitHub CI execution"
+  ],
+  "user_scope": "local implementation and verification only; no external messages, persona activation or push",
+  "raw_logs": "ignored temp/todo-20261011-*.log and temp/t21-*"
+}

@@ -44,10 +44,11 @@ backup/changed DB for review; it does not overwrite possible concurrent edits.
 limits: 32 DBs, 256 MiB each, backup deadline 10 seconds/DB. Browser profile files
 and arbitrary workspace artifacts are not included in this SQLite backup helper.
 
-suite.json defines ten fixed acceptance/failure-injection scenarios: native UTF-8/
+suite.json defines fifteen fixed acceptance/failure-injection scenarios: native UTF-8/
 cancel, false completion, failed Skill write prevention, crash checkpoint recovery,
 uncertain scheduled writes, concurrency, notification stopping, exact MCP routing
-and memory quality. Benchmark executes a 120 second private worker and reports
+and memory quality, exhausted-watch notifications, loopback OAuth CLI/token exchange,
+slow callback clients, SDK speech contracts and reviewed persona rollback. Benchmark executes a 120 second private worker and reports
 completion/recovery rates, case latency/failures, tracked-source changes and unknown
 external cost. Local fixtures are labeled and must not be represented as real
 provider success or model quality. Case assertions verify selected effects; this
@@ -61,4 +62,4 @@ real provider jobs. requirements-ci.txt is a minimal test runtime; local neural
 classification is mocked. CI configuration itself has not run on GitHub until pushed.
 The story text loader imports its optional CKIP runtime only when starting neural
 analysis; offline text splitting never requires downloading a neural model.
-benchmark_baseline.json records the local ten-case fixture report, not provider quality.
+benchmark_baseline.json records the local fifteen-case fixture report, not provider quality.

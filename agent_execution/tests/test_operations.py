@@ -87,3 +87,8 @@ class OperationsTests(unittest.TestCase):
         report=run_benchmark();self.assertTrue(report['passed'],report)
         self.assertEqual(report['completion_rate'],1);self.assertEqual(report['recovery_success_rate'],1)
         self.assertEqual(report['unexpected_tracked_source_changes'],0);self.assertIsNone(report['provider_cost_usd'])
+        ids=[case['id'] for case in report['cases']]
+        self.assertEqual(len(ids),len(set(ids)))
+        self.assertTrue({'watch-run-limit','oauth-native-callback','oauth-slow-callback',
+            'audio-sdk-contract','reviewed-persona-rollback'}.issubset(ids),ids)
+        self.assertEqual(report['completed_cases'],report['case_count'])

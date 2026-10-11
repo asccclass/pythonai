@@ -39,7 +39,7 @@ PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Age
 | Patch／PR／CI | 多檔內容雜湊驗證、diff 預覽、GitHub PR／GitLab MR、確切 SHA 發布、CI／審查門檻、同 PR 修復與交付摘要 | 發布／合併各需一次性批准；平台 API 以本機 fixture 驗證，外部帳號尚未實測 | `agent_execution/patches.py`, `agent_execution/git_delivery.py`, `agent_execution/git_provider.py`, `tools/project_delivery.py` |
 | IDE 整合與任務審查 | VS Code 提案 diff、明確單次套用／undo、Ghost Text；Dashboard 計畫／工具／驗收／批准／artifact | 已實作 T16；Token／角色／會話隔離、UTF-8 串流完整性與取消、文件版本檢查；跨通道身份連結與外部 provider 仍待驗證 | `ide_server.py`, `vscode-extension/` |
 | 可控改善／記憶品質 | Doctor stage、owner persona／Skill 版本、來源／矛盾／TTL、retrieval 評測、固定案例 A/B／核准／撤回 | 改善且零回歸／非預期副作用才允許批准；未啟用 production persona，較廣 provider 品質仍待驗收 | `skill_doctor.py`, `agent_execution/improvement/`, `retrieval.py` |
-| 觀測與運維 | owner task／episode／node trace、token／費用／latency／retry、redaction、readiness／doctor、SQLite backup／restore／migration、fixed benchmark／分層 CI | 十項本機失敗案例基準；未知費率不當零成本；備份驗證後還原新目錄；GitHub CI 與正式服務尚待執行 | `observability.py`, `agent_execution/operations/`, `.github/workflows/verification.yml` |
+| 觀測與運維 | owner task／episode／node trace、token／費用／latency／retry、redaction、readiness／doctor、SQLite backup／restore／migration、fixed benchmark／分層 CI | 十五項本機失敗案例基準；未知費率不當零成本；備份驗證後還原新目錄；GitHub CI 與正式服務尚待執行 | `observability.py`, `agent_execution/operations/`, `.github/workflows/verification.yml` |
 
 附帶資源包括 `skills/story/` 的敘事分析／motion 程式與測試，以及 `skills/security_audit/` 的安全審查指引及 Node 報告驗證器。它們是個別工作流程或應用；目錄存在不表示全部已註冊為可執行 Skill。`patch*.py`、`fix*.py`、`drill.py`、`demo_scenario.py` 等維護／示範腳本也不視為 Agent 正式入口。
 
@@ -626,8 +626,14 @@ Skill Doctor 只保存 owner 隔離的 persona／Skill 建議，不再透過 `--
 
 本次最終驗證：乾淨測試環境完整回歸 634 passed、7 skipped、35 subtests passed；另開啟 Docker／Chromium 的相關整合 40 passed、無 skip，Node 9 及實際 VS Code Extension Host 14 案例通過。語法檢查 222 個 tracked Python 檔、CI YAML、pip check 與 Git diff 檢查通過；詳細證據及外部限制見 `agent_execution/operations/verification_baseline.json` 與 `papers/todo.md`。
 
-`python -m agent_execution.operations doctor|readiness|traces|syntax|benchmark` 提供依賴診斷、storage readiness、owner 範圍 trace 與十項固定任務／失敗注入評測。Task／tool／model／retry／audio 保留 trace、父 span、task、episode 與子代理 node 關聯；token／費用採 T09 保守預算記帳，未知費率明確標記，不能當成 provider 帳單。Admin API `/api/ops/readiness`、`/api/ops/traces` 受既有身份／專案／會話限制。
+`python -m agent_execution.operations doctor|readiness|traces|syntax|benchmark` 提供依賴診斷、storage readiness、owner 範圍 trace 與十五項固定任務／失敗注入評測。Task／tool／model／retry／audio 保留 trace、父 span、task、episode 與子代理 node 關聯；token／費用採 T09 保守預算記帳，未知費率明確標記，不能當成 provider 帳單。Admin API `/api/ops/readiness`、`/api/ops/traces` 受既有身份／專案／會話限制。
 
 SQLite `backup` 保存一致的單庫 snapshot、雜湊及 schema 證據，`restore` 只還原至新目錄；跨資料庫備份需先停止 workers。`migrate --offline` 先備份再使用正式 store migration。稽核／trace 與觀測 CLI 進行去密；原始對話與權威 checkpoint 仍是私有資料。操作與限制见 `agent_execution/operations/README.md`。
 
 正式 pytest 已設定 testpaths，不再收集 temp 舊實驗；維護腳本含既有 `patch_server.py` 的語法檢查納入 CI。GitHub workflow 分 Windows unit/native、Docker／Chromium、VS Code Host 與手動啟用外部 provider；本機結果與未執行的遠端 CI 分開記錄於 `papers/todo.md`。
+
+### 2026-10-11 本機增修驗證
+
+排程補齊 watch 上限／重試耗盡與錯誤變更通知；OAuth CLI 提供有界、可取消的 loopback callback 登入。固定驗收擴充為 15 項，涵蓋 OAuth 原生 CLI／PKCE、slow-client、語音 SDK 契約及人工審核回滾；全部通過，provider 品質與費用未測量。
+
+乾淨 requirements-ci 完整回歸：642 passed、7 skipped、41 subtests passed（652.13 秒）。opt-in 整合首輪 55 passed、1 failed（Docker availability probe）；引擎確認可連線後，該案例單獨重驗通過。224 個 tracked Python 檔案語法及 pip check 通過。詳細證據見 `agent_execution/operations/verification_2026-10-11.json`；正式平台送達、OAuth 帳號 consent、語音品質、production A/B 與 GitHub CI 仍待驗收。
