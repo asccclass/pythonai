@@ -178,13 +178,23 @@ class SchedulerStore:
             conn.execute('BEGIN IMMEDIATE')
             if not conn.execute('SELECT 1 FROM scheduled_job_locks WHERE job_id=? AND locked_by=? AND expires_at>?',(job['id'],token,time.time())).fetchone():return False
             current=dict(conn.execute('SELECT * FROM scheduled_jobs WHERE id=?',(job['id'],)).fetchone())
-            text=output[:65536];digest=hashlib.sha256((state+'\n'+text).encode()).hexdigest()
+            text=output[:65536]
             count=current['run_count']+1;retry=current['retry_count']
-            waiting=state=='waiting';safe_retry=current['job_type']=='watch' and state=='failed' and retry<2
+            safe_retry=current['job_type']=='watch' and state=='failed' and retry<2
+            if current['job_type']=='watch':
+                if state=='failed' and not safe_retry:
+                    state='needs_input';error='Watch retry limit reached; inspect before rescheduling. '+error
+                elif count>=current['max_runs'] and (state=='waiting' or safe_retry):
+                    state='needs_input';error='Watch run limit reached without completion; inspect before rescheduling. '+error
+                    safe_retry=False
+            waiting=state=='waiting'
+            # Failures with new evidence and terminal limit transitions are meaningful.
+            evidence=text+('\n'+error[:1000] if state in {'failed','needs_input','uncertain'} else '')
+            digest=hashlib.sha256((state+'\n'+evidence).encode()).hexdigest()
             disabled=count>=current['max_runs'] or state in {'needs_input','uncertain','cancelled'} or (current['job_type']=='watch' and state=='completed') or (state=='failed' and not safe_retry)
             due=(datetime.fromtimestamp(time.time()+30*(retry+1),timezone.utc).isoformat() if safe_retry
                  else next_time(current['cron_expression'],current['timezone']))
-            if digest!=current['last_digest'] and (current['last_digest'] is not None or not waiting):self.notify(conn,current,state,text or error)
+            if digest!=current['last_digest'] and (current['last_digest'] is not None or not waiting):self.notify(conn,current,state,evidence.strip())
             history=(json.loads(current['history'])+[{'state':state,'summary':text[:4096]}])[-4:]
             conn.execute('UPDATE scheduled_jobs SET next_run_at=?,run_count=?,retry_count=?,last_digest=?,history=?,is_enabled=? WHERE id=?',
                 (due,count,retry+1 if safe_retry else 0,digest,json.dumps(history),int(current['is_enabled'] and not disabled),job['id']))

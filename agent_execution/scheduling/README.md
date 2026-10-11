@@ -15,6 +15,9 @@ Telegram/Discord/LINE notifications to the original conversation through its
 configured adapters, rechecking the original identity's admin role and sender
 allowlist. Local/API/WebSocket owners retain queryable notifications; there is no
 guessed cross-channel forwarding. Unconfigured adapters leave notifications pending.
+Watch run-limit exhaustion and final retry failure become needs_input and notify
+even when the last observation is unchanged. Failure digests include bounded
+error evidence; identical intermediate failures remain quiet.
 Each notification is atomically claimed once, with one bounded 1800-character
 message. Failures or a lost 60-second delivery claim become uncertain and are never
 automatically resent; operators inspect delivery/error_type with notifications.

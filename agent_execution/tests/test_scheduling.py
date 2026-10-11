@@ -64,6 +64,27 @@ class SchedulingTests(unittest.TestCase):
             with closing(self.store.connect()) as conn,conn:conn.execute("UPDATE scheduled_jobs SET next_run_at='2000-01-01T00:00:00+00:00'")
             current=self.store.get_due_jobs()[0];run=self.store.claim_due(current,'worker');self.store.complete(current,'worker',run,'failed','','timeout')
         self.assertFalse(self.store.get_due_jobs())
+        self.assertEqual(self.store.notifications()[0]['state'],'needs_input')
+        self.assertIn('retry limit',self.store.notifications()[0]['output'])
+    def test_watch_run_limit_notifies_even_when_observation_is_unchanged(self):
+        job=self.due('watch',{'prompt':'inspect'})
+        with closing(self.store.connect()) as conn,conn:conn.execute('UPDATE scheduled_jobs SET max_runs=2')
+        for _ in range(2):
+            with closing(self.store.connect()) as conn,conn:conn.execute("UPDATE scheduled_jobs SET next_run_at='2000-01-01T00:00:00+00:00'")
+            current=self.store.get_due_jobs()[0];run=self.store.claim_due(current,'worker')
+            self.store.complete(current,'worker',run,'waiting','unchanged observation')
+        self.assertFalse(self.store.get_due_jobs());notifications=self.store.notifications()
+        self.assertEqual(len(notifications),1);self.assertEqual(notifications[0]['state'],'needs_input')
+        self.assertIn('run limit',notifications[0]['output']);self.assertIn('unchanged observation',notifications[0]['output'])
+    def test_changed_failure_evidence_notifies_but_identical_retry_is_quiet(self):
+        job=self.due('watch',{'prompt':'inspect'})
+        for error in ['first failure','different failure','different failure']:
+            with closing(self.store.connect()) as conn,conn:conn.execute("UPDATE scheduled_jobs SET next_run_at='2000-01-01T00:00:00+00:00'")
+            current=self.store.get_due_jobs()[0];run=self.store.claim_due(current,'worker')
+            self.store.complete(current,'worker',run,'failed','',error)
+        notifications=self.store.notifications();self.assertEqual(len(notifications),3)
+        self.assertEqual(notifications[0]['state'],'needs_input')
+        self.assertEqual({row['output'] for row in notifications if row['state']=='failed'},{'first failure','different failure'})
     def test_owner_session_isolation_and_disable(self):
         job=self.due()
         with execution_scope(identity='other',session='other',project='other'):

@@ -592,6 +592,8 @@ T16 最終驗證（2026-10-10）：新增 11 項 Python 測試；最終 UI／API
 
 ## Agent／Skill 排程與追蹤（T17）
 
+Watch 未完成而達執行上限、或耗盡失敗重試時，會轉成 needs_input 並通知；相同觀察不會遮蔽停止事件。失敗去重包含有界錯誤證據，錯誤改變會顯示新通知。
+
 排程實作收攏於 `agent_execution/scheduling/`，支援 command、workspace Python script、Agent、Skill、唯讀 watch 及摘要維護。`schedule_cli.py add` 可選五欄 `--cron` 或 `--schedule "每天 09:30"`／`"每 5 分鐘"`，預設 `--timezone Asia/Taipei`；不明確的自然語句會拒絕。`--timeout` 限 1–300 秒，`--max-runs` 限 1–1000。`list`、`disable JOB_ID`、`notifications` 僅操作自身 source／identity／project／session 的工作；模型使用 `manage_schedule` 建立排程須先取得對應參數的一次性人工批准。
 
 Worker 使用 SQLite 原子領取、10 秒 lease 與 2 秒續租；舊執行者不能提交結果或清除新鎖。每次工作由有期限、可取消的原生子程序執行，恢復原會話與 workspace，重新查核遠端角色。錯過多個時間點合併為一次；未知寫入效果暫停待人工查核，唯讀 watch 最多重試兩次。舊遠端排程缺少可信會話資料時停用，不轉給本機身份。

@@ -174,6 +174,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 通知推送補齊：通訊服務接入原會話 Telegram／Discord／LINE adapter；現行角色／allowlist 再驗、原子 claim、單訊息容量、shutdown 停止新 claim；失敗／crash 不確定狀態不重送，手動 disable 取消待送。其他入口保留 owner 查詢，不推定跨平台收件人。
   - Telegram long polling 亦啟動 scheduler 並於 poll 後推送；通知儲存故障不終止主通訊 loop。補強相關案例包含真實 adapter contract／併行認領／不確定發送／角色撤銷／取消與兩入口生命週期。
   - 補強 Commit：`a775d0a`；相關 53 passed（22.25 秒）。
+  - 2026-10-11 補強：watch 執行上限／最終重試失敗轉 needs_input，未變觀察亦通知；失敗 digest 包含有界 error evidence，避免不同錯誤被當成同一狀態。排程／通知／舊 scheduler 30 passed（34.07 秒）；正式平台驗收依使用者指示保留待辦，不發送外部訊息。
   - 邊界／後續：正式平台實際送達及真實 provider 追蹤尚待驗收，因此保留未勾選；未向正式收件人發送測試訊息。
 
 - [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**
