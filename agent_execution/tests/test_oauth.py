@@ -14,6 +14,7 @@ from urllib.parse import parse_qs,urlsplit,urlencode
 from agent_execution.extensions.oauth import OAuthClient
 from agent_execution.extensions.remote import RemoteMCPClient
 from agent_execution.policy import execution_scope
+from agent_execution.tests.test_oauth_callback import free_port
 
 
 class OAuthTests(unittest.TestCase):
@@ -109,3 +110,31 @@ class OAuthTests(unittest.TestCase):
         for thread in threads:thread.join()
         self.assertFalse(errors);self.assertEqual(tokens,['access-private','access-private'])
         self.assertEqual(sum(p.get('grant_type')==['refresh_token'] for p in self.posts),1)
+    def test_real_cli_listener_pkce_exchange_does_not_print_code_or_tokens(self):
+        import subprocess
+        import sys
+        from urllib.request import urlopen
+        self.config['redirect_uri']=f'http://127.0.0.1:{free_port()}/callback'
+        config=self.root/'config.json';config.write_text(json.dumps({'url':self.base+'/mcp','oauth':self.config}))
+        process=subprocess.Popen([sys.executable,'-m','agent_execution.extensions.oauth_cli','login',str(config),'--timeout','5'],
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+        try:
+            begin=json.loads(process.stdout.readline());params=parse_qs(urlsplit(begin['authorization_url']).query)
+            self.challenge=params['code_challenge'][0]
+            callback=self.config['redirect_uri']+'?'+urlencode({'state':params['state'][0],'code':'private-human-code'})
+            with urlopen(callback,timeout=3) as response:self.assertEqual(response.status,200)
+            stdout,stderr=process.communicate(timeout=8)
+            self.assertEqual(process.returncode,0,stderr);self.assertTrue(json.loads(stdout)['authorized'])
+            for secret in ['private-human-code','access-private','rotated-private']:self.assertNotIn(secret,stdout+stderr)
+            self.assertEqual(self.posts[-1]['resource'],[self.base+'/mcp'])
+        finally:
+            if process.poll() is None:process.kill();process.communicate()
+        with closing(self.client.connect()) as conn:self.assertEqual(conn.execute('SELECT count(*) FROM oauth_states').fetchone()[0],0)
+    def test_cancelled_listener_cleans_only_new_state_without_revoking_grant(self):
+        from agent_execution.extensions.oauth_cli import login
+        self.config['redirect_uri']=f'http://127.0.0.1:{free_port()}/callback'
+        self.client=OAuthClient(self.base+'/mcp',self.config);self.addCleanup(self.client.close)
+        self.authorize()
+        with self.assertRaises(InterruptedError):login(self.client,timeout=1,emit=lambda text:None,check_cancelled=lambda:True)
+        self.assertEqual(self.client.access_token(),'access-private')
+        with closing(self.client.connect()) as conn:self.assertEqual(conn.execute('SELECT count(*) FROM oauth_states').fetchone()[0],0)

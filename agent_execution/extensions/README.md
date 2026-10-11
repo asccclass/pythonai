@@ -40,13 +40,28 @@ For interactive OAuth, configure oauth instead of token_env:
 ```
 Human CLI: `python -m agent_execution.extensions.oauth_cli begin server.json`.
 Open authorization_url, complete the provider login, then pass the resulting URL
-to `finish server.json --callback-url URL`. The redirect is validated exactly;
-this CLI does not start a callback listener. Configure a registered redirect you
-can inspect. `revoke server.json` removes local credentials; revoke grants with
+to `finish server.json --callback-url URL`. Alternatively use
+`python -m agent_execution.extensions.oauth_cli login server.json --timeout 120`
+to bind the registered loopback callback before advertising authorization_url;
+open that URL in your browser and the CLI completes token exchange automatically.
+Listener redirects must be HTTP with literal 127.0.0.1 or ::1, an explicit port
+and path. The URI is preserved exactly; no alternate port/origin is substituted.
+The manual begin/finish flow still supports other registered redirect URIs.
+`revoke server.json` removes local credentials; revoke grants with
 provider account controls too. No tokens/verifiers are printed. State lasts ten
 minutes; credentials are private SQLite at AGENT_MCP_OAUTH_DB (default
 LOCALAPPDATA/PythonAI/mcp-oauth.db), bounded 16 MiB, 100 pending states/1000 grants.
 Protect it with OS account permissions and include it in private backups.
+
+The callback listener verifies exact Host/path and constant-time state, accepts
+one GET code/error callback, rejects bodies/duplicate fields, and never logs or
+reflects code/token values. Requests are bounded 8 KiB/one second; waiting is
+1..300 seconds (default 120). Invalid requests do not consume state. Timeout,
+cancellation and normal exit close the socket and remove only that pending state,
+preserving an existing grant. Port conflicts fail before authorization creation.
+Local tests include a native CLI with real HTTP PKCE/token exchange; an external
+provider's user login/consent is still a separate acceptance step. Loopback design
+reference: [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.3).
 
 The trusted issuer must match protected resource metadata exactly. Resource
 metadata origins are bound to the MCP resource; authorization/token endpoints

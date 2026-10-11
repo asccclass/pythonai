@@ -14,6 +14,7 @@ from agent_execution.tests import test_media
 from agent_execution.tests import test_improvement
 from agent_execution.tests import test_operations
 from agent_execution.tests import test_oauth
+from agent_execution.tests import test_oauth_callback
 from agent_execution.tests import test_schedule_notifications
 
 
@@ -40,5 +41,6 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromModule(test_improvement))
     tests.addTests(loader.loadTestsFromModule(test_operations))
     tests.addTests(loader.loadTestsFromModule(test_oauth))
+    tests.addTests(loader.loadTestsFromModule(test_oauth_callback))
     tests.addTests(loader.loadTestsFromModule(test_schedule_notifications))
     return tests

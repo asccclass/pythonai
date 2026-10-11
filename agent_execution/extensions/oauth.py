@@ -169,4 +169,8 @@ class OAuthClient:
             conn.execute('DELETE FROM oauth_tokens WHERE owner=? AND key=?',(self.owner,self.key))
             conn.execute('DELETE FROM oauth_states WHERE owner=? AND key=?',(self.owner,self.key))
         return {'local_credentials_removed':True,'provider_revocation':'use provider account controls'}
+    def cancel_state(self,state):
+        self.check_owner()
+        with closing(self.connect()) as conn,conn:
+            conn.execute('DELETE FROM oauth_states WHERE state=? AND owner=? AND key=?',(state,self.owner,self.key))
     def close(self):self.http.close()

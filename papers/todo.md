@@ -186,6 +186,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema；正式 remote provider 驗收仍未完成，保留未勾選。激活需重啟刷新 schema。
   - OAuth 補齊：trusted issuer／protected resource／OAuth 與 OIDC discovery、S256 PKCE、一次性 owner state／精確 callback、resource indicator、refresh rotation 與未知結果停止；人工 CLI 登入，不重播 401 tools/call。原生本機 HTTP 7 案例通過（含併行 refresh）；仍待正式帳號 consent／callback round trip。採預先註冊 public client，未提供 dynamic registration／confidential client／callback listener。
   - OAuth Commit：`4e45c76`；MCP／OAuth 最終 18 passed、1 skipped（Docker opt-in，已於 T18 原先開啟驗證）。
+  - 2026-10-11 補齊：CLI login 的實際 loopback callback listener；原始 IP／port／path、不替換 redirect URI、Host／constant-time state／單次 callback、請求容量／slow-client deadline／timeout／取消及 socket／新 state 清理，port 衝突先於 begin 拒絕。原生 CLI ＋真實本機 HTTP PKCE／token exchange 通過；相關 MCP／OAuth 24 passed、1 skipped（Docker opt-in）、6 subtests passed（29.90 秒）。正式帳號 consent 仍待驗收；listener 缺口已補，dynamic registration／confidential client 仍未提供。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。
@@ -219,7 +220,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
 ### 下一輪正式驗收條件
 
 - T17：配置現行 admin identity／sender allowlist／正式 adapter，確認原會話的 quiet watch、完成／需人工通知及未知發送不重送；需明確指定測試收件人。
-- T18：正式 issuer 預先註冊 public client、精確 redirect URI；透過 OAuth CLI 完成真人 consent／callback，確認 remote initialize／tools／refresh。未配置 dynamic registration／confidential client 的 provider 不屬目前支援範圍。
+- T18：正式 issuer 預先註冊 public client、精確 redirect URI；透過 OAuth CLI login（HTTP loopback IP）或手動 begin／finish 完成真人 consent／callback，確認 remote initialize／tools／refresh。未配置 dynamic registration／confidential client 的 provider 不屬目前支援範圍。
 - T19：配置真正 STT／TTS 模型，以已標記語音驗證辨識品質和實際裝置播放；另外驗證目標外部網站登入及有權存取的文件。
 - T20：提供部署者信任的 AGENT_IMPROVEMENT_RUNNER／固定標記案例，以正常可用 provider 跑 A/B；保存品質差異，維持人工批准、撤回與 rollback gate。
 - T21：在獲授權的遠端發布流程執行分層 GitHub CI；provider 恢復可用後重跑 opt-in 測試。正式品質報告須保留非預期副作用／恢復／成本證據，不沿用 fixture 成功率。
