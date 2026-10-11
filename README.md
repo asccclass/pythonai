@@ -643,3 +643,7 @@ SQLite `backup` 保存一致的單庫 snapshot、雜湊及 schema 證據，`rest
 OAuth discovery 的授權網址若已有 state／client_id／redirect_uri／PKCE／resource／scope 等 client 管理參數，會在建立待登入 state 前拒絕；issuer 的其他 query 參數維持原樣，既有授權不受影響。
 
 第二輪補強後，乾淨 requirements-ci 完整回歸為 **645 passed、7 skipped、52 subtests passed（539.05 秒）**，包含 15 項固定驗收；224 檔 Python 語法、pip check 及 diff check 通過。詳細紀錄見 `agent_execution/operations/verification_2026-10-11_followup.json`。本轮未執行正式平台／外部 provider／遠端 CI 驗收。
+
+### 待辦完成標註（2026-10-11）
+
+`papers/todo.md` 已分別標註本機功能完成與正式驗收待辦。T04、T06、T17–T21 的本機實作已完成並有測試紀錄，各項增加 [x] 子項與 commit；主項目仍維持 [ ]，正式平台／provider／品質／遠端 CI 的 7 個任務驗收条件依序集中列出。本輪只核對與標註文件，沒有新增程式或重跑全套測試。T18 的 dynamic registration／confidential client 仍未支援，未標記為已實作。

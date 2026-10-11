@@ -1,8 +1,19 @@
 # PythonAI 功能差距與開發待辦
 
-盤點日期：2026-10-09。現有功能、實作來源與限制見 [README.md](../README.md)。本檔於本次新增；原有 `docs/todos.md` 與其他規劃文件保留。以下記錄功能差距及逐項實作／驗收結果；勾選代表完成該項本機驗收，外部驗收未通過的項目仍保留未勾選。不將已有 Hooks、記憶、Skills、MCP、排程與驗收重新列成未實作。
+盤點日期：2026-10-09。現有功能、實作來源與限制見 [README.md](../README.md)。本檔於本次新增；原有 `docs/todos.md` 與其他規劃文件保留。以下記錄功能差距及逐項實作／驗收結果。主項目勾選代表其列出的驗收已完成；主項目未勾選時，請查看「本機功能完成」子項與正式驗收清單，不能據此推定功能尚未實作。正式服務未驗收不標成通過。不將已有 Hooks、記憶、Skills、MCP、排程與驗收重新列成未實作。
 
 比較基準：Codex 的編碼、worktree、多代理、批准與排程工作流程；「Agentic Agent」為規劃、工具執行、驗收、持久狀態及自主續跑的通用架構，非特定產品。此分析不主張模型品質等同或優於 Codex，也不以文件宣稱代替外部端到端驗證。
+
+## 完成狀態（2026-10-11 核對）
+
+| 範圍 | 本機功能 | 正式驗收 |
+| --- | --- | --- |
+| T01–T03、T05、T07–T16 | 已完成，主項目 [x] | 依各項記載的驗收範圍與限制 |
+| T04、T06、T17–T21 | 已完成，各項新增「本機功能完成」[x] | 7 個任務保留主項目 [ ]，條件集中於文末正式驗收清單 |
+
+本轮依原始碼、既有 commit 與最新測試證據核對完成標註，未新增程式或重新執行全套測試。最近一次完整回歸為 **645 passed、7 skipped、52 subtests passed（539.05 秒）**，證據見 [第二輪驗證摘要](../agent_execution/operations/verification_2026-10-11_followup.json)。這是已記錄的本機結果，不代表正式平台或 provider 驗收。
+
+目前未找到現行支援範圍內尚未實作的 checklist 本機功能。T18 的 dynamic registration／confidential client 仍屬已記錄的未支援能力，尚未實作，也不納入 public-client OAuth 完成標註。後續依序處理文末正式驗收；沿用使用者「先完成本機增修與驗證」，不自行發送訊息、啟用 production persona 或 push。
 
 ## P0：執行政策、身份與資料隔離
 
@@ -31,6 +42,7 @@
   - 邊界：批准 SQLite 預設存 workspace 外；任意 host 程式與第三方 MCP 仍須視為受信任程式，應用層批准不能對抗使用者 OS 權限。API 租戶隔離待 T05；通訊批准測試使用 adapter stub，尚未真實平台 round trip。
 
 - [ ] **T04 — Webhook 驗證缺失時拒絕與平台回覆完整性**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：production webhook 驗證、timestamp／去重、Discord deferred／follow-up、LINE 回覆策略；commit `bcecff0`，相關平台契約 53 passed。正式帳號送達另列待辦。
   - 現況：未配置 Telegram／LINE secret 或 Discord public key 可接受請求；Discord 缺 PyNaCl 會略過驗章；Discord command 路徑尚需確認符合 interaction 回覆時限。
   - 工作：分開開發與對外模式，對外缺 secret／驗證依賴拒絕啟動或請求；補 timestamp／重放限制、Discord deferred response／follow-up 與 LINE 回覆策略。
   - 驗收：缺少或錯誤簽章、過期／重放請求不能入列；Discord／LINE 真實帳號 round trip 成功；平台依賴及配置寫入安裝文件。
@@ -50,6 +62,7 @@
 ## P1：真實 Agent 體驗與長任務可靠性
 
 - [ ] **T06 — WebSocket 接入真實 Agent 串流及任務控制**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：Agent 真實串流、工具／批准／驗收事件、取消與 owner-targeted fallback；commit `d8c6257`，SDK 本機 HTTP SSE／控制流程已有測試。正式 provider 與 fallback 送達另列待辦。
   - 現況：`brain_reply_stream` 是示範 echo，主 Agent 使用非串流 Chat Completions；Telegram fallback 僅 append 到清單。
   - 工作：/ws/v1 使用獨立 AgentRuntime，輸出模型 delta、工具開始／結果、驗收、批准及錯誤事件；實作真正平台 fallback 與 interrupt 傳遞。
   - 驗收：一個需要工具的請求可串流執行並回實際結果；中斷可停止模型／工具工作；fallback 真正送達；協定測試、真實 provider 測試分開紀錄。依賴 T02、T05。
@@ -161,10 +174,11 @@
 
 ## P3：自動化、整合、記憶與品質治理
 
-T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或品質驗收仍未完成。
+T17–T21 的本機功能增修已提交，並在各項內標註 [x]；主項目未勾選表示正式服務或品質驗收仍未完成。
 「現況」保留增修前基線，請依「實作／補齊／邊界」與最後驗證紀錄判斷下一步。
 
 - [ ] **T17 — Agent／Skill 排程與持續追蹤**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：Agent／Skill／script／watch、時區、lease／retry／停止條件、原會話通知；commit `99922f0`、`a775d0a`、`b033659`、`b1dde57`，最新相關 31 passed、2 subtests passed。
   - 現況：排程已有 command、maintenance.summary、SQLite 工作鎖，未實作 CLI help 提到的通用 script job。
   - 工作：新增 Agent／Skill job、自然語言排程、時區、會話 follow-up、停止條件、只在有意義變更通知；補 command timeout、鎖 lease、重啟／misfire 與 bounded retry。
   - 驗收：多入口同時啟動不重複執行；Asia/Taipei 排程時間正確；長工作／crash 不永久卡住；狀態未變保持安靜，完成或需人處理才通知。依賴 T01、T05、T08、T09。
@@ -179,6 +193,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 邊界／後續：正式平台實際送達及真實 provider 追蹤尚待驗收，因此保留未勾選；未向正式收件人發送測試訊息。
 
 - [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：trusted 工具／Skill 版本、Docker 測試／人工批准／rollback、remote MCP、預先註冊 public-client OAuth／loopback callback；commit `38f2eb9`、`4e45c76`、`4a9c7ee`、`503c580`，最新相關 26 passed、15 subtests passed、1 Docker opt-in skipped。
   - 現況：stdio MCP 與工具熱載入可用；動態 Python 模組直接載入；MCP 路由依工具名稱分割，需補 server 名含底線案例。
   - 工作：remote MCP transport／OAuth、timeout／重連／health、完整 schema 與結果驗證、明確工具到 server 映射；工具／Skill 安装、版本、來源、測試、核准啟用與 rollback。
   - 驗收：缺 server／網路斷線不阻塞其他工具；名稱碰撞／底線不誤路由；惡意 schema 或未通過測試的生成工具不能啟用。依賴 T01、T03、T10。
@@ -191,6 +206,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 2026-10-11 第二輪補強：授權 endpoint 的 client 管理參數衝突（含 percent-encoded key／空值）在建立 state 前拒絕，query 最多 32 欄；保留非 OAuth query 與既有 grant。真實本機 HTTP discovery／exchange 回歸 **26 passed、1 skipped（Docker opt-in）、15 subtests passed（18.48 秒）**。
 
 - [ ] **T19 — 持久瀏覽器、文件解析與語音**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：持久 browser／斷言／artifact、PDF／Office／OCR、真正 SDK STT／TTS 與音訊取消／隔離；commit `26eaed2`，Chromium／Tesseract 與 SDK 本機 HTTP 契約已有實測。正式品質與裝置驗收另列待辦。
   - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。
   - 工作：使用者隔離的持久 browser session、動作後斷言、下載 artifacts；PDF／Office 解析／OCR 與來源頁碼；真正 STT／TTS、音訊容量與取消。可分成三個獨立交付。
   - 驗收：多步登入／表單流程可續跑並驗證結果；PDF／Office 不以截斷 Base64 充作理解；語音可辨識及播放，重連／中斷不混流。依賴 T02、T05、T06、T07。
@@ -199,6 +215,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 驗證：相關 51 passed，實際 Chromium cookie 登入／續跑／異主隔離／assert／下載，原生 DOCX／PPTX／XLSX 中文、扫描 PDF OCR，本機 HTTP SDK 語音 contract／WAV／取消。正式外部語音品質、真實裝置播放與外部網站尚未驗收，保持未勾選。profile admission limits 不是硬磁碟配額；host browser／document parser 仍需部署層隔離。
 
 - [ ] **T20 — 記憶品質與可控自我改善**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：owner 提案、retrieval 評測、固定案例 A/B gate、人工批准／撤回／rollback 與可信 runner；commit `7629e7f`，正式 provider 品質另列待辦。
   - 現況：三類記憶、遺忘、背景更新與 Skill Doctor 已存在。
   - 工作：租戶／專案隔離、retrieval precision／recall 評測、來源信任與矛盾測試；Doctor persona／Skill 建議經版本審查、A/B 驗證、啟用及撤回，避免錯誤準則無限累積。
   - 驗收：跨使用者記憶不能注入；過期／矛盾資料可測試淘汰；新 persona 必須有可量測改善且可回復。依賴 T05、T09、T10。
@@ -207,6 +224,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - 驗證：相關最終 58 passed；adapter scope 補強重驗 6 passed。涵蓋真實原生 adapter、Doctor 不注入、owner／過期／矛盾／來源、評測回歸／副作用／baseline／批准／rollback。正式 provider persona／Skill A/B 與較廣標記資料集品質尚待驗收，保留未勾選；未啟用任何 production persona。
 
 - [ ] **T21 — 端到端評測、成本觀測與運維**
+  - [x] **本機功能完成（2026-10-11 核對標註）**：trace／費用與延遲、去密、readiness／doctor、備份還原／migration、15 項固定驗收與分層 CI 設定；commit `d4bc545`、`ea333c2`，遠端 CI 執行與正式品質另列待辦。
   - 現況：已有 unittest 與 CLI events／health；缺整體成功率基準及分散式 tracing。
   - 工作：task／episode／tool／子代理 trace ID、token／費用／延遲／重試統計、redaction、readiness；CI 測試層級、migration／備份還原、依賴 doctor；建立固定任務集與失敗注入。
   - 維護腳本：本次靜態掃描發現既有 `patch_server.py:1` 含字面 `\n` 而無法解析；確認用途後修復或移除過期腳本，將維護腳本語法檢查納入 CI，避免只跑 tests 而漏掉。
@@ -234,13 +252,15 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
 - 乾淨 requirements-ci 全套 **645 passed、7 skipped、52 subtests passed（539.05 秒）**；略過 Docker／Chromium opt-in 與正式 provider，保留既有 AnyIO 棄用警告。包含 15 項固定 fixture 驗收。tracked Python 語法 **224 檔**、pip check／diff check 通過。
 - 證據保存在 `agent_execution/operations/verification_2026-10-11_followup.json`。此前各輪基線保留；沒有重複宣稱上一輪 Docker／Chromium 結果為本輪實測。依使用者本機驗證範圍，正式服務、production 品質與遠端 CI 仍待驗收，未 push。
 
-### 下一輪正式驗收條件
+### 尚未完成的正式驗收（依任務順序）
 
-- T17：配置現行 admin identity／sender allowlist／正式 adapter，確認原會話的 quiet watch、完成／需人工通知及未知發送不重送；需明確指定測試收件人。
-- T18：正式 issuer 預先註冊 public client、精確 redirect URI；透過 OAuth CLI login（HTTP loopback IP）或手動 begin／finish 完成真人 consent／callback，確認 remote initialize／tools／refresh。未配置 dynamic registration／confidential client 的 provider 不屬目前支援範圍。
-- T19：配置真正 STT／TTS 模型，以已標記語音驗證辨識品質和實際裝置播放；另外驗證目標外部網站登入及有權存取的文件。
-- T20：提供部署者信任的 AGENT_IMPROVEMENT_RUNNER／固定標記案例，以正常可用 provider 跑 A/B；保存品質差異，維持人工批准、撤回與 rollback gate。
-- T21：在獲授權的遠端發布流程執行分層 GitHub CI；provider 恢復可用後重跑 opt-in 測試。正式品質報告須保留非預期副作用／恢復／成本證據，不沿用 fixture 成功率。
+- [ ] T04：以正式 Discord／LINE 測試帳號與對外 HTTPS webhook 驗證簽章、deferred／follow-up 及實際送達；需明確指定測試收件人。
+- [ ] T06：以可用真實 provider 驗證需要工具的串流與中斷；以指定 Telegram 收件人驗證 fallback 實際送達。
+- [ ] T17：配置現行 admin identity／sender allowlist／正式 adapter，確認原會話的 quiet watch、完成／需人工通知及未知發送不重送；需明確指定測試收件人。
+- [ ] T18：正式 issuer 預先註冊 public client、精確 redirect URI；透過 OAuth CLI login（HTTP loopback IP）或手動 begin／finish 完成真人 consent／callback，確認 remote initialize／tools／refresh。未配置 dynamic registration／confidential client 的 provider 不屬目前支援範圍。
+- [ ] T19：配置真正 STT／TTS 模型，以已標記語音驗證辨識品質和實際裝置播放；另外驗證目標外部網站登入及有權存取的文件。
+- [ ] T20：提供部署者信任的 AGENT_IMPROVEMENT_RUNNER／固定標記案例，以正常可用 provider 跑 A/B；保存品質差異，維持人工批准、撤回與 rollback gate。
+- [ ] T21：在獲授權的遠端發布流程執行分層 GitHub CI；provider 恢復可用後重跑 opt-in 測試。正式品質報告須保留非預期副作用／恢復／成本證據，不沿用 fixture 成功率。
 
 ## 開發與完成標準
 
