@@ -171,6 +171,10 @@ python .\telegram_polling_worker.py
 
 This mode does not require ngrok, a public IP, or webhook registration because the worker calls Telegram `getUpdates` from your machine.
 
+Polling startup checks `getWebhookInfo` and obtains a per-bot native lock. A configured webhook is rejected; the worker does not delete it or discard pending updates. One polling consumer must own a Bot across all hosts. HTTP 409 is a receiving-mode/consumer conflict, so the process prints a secret-free diagnosis and exits with code 1, cleaning scheduler and memory workers. Stop the other polling instance (including remote services) before restarting. Transient polling failures such as HTTP 502 still retry. Hook policy and loaded-Skill lines are normal startup diagnostics.
+
+The default lock directory is `%LOCALAPPDATA%/PythonAI/telegram-polling` on Windows, with hashed Bot IDs; locks release on exit/crash. `AGENT_TELEGRAM_POLL_LOCK_DIR` can override this directory. Keep the same directory for processes that should exclude each other; different users/hosts need deployment-level single-consumer coordination. See [Telegram getUpdates](https://core.telegram.org/bots/api#getupdates) and [getWebhookInfo](https://core.telegram.org/bots/api#getwebhookinfo).
+
 If you prefer webhook mode, also set a webhook secret and host/port:
 
 ```env
@@ -647,3 +651,7 @@ OAuth discovery 的授權網址若已有 state／client_id／redirect_uri／PKCE
 ### 待辦完成標註（2026-10-11）
 
 `papers/todo.md` 已分別標註本機功能完成與正式驗收待辦。T04、T06、T17–T21 的本機實作已完成並有測試紀錄，各項增加 [x] 子項與 commit；主項目仍維持 [ ]，正式平台／provider／品質／遠端 CI 的 7 個任務驗收条件依序集中列出。本輪只核對與標註文件，沒有新增程式或重跑全套測試。T18 的 dynamic registration／confidential client 仍未支援，未標記為已實作。
+
+### Telegram polling 409 修正驗證（2026-10-11）
+
+新增 receiving-mode preflight、per-bot 原生程序鎖及安全的 409 原因判讀；衝突停止並清理 worker，暫時 polling 錯誤仍重試。乾淨 requirements-ci 完整回歸 **651 passed、7 skipped、58 subtests passed（557.53 秒）**，225 檔語法及 pip check 通過。實測包括本機 HTTP 409 與程序 crash 後鎖釋放；正式 Bot 僅唯讀 getWebhookInfo，未消費 update 或發送訊息。證據保存於 `agent_execution/operations/verification_telegram_polling_2026-10-11.json`。

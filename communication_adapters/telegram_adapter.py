@@ -7,6 +7,8 @@ import hmac
 from pathlib import PurePosixPath
 from typing import Any, Callable
 from urllib import request
+from urllib.error import HTTPError
+from .telegram_polling import conflict_from_http, conflict_from_payload
 
 from communication_models import InboundAttachment, InboundMessage, OutboundMessage
 from .security import development_mode, fresh_timestamp, validate_api_result
@@ -171,13 +173,26 @@ class TelegramAdapter:
         }
         if offset is not None:
             params["offset"] = offset
-        payload = self.http_get(f"https://api.telegram.org/bot{self.bot_token}/getUpdates", params)
+        try:
+            payload = self.http_get(f"https://api.telegram.org/bot{self.bot_token}/getUpdates", params)
+        except HTTPError as error:
+            if error.code==409:raise conflict_from_http(error) from None
+            raise
         if isinstance(payload, bytes):
             payload = json.loads(payload.decode("utf-8"))
         if not isinstance(payload, dict) or not payload.get("ok"):
+            if isinstance(payload,dict) and payload.get('error_code')==409:raise conflict_from_payload(payload)
             raise RuntimeError(f"Telegram getUpdates failed: {payload}")
         result = payload.get("result", [])
         return result if isinstance(result, list) else []
+
+    def get_webhook_info(self) -> dict[str, Any]:
+        if not self.bot_token:raise ValueError('TELEGRAM_BOT_TOKEN is required to check receiving mode')
+        payload=self.http_get(f'https://api.telegram.org/bot{self.bot_token}/getWebhookInfo',{})
+        if isinstance(payload,bytes):payload=json.loads(payload.decode('utf-8'))
+        if not isinstance(payload,dict) or not payload.get('ok') or not isinstance(payload.get('result'),dict) or not isinstance(payload['result'].get('url'),str):
+            raise RuntimeError('Telegram getWebhookInfo returned an invalid result')
+        return payload['result']
 
     def get_me(self) -> dict[str, Any]:
         if not self.bot_token:

@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-11",
+  "scope": "Telegram polling 409 conflict classification, receiving-mode preflight and native per-bot lock",
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "passed": 651,
+    "skipped": 7,
+    "subtests_passed": 58,
+    "seconds": 557.53,
+    "warning": "existing AnyIO BlockingPortal deprecation",
+    "provider": "offline fixtures; Docker/browser/provider opt-ins disabled"
+  },
+  "related_initial": {
+    "passed": 57,
+    "subtests_passed": 8,
+    "seconds": 12.56,
+    "scope": "Before final local HTTP fixture addition; polling, communication/server and scheduled notifications"
+  },
+  "new_coverage": [
+    "HTTP and JSON 409 classification without provider-text disclosure",
+    "actual local HTTP 409 response",
+    "webhook preflight without webhook deletion",
+    "per-bot cross-process exclusion, rotation and crash release",
+    "conflict termination without retries",
+    "main nonzero exit and worker cleanup",
+    "existing transient HTTP 502 retry"
+  ],
+  "syntax": {
+    "tracked_python_files": 225,
+    "passed": true
+  },
+  "pip_check": {
+    "runtime": "clean requirements-ci",
+    "passed": true
+  },
+  "live_readonly_diagnostic": {
+    "webhook_configured": false,
+    "pending_update_count": 0,
+    "scope": "getWebhookInfo only; snapshot at diagnosis time; no getUpdates consumption or messages"
+  },
+  "limitation": "No other host or Bot consumer was stopped. A separate active consumer must be stopped by the deployment owner; local locks cannot coordinate across hosts or different lock directories.",
+  "logs": [
+    "temp/telegram-conflict-related.log",
+    "temp/telegram-conflict-full.log"
+  ]
+}

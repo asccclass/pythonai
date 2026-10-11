@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 
 from agent_runtime import AgentRuntime
 from communication_adapters.telegram_adapter import TelegramAdapter
+from communication_adapters.telegram_polling import PollingLease, TelegramPollingConflict, conflict_from_http
 from communication_server import create_agent_runtime, parse_allowed_senders
 from communication_store import CommunicationStore
 from communication_worker import CommunicationWorker, agent_runtime_command_runner, _enqueue_verified_events
@@ -60,10 +61,19 @@ class TelegramPollingWorker:
         return processed
 
     def run_forever(self) -> None:
+        with PollingLease(self.adapter.bot_token):
+            info=self.adapter.get_webhook_info()
+            if info.get('url'):raise TelegramPollingConflict('webhook')
+            print('Telegram polling worker ready. Press Ctrl+C to stop.')
+            self._run_loop()
+
+    def _run_loop(self) -> None:
         while True:
             try:
                 result = self.poll_once()
             except Exception as error:
+                if isinstance(error,TelegramPollingConflict):raise
+                if isinstance(error,HTTPError) and error.code==409:raise conflict_from_http(error) from None
                 print(f"Telegram polling warning: {error}; retrying in {self.error_sleep_seconds:g} seconds.")
                 self.sleep(self.error_sleep_seconds)
                 continue
@@ -92,12 +102,14 @@ scheduler_worker = SchedulerWorker()
 
 def main() -> None:
     polling_worker = create_telegram_polling_worker()
-    print("Telegram polling worker ready. Press Ctrl+C to stop.")
     scheduler_worker.start()
     try:
         polling_worker.run_forever()
     except KeyboardInterrupt:
         print()
+    except TelegramPollingConflict as error:
+        print(f'Telegram polling stopped: {error}')
+        raise SystemExit(1) from None
     finally:
         polling_worker.worker.drain(timeout=2.0)
         scheduler_worker.stop()
