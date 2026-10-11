@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-11",
+  "scope": "Follow-up local T17 actionable notification reasons and T18 authorization endpoint query validation",
+  "implementation_commits": [
+    "b1dde57",
+    "503c580"
+  ],
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "command": "python -m pytest -q",
+    "passed": 645,
+    "skipped": 7,
+    "subtests_passed": 52,
+    "seconds": 539.05,
+    "warning": "existing AnyIO BlockingPortal deprecation",
+    "environment": "offline fixture; Docker/browser/provider opt-ins disabled",
+    "skip_scope": "Docker/Chromium opt-in and actual external provider"
+  },
+  "targeted_scheduler": {
+    "passed": 31,
+    "subtests_passed": 2,
+    "seconds": 22.17,
+    "scope": "scheduler, notification Telegram adapter local contract, legacy scheduler"
+  },
+  "targeted_oauth": {
+    "passed": 26,
+    "skipped": 1,
+    "subtests_passed": 15,
+    "seconds": 18.48,
+    "skip_scope": "Docker opt-in",
+    "scope": "actual local HTTP OAuth discovery/PKCE/exchange/callback; remote MCP fixtures"
+  },
+  "fixed_suite": {
+    "covered_by_full_regression": true,
+    "cases": 15,
+    "scope": "curated offline/native acceptance fixtures; no provider quality or cost claim"
+  },
+  "syntax": {
+    "tracked_python_files": 224,
+    "passed": true
+  },
+  "pip_check": {
+    "runtime": "clean requirements-ci",
+    "passed": true
+  },
+  "external_acceptance": "Not run; preserved user local-only scope",
+  "pending": [
+    "formal platform delivery",
+    "real OAuth consent and remote issuer flow",
+    "STT/TTS quality and device playback",
+    "production persona/Skill A/B",
+    "remote GitHub CI"
+  ],
+  "raw_logs": [
+    "temp/todo-20261011-followup-full.log",
+    "temp/t17-reason-priority.log",
+    "temp/t18-authorize-query.log"
+  ]
+}

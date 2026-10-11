@@ -228,6 +228,12 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
 - 乾淨 requirements-ci 完整回歸 **642 passed、7 skipped、41 subtests passed（652.13 秒）**；保留既有 AnyIO 棄用警告。opt-in 整合首輪 **55 passed、1 failed、6 subtests passed（127.01 秒）**，失敗為 Docker availability probe 拒絕執行，確認引擎可連線後單案重驗 **1 passed（16.20 秒）**；實際 Chromium／Tesseract／Docker 與本機 HTTP／SDK workers 已驗證。運維 **9 passed、5 subtests passed**，tracked Python 語法 **224 檔**與乾淨環境 pip check 通過。
 - 證據：`agent_execution/operations/benchmark_baseline.json`、`agent_execution/operations/verification_2026-10-11.json`；上一輪日期基線保留於 `verification_baseline.json`。
 
+### 2026-10-11 第二輪補強驗證
+
+- Commit：`b1dde57` 保留有界通知中的停止／失敗原因；`503c580` 拒絕授權 endpoint query 與 client 管理參數衝突，避免殘留待登入 state。
+- 乾淨 requirements-ci 全套 **645 passed、7 skipped、52 subtests passed（539.05 秒）**；略過 Docker／Chromium opt-in 與正式 provider，保留既有 AnyIO 棄用警告。包含 15 項固定 fixture 驗收。tracked Python 語法 **224 檔**、pip check／diff check 通過。
+- 證據保存在 `agent_execution/operations/verification_2026-10-11_followup.json`。此前各輪基線保留；沒有重複宣稱上一輪 Docker／Chromium 結果為本輪實測。依使用者本機驗證範圍，正式服務、production 品質與遠端 CI 仍待驗收，未 push。
+
 ### 下一輪正式驗收條件
 
 - T17：配置現行 admin identity／sender allowlist／正式 adapter，確認原會話的 quiet watch、完成／需人工通知及未知發送不重送；需明確指定測試收件人。

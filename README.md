@@ -641,3 +641,5 @@ SQLite `backup` 保存一致的單庫 snapshot、雜湊及 schema 證據，`rest
 排程停止／失敗原因會置於觀察內容之前，避免長輸出讓需人工處理的原因被通知容量限制截掉；原始 run output 仍分開保留。
 
 OAuth discovery 的授權網址若已有 state／client_id／redirect_uri／PKCE／resource／scope 等 client 管理參數，會在建立待登入 state 前拒絕；issuer 的其他 query 參數維持原樣，既有授權不受影響。
+
+第二輪補強後，乾淨 requirements-ci 完整回歸為 **645 passed、7 skipped、52 subtests passed（539.05 秒）**，包含 15 項固定驗收；224 檔 Python 語法、pip check 及 diff check 通過。詳細紀錄見 `agent_execution/operations/verification_2026-10-11_followup.json`。本轮未執行正式平台／外部 provider／遠端 CI 驗收。
