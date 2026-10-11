@@ -31,10 +31,38 @@ class ApprovalTests(unittest.TestCase):
         self.headers = {"Authorization": "Bearer " + "a" * 32, "X-Agent-Session": "one"}
 
     def test_remote_defaults_and_invalid_roles_fail_closed(self):
-        with patch.dict(os.environ, {"ROLES_CONFIG": ""}):
+        with patch.dict(os.environ, {"ROLES_CONFIG": "", "COMM_ADMIN_SENDERS": ""}):
             self.assertEqual(get_user_role("telegram:123"), "viewer")
         self.roles.write_text('{"api:alice":"root"}', encoding="utf-8")
         self.assertEqual(get_user_role("api:alice"), "viewer")
+
+    def test_communication_admins_require_exact_platform_identity(self):
+        with patch.dict(os.environ, {"ROLES_CONFIG": "",
+                "COMM_ADMIN_SENDERS": " telegram:123 , discord:456, line:abc, api:alice, local, other:123, telegram: "}):
+            for identity in ("telegram:123", "discord:456", "line:abc"):
+                with self.subTest(identity=identity):
+                    self.assertEqual(get_user_role(identity), "admin")
+            for identity in ("telegram:12", "telegram:1234", "123", "api:alice", "local", "other:123", "telegram:"):
+                with self.subTest(identity=identity):
+                    self.assertEqual(get_user_role(identity), "viewer")
+
+    def test_allowlist_does_not_grant_admin(self):
+        with patch.dict(os.environ, {"ROLES_CONFIG": "", "COMM_ADMIN_SENDERS": "",
+                                    "COMM_ALLOWED_SENDERS": "telegram:123"}):
+            self.assertEqual(get_user_role("telegram:123"), "viewer")
+
+    def test_roles_file_overrides_communication_admin_list(self):
+        with patch.dict(os.environ, {"COMM_ADMIN_SENDERS": "telegram:123"}):
+            for role in ("viewer", "operator", "admin"):
+                with self.subTest(role=role):
+                    self.roles.write_text(json.dumps({"telegram:123": role}), encoding="utf-8")
+                    self.assertEqual(get_user_role("telegram:123"), role)
+            for contents in ('{}', '[]', 'bad json', '{"telegram:123":"root"}'):
+                with self.subTest(contents=contents):
+                    self.roles.write_text(contents, encoding="utf-8")
+                    self.assertEqual(get_user_role("telegram:123"), "viewer")
+            self.roles.unlink()
+            self.assertEqual(get_user_role("telegram:123"), "viewer")
 
     def test_identity_session_parameters_replay_and_expiry(self):
         args = {"memory_id": 1, "action": "archive"}

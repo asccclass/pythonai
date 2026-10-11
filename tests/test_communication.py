@@ -309,6 +309,34 @@ class CommunicationTests(unittest.TestCase):
 
         self.assertEqual(reply.reply, "True")
 
+    def test_configured_admin_role_reaches_git_tool_policy(self):
+        from agent_execution import execute_tool
+        from agent_execution.policy import PolicyDenied, current_context
+        from permissions import current_role
+
+        command = AgentCommand(command_id="role-regression", platform="telegram",
+            conversation_id="456", sender_id="123", text="check git status",
+            status="pending", source_message_id=7)
+        tool = MagicMock(return_value="clean")
+
+        def run_turn(text, runtime, attachments=None):
+            self.assertEqual(current_context().identity, "telegram:123")
+            self.assertEqual(current_context().source, "communication")
+            return SimpleNamespace(reply=execute_tool("git_status", {}, tool))
+
+        previous_role = current_role()
+        with patch.dict("os.environ", {"ROLES_CONFIG": "", "COMM_ADMIN_SENDERS": "telegram:123"}), \
+                patch("communication_worker.run_agent_turn", side_effect=run_turn):
+            runner = agent_runtime_command_runner(isolated_runtime(),
+                store=SimpleNamespace(is_cancel_requested=lambda key: False))
+            self.assertEqual(runner(command).reply, "clean")
+            tool.assert_called_once_with()
+            with patch.dict("os.environ", {"COMM_ADMIN_SENDERS": "telegram:other"}):
+                with self.assertRaises(PolicyDenied):
+                    runner(command)
+            tool.assert_called_once_with()
+        self.assertEqual(current_role(), previous_role)
+
     def test_clear_command_resets_session_and_cancels_suspended_job(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = CommunicationStore(Path(temp_dir) / "communication.db")

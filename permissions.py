@@ -11,14 +11,22 @@ _current_user_role: ContextVar[str] = ContextVar("current_user_role", default=RO
 
 def get_user_role(sender_id: str) -> str:
     config_path = os.environ.get("ROLES_CONFIG", "")
-    if config_path and os.path.exists(config_path):
+    if config_path:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 roles = json.load(f)
                 role = roles.get(sender_id, ROLE_VIEWER)
                 return role if role in {ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN} else ROLE_VIEWER
         except Exception:
-            pass
+            return ROLE_VIEWER
+    # An explicit roles file remains authoritative, including absent identities.
+    # Without one, honor the communication admin list advertised in .env.example.
+    platform, separator, identity = sender_id.partition(":")
+    if separator and identity and platform in {"telegram", "discord", "line"}:
+        admins = {entry.strip() for entry in os.environ.get("COMM_ADMIN_SENDERS", "").split(",")
+                  if entry.strip()}
+        if sender_id in admins:
+            return ROLE_ADMIN
     # This lookup is for remote identities. Local execution keeps its ContextVar default.
     return ROLE_VIEWER
 

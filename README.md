@@ -358,7 +358,7 @@ Docker 實作依據：[Resource constraints](https://docs.docker.com/engine/cont
 
 ## 遠端登入與批准（T03）
 
-遠端身份未列於 `ROLES_CONFIG` 時為 viewer；本機 CLI 維持 admin。角色檔為 JSON，例如 `{"telegram:123":"admin","api:alice":"admin","api:observer":"viewer"}`。無效／無法讀取的設定不會授予 admin。
+指定 `ROLES_CONFIG` 時，以 JSON 角色檔為準，例如 `{"telegram:123":"admin","api:alice":"admin","api:observer":"viewer"}`；身份未列出、角色無效或檔案無法讀取皆為 viewer。未指定角色檔時，`COMM_ADMIN_SENDERS` 中精確列出的 `telegram:<sender ID>`、`discord:<sender ID>`、`line:<sender ID>` 為 admin，其餘遠端身份仍為 viewer；本機 CLI 維持 admin。`COMM_ALLOWED_SENDERS` 只控制訊息准入，不授予管理員角色。修改 `.env` 後須重新啟動 worker 以載入設定。
 
 管理 API 須配置 `AGENT_API_TOKENS`，內容為 JSON 的「token → 身份名稱」對照；每個 token 至少 32 字元，建議以 `secrets.token_urlsafe(32)` 產生。使用身份 `alice` 時，角色檔的 key 為 `api:alice`。請將真實 token 放在私有環境設定，對外部署以 HTTPS 傳送。Dashboard 的 API Token 欄位支援登入，token 僅存於頁面輸入欄，不寫入 localStorage 或 URL。
 

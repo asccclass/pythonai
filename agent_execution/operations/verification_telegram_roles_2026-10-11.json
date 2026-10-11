@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-11",
+  "scope": "Honor configured communication administrators in remote role resolution",
+  "diagnosis": "COMM_ADMIN_SENDERS contained the affected sender, but get_user_role only read ROLES_CONFIG and otherwise returned viewer.",
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "passed": 659,
+    "skipped": 7,
+    "subtests_passed": 85,
+    "seconds": 692.01,
+    "warning": "existing AnyIO BlockingPortal deprecation",
+    "provider": "offline fixtures; Docker/browser/provider opt-ins disabled"
+  },
+  "related_tests": {
+    "passed": 73,
+    "subtests_passed": 35,
+    "seconds": 20.20
+  },
+  "controls": {
+    "roles_file_authoritative_when_configured": true,
+    "missing_invalid_or_unreadable_roles_file": "viewer",
+    "admin_list_fallback_platforms": ["telegram", "discord", "line"],
+    "admin_list_requires_exact_identity": true,
+    "admission_allowlist_grants_roles": false,
+    "local_default_role": "admin"
+  },
+  "coverage": [
+    "exact communication admin identity matching and whitespace normalization",
+    "unknown, partial, empty, API and local identities do not gain fallback privileges",
+    "valid explicit roles override the admin list",
+    "missing identity, invalid role, malformed JSON and missing role file fail closed",
+    "Telegram runner propagates resolved role into git_status policy",
+    "unlisted sender denied before tool invocation; context role restored"
+  ],
+  "local_config_probe": {
+    "configured_affected_sender_role": "admin",
+    "git_status_permitted": true,
+    "unconfigured_sender_role": "viewer",
+    "env_modified": false,
+    "messages_processed": false,
+    "messages_sent": 0,
+    "limitation": "Role and policy lookup using existing .env; no production model or Telegram message round trip"
+  },
+  "syntax": {"tracked_python_files": 225, "passed": true},
+  "pip_check": {"runtime": "clean requirements-ci", "passed": true},
+  "logs": ["temp/telegram-admin-related.log", "temp/telegram-admin-full.log"]
+}

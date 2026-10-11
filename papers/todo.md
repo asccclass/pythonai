@@ -11,7 +11,7 @@
 | T01–T03、T05、T07–T16 | 已完成，主項目 [x] | 依各項記載的驗收範圍與限制 |
 | T04、T06、T17–T21 | 已完成，各項新增「本機功能完成」[x] | 7 個任務保留主項目 [ ]，條件集中於文末正式驗收清單 |
 
-本轮依原始碼、既有 commit 與最新測試證據核對完成標註，未新增程式或重新執行全套測試。最近一次完整回歸為 **655 passed、7 skipped、68 subtests passed（674.18 秒）**，證據見 [Telegram polling 交接驗證摘要](../agent_execution/operations/verification_telegram_handoff_2026-10-11.json)。這是已記錄的本機結果，不代表正式平台或 provider 驗收。
+最近一次完整回歸為通訊管理員角色修正後的 **659 passed、7 skipped、85 subtests passed（692.01 秒）**，證據見 [Telegram 角色驗證摘要](../agent_execution/operations/verification_telegram_roles_2026-10-11.json)。這是本機離線 fixtures 的結果，不代表正式平台或 provider 驗收。
 
 目前未找到現行支援範圍內尚未實作的 checklist 本機功能。T18 的 dynamic registration／confidential client 仍屬已記錄的未支援能力，尚未實作，也不納入 public-client OAuth 完成標註。後續依序處理文末正式驗收；沿用使用者「先完成本機增修與驗證」，不自行發送訊息、啟用 production persona 或 push。
 
@@ -34,6 +34,8 @@
   - 使用限制：container 適用 Linux 指令及唯讀 workspace，產出寫至 /artifacts；不轉交 env_file 中的 provider credentials。內建應用 helper 仍是受信任 Python host 程式，子程序統一使用有界 runner；第三方 MCP 與動態工具的可信發布流程由 T18 處理。
 
 - [x] **T03 — 遠端身份驗證與不可偽造的批准流程**
+  - [x] **通訊管理員設定接通（2026-10-11）**：修正 `get_user_role()` 忽略既有 `COMM_ADMIN_SENDERS`，使未指定角色檔時精確列出的 Telegram／Discord／LINE 身份取得 admin；指定角色檔仍優先，缺漏／無效／不可讀皆為 viewer。允許名單不升權；新增角色優先序與通訊 runner 的 Git 工具政策回歸測試。
+  - 管理員修正驗證：相關測試 **73 passed、35 subtests passed**；乾淨 requirements-ci 全套 **659 passed、7 skipped、85 subtests passed**，225 檔語法、pip check 與 diff 檢查通過。既有 `.env` 的指定 Telegram 身份解析為 admin、`git_status` 權限通過，未指定身份仍為 viewer；未修改 `.env` 或發送訊息。詳見 `agent_execution/operations/verification_telegram_roles_2026-10-11.json`。
   - 現況：`permissions.py` 未設定 ROLES_CONFIG 時預設 admin；通訊命令自動批准；`manage_memory(confirm=True)` 依賴模型遵守提示；REST 管理 API 未整合身份／角色。
   - 工作：遠端預設最小權限、API 登入／授權、綁定身份與操作內容的 approval ID、到期／一次性使用及稽核；保留遠端非互動執行，透過通訊／UI 批准，不使用 stdin。
   - 驗收：未登入不能修改記憶；模型自行傳 confirm=True 不足以批准；批准只適用原始身份／參數，跨會話、重放及過期操作皆拒絕。
