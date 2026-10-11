@@ -175,6 +175,7 @@ T17–T21 的本機功能增修已提交；以下未勾選表示正式服務或�
   - Telegram long polling 亦啟動 scheduler 並於 poll 後推送；通知儲存故障不終止主通訊 loop。補強相關案例包含真實 adapter contract／併行認領／不確定發送／角色撤銷／取消與兩入口生命週期。
   - 補強 Commit：`a775d0a`；相關 53 passed（22.25 秒）。
   - 2026-10-11 補強：watch 執行上限／最終重試失敗轉 needs_input，未變觀察亦通知；失敗 digest 包含有界 error evidence，避免不同錯誤被當成同一狀態。排程／通知／舊 scheduler 30 passed（34.07 秒）；正式平台驗收依使用者指示保留待辦，不發送外部訊息。
+  - 2026-10-11 第二輪補強：排程停止／失敗原因優先於長觀察，避免 64 KiB 儲存及 1800 字平台容量截掉人工處理理由；原始 run output 維持不變。排程／通知／舊 scheduler **31 passed、2 subtests passed（22.17 秒）**，包含實際 Telegram adapter 本機契約與單次送達斷言。
   - 邊界／後續：正式平台實際送達及真實 provider 追蹤尚待驗收，因此保留未勾選；未向正式收件人發送測試訊息。
 
 - [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**

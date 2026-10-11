@@ -18,6 +18,9 @@ guessed cross-channel forwarding. Unconfigured adapters leave notifications pend
 Watch run-limit exhaustion and final retry failure become needs_input and notify
 even when the last observation is unchanged. Failure digests include bounded
 error evidence; identical intermediate failures remain quiet.
+Actionable failure/stop reasons precede observations in queued notifications so
+both the 64 KiB storage limit and 1800-character platform limit preserve them;
+run output remains separately available and unchanged.
 Each notification is atomically claimed once, with one bounded 1800-character
 message. Failures or a lost 60-second delivery claim become uncertain and are never
 automatically resent; operators inspect delivery/error_type with notifications.

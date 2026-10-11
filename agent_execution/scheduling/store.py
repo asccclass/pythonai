@@ -194,7 +194,10 @@ class SchedulerStore:
             disabled=count>=current['max_runs'] or state in {'needs_input','uncertain','cancelled'} or (current['job_type']=='watch' and state=='completed') or (state=='failed' and not safe_retry)
             due=(datetime.fromtimestamp(time.time()+30*(retry+1),timezone.utc).isoformat() if safe_retry
                  else next_time(current['cron_expression'],current['timezone']))
-            if digest!=current['last_digest'] and (current['last_digest'] is not None or not waiting):self.notify(conn,current,state,evidence.strip())
+            if digest!=current['last_digest'] and (current['last_digest'] is not None or not waiting):
+                # Platform messages truncate from the end; keep actionable errors first.
+                notification=(error[:1000]+'\n'+text if error and state in {'failed','needs_input','uncertain'} else text)
+                self.notify(conn,current,state,notification.strip())
             history=(json.loads(current['history'])+[{'state':state,'summary':text[:4096]}])[-4:]
             conn.execute('UPDATE scheduled_jobs SET next_run_at=?,run_count=?,retry_count=?,last_digest=?,history=?,is_enabled=? WHERE id=?',
                 (due,count,retry+1 if safe_retry else 0,digest,json.dumps(history),int(current['is_enabled'] and not disabled),job['id']))

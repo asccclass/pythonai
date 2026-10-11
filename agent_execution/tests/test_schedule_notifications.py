@@ -47,6 +47,25 @@ class ScheduleNotificationTests(unittest.TestCase):
             conn.execute("UPDATE schedule_notification_delivery SET status='sending',expires=0")
         self.assertEqual(dispatcher.dispatch_once(),0)
         with closing(self.store.connect()) as conn:self.assertEqual(conn.execute('SELECT status FROM schedule_notification_delivery').fetchone()[0],'uncertain')
+    def test_terminal_reason_survives_long_output_storage_and_platform_limits(self):
+        observation='長觀察'*22000
+        with execution_scope(source='communication',identity='telegram:alice',session='telegram:chat'):
+            for state,error,reason in [('waiting','','Watch run limit reached'),
+                    ('uncertain','Inspect uncertain external effect before retry','Inspect uncertain external effect')]:
+                with self.subTest(state=state):
+                    key=self.store.add_job('long watch','* * * * *','watch',{'prompt':'inspect'},max_runs=1)
+                    job=next(row for row in self.store.list_jobs() if row['id']==key)
+                    self.assertTrue(self.store.acquire_lock(key,'fixture'))
+                    run=self.store.record_run_start(key)
+                    self.assertTrue(self.store.complete(job,'fixture',run,state,observation,error))
+                    notification=next(row for row in self.store.notifications() if row['job_id']==key)
+                    self.assertTrue(notification['output'].startswith(reason))
+                    with closing(self.store.connect()) as conn:
+                        self.assertEqual(conn.execute('SELECT output FROM scheduled_job_runs WHERE id=?',(run,)).fetchone()[0],observation[:65536])
+                    dispatcher=NotificationDispatcher({'telegram':self.adapter},store=self.store)
+                    self.assertEqual(dispatcher.dispatch_once(),1)
+                    self.assertIn(reason,self.posts[-1]['text']);self.assertLessEqual(len(self.posts[-1]['text']),1800)
+                    self.assertEqual(dispatcher.dispatch_once(),0)
     def test_revoked_role_allowlist_and_malformed_owner_cancel_without_send(self):
         self.notification()
         with patch('agent_execution.scheduling.notifications.get_user_role',return_value='viewer'):
