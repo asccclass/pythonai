@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 import time
@@ -30,8 +30,11 @@ class TelegramPollingWorker:
     sleep: Callable[[float], None] = time.sleep
     conflict_retries: int = 2
     conflict_retry_seconds: float | None = None
+    _lease: PollingLease | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if type(self.poll_timeout_seconds) is not int or not 0<=self.poll_timeout_seconds<=300:
+            raise ValueError('TELEGRAM_POLL_TIMEOUT must be 0..300 seconds')
         if type(self.conflict_retries) is not int or not 0<=self.conflict_retries<=3:
             raise ValueError('TELEGRAM_POLL_CONFLICT_RETRIES must be 0..3')
         if self.conflict_retry_seconds is not None and (
@@ -39,7 +42,16 @@ class TelegramPollingWorker:
             raise ValueError('TELEGRAM_POLL_CONFLICT_SLEEP must be 1..300 seconds')
 
     def poll_once(self) -> dict[str, int]:
-        updates = self.adapter.get_updates(offset=self.offset, timeout=self.poll_timeout_seconds)
+        if self._lease is not None:
+            self._wait_for_pending_request()
+            self._lease.begin_request(self.poll_timeout_seconds)
+        try:
+            updates = self.adapter.get_updates(offset=self.offset, timeout=self.poll_timeout_seconds)
+        except (HTTPError, TelegramPollingConflict):
+            # Telegram returned a response; this particular request has ended.
+            if self._lease is not None:self._lease.complete_request()
+            raise
+        if self._lease is not None:self._lease.complete_request()
         queued = 0
         for update in updates:
             update_id = update.get("update_id")
@@ -70,11 +82,23 @@ class TelegramPollingWorker:
         return processed
 
     def run_forever(self) -> None:
-        with PollingLease(self.adapter.bot_token):
-            info=self.adapter.get_webhook_info()
-            if info.get('url'):raise TelegramPollingConflict('webhook')
-            print('Telegram polling worker ready. Press Ctrl+C to stop.')
-            self._run_loop()
+        with PollingLease(self.adapter.bot_token) as lease:
+            self._lease=lease
+            try:
+                info=self.adapter.get_webhook_info()
+                if info.get('url'):raise TelegramPollingConflict('webhook')
+                self._wait_for_pending_request()
+                print('Telegram polling worker ready. Press Ctrl+C to stop.')
+                self._run_loop()
+            finally:
+                self._lease=None
+
+    def _wait_for_pending_request(self) -> None:
+        delay=self._lease.pending_delay()
+        if delay:
+            print(f'Telegram polling recovery: previous local request did not finish; waiting {delay:g} seconds before getUpdates.')
+            self.sleep(delay)
+        self._lease.complete_request()
 
     def _run_loop(self) -> None:
         # A terminated consumer may leave its last long poll alive on Telegram.
@@ -93,7 +117,7 @@ class TelegramPollingWorker:
                     conflicts+=1
                     handoff_pending=True
                     delay=self.conflict_retry_seconds or max(5,self.poll_timeout_seconds+5,self.error_sleep_seconds)
-                    print(f'Telegram polling handoff: another getUpdates request is active; waiting {delay:g} seconds for it to expire ({conflicts}/{self.conflict_retries}).')
+                    print(f'Telegram polling conflict (409): another getUpdates consumer may still be running; retrying in {delay:g} seconds ({conflicts}/{self.conflict_retries}). If this repeats, stop the other consumer on this or another host.')
                     self.sleep(delay)
                     continue
                 print(f"Telegram polling warning: {error}; retrying in {self.error_sleep_seconds:g} seconds.")

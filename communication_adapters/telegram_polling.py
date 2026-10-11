@@ -2,6 +2,8 @@
 import hashlib
 import json
 import os
+import math
+import time
 from pathlib import Path
 
 
@@ -58,3 +60,26 @@ class PollingLease:
         self.file=handle;return self
     def __exit__(self,*args):
         if self.file:self.file.close();self.file=None
+
+    def pending_delay(self):
+        """Bounded recovery for an interrupted request from the previous owner."""
+        self.file.seek(1)
+        try:
+            deadline=json.loads(self.file.read(512)).get('pending_until',0)
+            if type(deadline) not in (int,float) or not math.isfinite(deadline):return 0
+            return min(310,max(0,deadline-time.time()))
+        except (ValueError,AttributeError,TypeError):
+            return 0
+
+    def _save_pending(self,deadline):
+        # Keep the locked first byte intact. Metadata contains no Bot credentials.
+        self.file.seek(1)
+        self.file.truncate()
+        self.file.write(json.dumps({'pending_until':deadline}).encode('utf-8'))
+        self.file.flush()
+
+    def begin_request(self,timeout):
+        self._save_pending(time.time()+timeout+10)
+
+    def complete_request(self):
+        self._save_pending(0)

@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-11",
+  "scope": "Recover interrupted local Telegram long polls before restarting or retrying",
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "passed": 663,
+    "skipped": 7,
+    "subtests_passed": 92,
+    "seconds": 1040.97,
+    "warning": "existing AnyIO BlockingPortal deprecation",
+    "provider": "offline fixtures; Docker/browser/provider opt-ins disabled"
+  },
+  "related_tests": {"passed": 58, "subtests_passed": 23, "seconds": 9.88},
+  "controls": {
+    "pending_deadline": "request start + poll timeout + 10 seconds",
+    "recovery_wait_cap_seconds": 310,
+    "poll_timeout_range_seconds": [0, 300],
+    "confirmed_http_response_clears_pending": true,
+    "interrupted_or_disconnected_request_retains_pending": true,
+    "credential_free_metadata": true,
+    "existing_native_lock_and_lifetime_conflict_retry_cap_retained": true
+  },
+  "coverage": [
+    "native process crash releases ownership but preserves request deadline",
+    "restart waits for recorded deadline before polling",
+    "successful response clears deadline before command processing",
+    "interrupt during getUpdates preserves pending state",
+    "network failure waits before next request; HTTP conflict response clears state",
+    "expired, malformed, nonnumeric and nonfinite metadata do not wait",
+    "future timestamps are capped; invalid polling timeout rejected"
+  ],
+  "live_bot_probe": {
+    "webhook_configured": false,
+    "pending_update_count": 0,
+    "local_polling_lease": "available",
+    "get_updates_result": "poller conflict (HTTP 409)",
+    "requested_timeout_seconds": 10,
+    "offset_sent": false,
+    "messages_processed": false,
+    "messages_sent": 0
+  },
+  "deployment_status": "Unresolved: another getUpdates request was active during the live probe. Telegram does not identify its host/process. Inspected Windows, Docker and WSL processes did not locate the competing consumer. Local recovery cannot stop a different deployment.",
+  "configuration": "Existing .env unchanged; unrelated user .env.example changes and roles.json excluded from commit",
+  "syntax": {"tracked_python_files": 225, "passed": true},
+  "pip_check": {"runtime": "clean requirements-ci", "passed": true},
+  "logs": ["temp/telegram-pending-related.log", "temp/telegram-pending-full.log", "temp/telegram-pending-live.log"]
+}

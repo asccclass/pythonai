@@ -11,7 +11,7 @@
 | T01–T03、T05、T07–T16 | 已完成，主項目 [x] | 依各項記載的驗收範圍與限制 |
 | T04、T06、T17–T21 | 已完成，各項新增「本機功能完成」[x] | 7 個任務保留主項目 [ ]，條件集中於文末正式驗收清單 |
 
-最近一次完整回歸為通訊管理員角色修正後的 **659 passed、7 skipped、85 subtests passed（692.01 秒）**，證據見 [Telegram 角色驗證摘要](../agent_execution/operations/verification_telegram_roles_2026-10-11.json)。這是本機離線 fixtures 的結果，不代表正式平台或 provider 驗收。
+最近一次完整回歸為 polling 未完成請求恢復修正後的 **663 passed、7 skipped、92 subtests passed（1040.97 秒）**，證據見 [Telegram 未完成請求驗證摘要](../agent_execution/operations/verification_telegram_pending_2026-10-11.json)。這是本機離線 fixtures 的結果，不代表正式平台或 provider 驗收；正式 Bot 實測仍有另一個 consumer 的 409 衝突，尚未解除。
 
 目前未找到現行支援範圍內尚未實作的 checklist 本機功能。T18 的 dynamic registration／confidential client 仍屬已記錄的未支援能力，尚未實作，也不納入 public-client OAuth 完成標註。後續依序處理文末正式驗收；沿用使用者「先完成本機增修與驗證」，不自行發送訊息、啟用 production persona 或 push。
 
@@ -44,6 +44,8 @@
   - 邊界：批准 SQLite 預設存 workspace 外；任意 host 程式與第三方 MCP 仍須視為受信任程式，應用層批准不能對抗使用者 OS 權限。API 租戶隔離待 T05；通訊批准測試使用 adapter stub，尚未真實平台 round trip。
 
 - [ ] **T04 — Webhook 驗證缺失時拒絕與平台回覆完整性**
+  - [x] **Polling 未完成請求恢復（2026-10-11）**：原生 per-bot 鎖保存無憑證的 in-flight deadline；Ctrl+C／crash／斷線後，再次輪詢先等舊請求期限，正常回應立即清除。修正 409 日誌，不再將其他持續 consumer 宣稱為必定過期的交接；跨主機 consumer 仍須由部署者停用。
+  - 未完成請求恢復驗證：相關 **58 passed、23 subtests passed**；乾淨 requirements-ci 全套 **663 passed、7 skipped、92 subtests passed**，225 檔語法與 pip check 通過。正式 Bot webhook 未設定、pending updates 為 0、本機鎖可取得，但 10 秒 getUpdates 實測仍回 poller 409；未傳送 offset 或處理／發送訊息。已檢查的 Windows／Docker／WSL 程序未定位競爭 consumer，正式衝突保留未解決。摘要：`agent_execution/operations/verification_telegram_pending_2026-10-11.json`。
   - [x] **Telegram polling 短暫交接恢復（2026-10-11）**：consumer 409 不再第一次即停止，持有本機鎖等待舊 long-poll 到期，預設兩次／每次 35 秒；恢復後印出 resumed。整個程序生命週期共用 0..3 次衝突預算，成功輪詢不重置，以免兩個 consumer 永久互搶。webhook／unknown／超出預算仍停止；不終止其他專案程序或更動 Bot credentials。
   - 交接恢復驗證：乾淨 requirements-ci 全套 **655 passed、7 skipped、68 subtests passed（674.18 秒）**；225 檔語法、pip check 通過。正式 Bot 的原生 polling loop 兩次 10 秒 getUpdates 成功、0 updates，未帶 offset、未處理或發送訊息；此時 API 無衝突，不推定遠端 consumer 永久停用。驗證摘要：`agent_execution/operations/verification_telegram_handoff_2026-10-11.json`。
   - [x] **Telegram polling 409 修正（2026-10-11）**：getWebhookInfo preflight、本機 per-bot OS lock、HTTP／JSON 409 安全分類、永久衝突停止並清理；502 等暫時錯誤仍重試，不刪除 webhook 或丟棄 pending updates。正式 Bot 唯讀診斷為 webhook 未設定，409 的其他 consumer 需由部署者確認所在程序／主機。

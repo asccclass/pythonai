@@ -219,7 +219,7 @@ class TelegramPollingWorkerTests(unittest.TestCase):
         adapter.http_post.assert_not_called();worker.sleep.assert_not_called()
 
     def test_native_lock_blocks_second_process_and_recovers_after_crash(self):
-        code="from communication_adapters.telegram_polling import PollingLease; import time; lock=PollingLease('123:private'); lock.__enter__(); print('locked',flush=True); time.sleep(30)"
+        code="from communication_adapters.telegram_polling import PollingLease; import time; lock=PollingLease('123:private'); lock.__enter__(); lock.begin_request(30); print('locked',flush=True); time.sleep(30)"
         process=subprocess.Popen([sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:
             self.assertEqual(process.stdout.readline().strip(),'locked')
@@ -230,6 +230,65 @@ class TelegramPollingWorkerTests(unittest.TestCase):
             process.kill();process.communicate(timeout=5)
         with PollingLease('123:private') as lease:
             self.assertNotIn('private',str(lease.path));self.assertNotIn('123:',str(lease.path))
+            self.assertGreater(lease.pending_delay(),0)
+            lease.complete_request()
+            self.assertEqual(lease.pending_delay(),0)
+
+    def test_restart_waits_for_recorded_local_request_before_polling(self):
+        from unittest.mock import Mock
+        with patch('communication_adapters.telegram_polling.time.time',return_value=100):
+            with PollingLease('token') as lease:lease.begin_request(30)
+        adapter=TelegramAdapter(bot_token='token',http_get=lambda url,params:{'ok':True,'result':{'url':''}})
+        worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock())
+        def poll():
+            worker.sleep.assert_called_once_with(30)
+            self.assertEqual(worker._lease.pending_delay(),0)
+            raise KeyboardInterrupt
+        worker.poll_once=poll
+        with patch('communication_adapters.telegram_polling.time.time',return_value=110), \
+                patch('builtins.print') as output,self.assertRaises(KeyboardInterrupt):
+            worker.run_forever()
+        self.assertTrue(any('previous local request' in str(call) for call in output.call_args_list))
+        self.assertIsNone(worker._lease)
+
+    def test_success_clears_pending_before_processing_but_interrupt_retains_it(self):
+        from unittest.mock import Mock
+        adapter=TelegramAdapter(bot_token='token',http_get=Mock(return_value={'ok':True,'result':[]}))
+        worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock())
+        with PollingLease('token') as lease:
+            worker._lease=lease
+            def process():
+                self.assertEqual(lease.pending_delay(),0)
+                raise KeyboardInterrupt
+            worker.process_pending_once=process
+            with self.assertRaises(KeyboardInterrupt):worker.poll_once()
+            adapter.http_get.side_effect=KeyboardInterrupt
+            with self.assertRaises(KeyboardInterrupt):worker.poll_once()
+            self.assertGreater(lease.pending_delay(),0)
+        worker._lease=None
+
+    def test_network_failure_waits_before_retry_but_conflict_response_clears_pending(self):
+        from unittest.mock import Mock
+        from urllib.error import URLError
+        adapter=TelegramAdapter(bot_token='token',http_get=Mock(side_effect=URLError('connection lost')))
+        worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock())
+        with patch('communication_adapters.telegram_polling.time.time',return_value=100),PollingLease('token') as lease:
+            worker._lease=lease
+            with self.assertRaises(URLError):worker.poll_once()
+            adapter.http_get.side_effect=TelegramPollingConflict('poller')
+            with self.assertRaises(TelegramPollingConflict):worker.poll_once()
+            worker.sleep.assert_called_once_with(40)
+            self.assertEqual(lease.pending_delay(),0)
+        worker._lease=None
+
+    def test_pending_metadata_is_bounded_and_expired_or_invalid_records_do_not_wait(self):
+        with patch('communication_adapters.telegram_polling.time.time',return_value=100),PollingLease('token') as lease:
+            for deadline,expected in ((99,0),(float('nan'),0),('bad',0),(100000,310)):
+                with self.subTest(deadline=deadline):
+                    lease._save_pending(deadline)
+                    self.assertEqual(lease.pending_delay(),expected)
+            lease.file.seek(1);lease.file.truncate();lease.file.write(b'broken');lease.file.flush()
+            self.assertEqual(lease.pending_delay(),0)
 
     def test_main_conflict_exits_nonzero_and_cleans_background_workers(self):
         import telegram_polling_worker as module
@@ -276,7 +335,8 @@ class TelegramPollingWorkerTests(unittest.TestCase):
 
     def test_invalid_handoff_configuration_is_rejected(self):
         for options in ({'conflict_retries':-1},{'conflict_retries':4},{'conflict_retries':True},
-                {'conflict_retry_seconds':0},{'conflict_retry_seconds':301},{'conflict_retry_seconds':float('nan')}):
+                {'conflict_retry_seconds':0},{'conflict_retry_seconds':301},{'conflict_retry_seconds':float('nan')},
+                {'poll_timeout_seconds':-1},{'poll_timeout_seconds':301},{'poll_timeout_seconds':True}):
             with self.subTest(options=options),self.assertRaises(ValueError):
                 TelegramPollingWorker(None,None,None,**options)
 
