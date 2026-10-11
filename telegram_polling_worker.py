@@ -28,6 +28,15 @@ class TelegramPollingWorker:
     error_sleep_seconds: float = 5.0
     offset: int | None = None
     sleep: Callable[[float], None] = time.sleep
+    conflict_retries: int = 2
+    conflict_retry_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.conflict_retries) is not int or not 0<=self.conflict_retries<=3:
+            raise ValueError('TELEGRAM_POLL_CONFLICT_RETRIES must be 0..3')
+        if self.conflict_retry_seconds is not None and (
+                type(self.conflict_retry_seconds) not in {int,float} or not 1<=self.conflict_retry_seconds<=300):
+            raise ValueError('TELEGRAM_POLL_CONFLICT_SLEEP must be 1..300 seconds')
 
     def poll_once(self) -> dict[str, int]:
         updates = self.adapter.get_updates(offset=self.offset, timeout=self.poll_timeout_seconds)
@@ -68,12 +77,25 @@ class TelegramPollingWorker:
             self._run_loop()
 
     def _run_loop(self) -> None:
+        # A terminated consumer may leave its last long poll alive on Telegram.
+        # Keep a lifetime cap: successful intervening polls must not allow a duel.
+        conflicts=0;handoff_pending=False
         while True:
             try:
                 result = self.poll_once()
+                if handoff_pending:
+                    print('Telegram polling resumed after request handoff.')
+                    handoff_pending=False
             except Exception as error:
-                if isinstance(error,TelegramPollingConflict):raise
-                if isinstance(error,HTTPError) and error.code==409:raise conflict_from_http(error) from None
+                if isinstance(error,HTTPError) and error.code==409:error=conflict_from_http(error)
+                if isinstance(error,TelegramPollingConflict):
+                    if error.kind!='poller' or conflicts>=self.conflict_retries:raise error from None
+                    conflicts+=1
+                    handoff_pending=True
+                    delay=self.conflict_retry_seconds or max(5,self.poll_timeout_seconds+5,self.error_sleep_seconds)
+                    print(f'Telegram polling handoff: another getUpdates request is active; waiting {delay:g} seconds for it to expire ({conflicts}/{self.conflict_retries}).')
+                    self.sleep(delay)
+                    continue
                 print(f"Telegram polling warning: {error}; retrying in {self.error_sleep_seconds:g} seconds.")
                 self.sleep(self.error_sleep_seconds)
                 continue
@@ -95,6 +117,9 @@ def create_telegram_polling_worker(runtime: AgentRuntime | None = None) -> Teleg
         poll_timeout_seconds=int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "30")),
         idle_sleep_seconds=float(os.environ.get("TELEGRAM_POLL_IDLE_SLEEP", "0.2")),
         error_sleep_seconds=float(os.environ.get("TELEGRAM_POLL_ERROR_SLEEP", "5")),
+        conflict_retries=int(os.environ.get('TELEGRAM_POLL_CONFLICT_RETRIES','2')),
+        conflict_retry_seconds=(float(os.environ['TELEGRAM_POLL_CONFLICT_SLEEP'])
+            if os.environ.get('TELEGRAM_POLL_CONFLICT_SLEEP') else None),
     )
 
 

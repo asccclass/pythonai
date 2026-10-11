@@ -11,7 +11,7 @@
 | T01–T03、T05、T07–T16 | 已完成，主項目 [x] | 依各項記載的驗收範圍與限制 |
 | T04、T06、T17–T21 | 已完成，各項新增「本機功能完成」[x] | 7 個任務保留主項目 [ ]，條件集中於文末正式驗收清單 |
 
-本轮依原始碼、既有 commit 與最新測試證據核對完成標註，未新增程式或重新執行全套測試。最近一次完整回歸為 **651 passed、7 skipped、58 subtests passed（557.53 秒）**，證據見 [Telegram polling 修正驗證摘要](../agent_execution/operations/verification_telegram_polling_2026-10-11.json)。這是已記錄的本機結果，不代表正式平台或 provider 驗收。
+本轮依原始碼、既有 commit 與最新測試證據核對完成標註，未新增程式或重新執行全套測試。最近一次完整回歸為 **655 passed、7 skipped、68 subtests passed（674.18 秒）**，證據見 [Telegram polling 交接驗證摘要](../agent_execution/operations/verification_telegram_handoff_2026-10-11.json)。這是已記錄的本機結果，不代表正式平台或 provider 驗收。
 
 目前未找到現行支援範圍內尚未實作的 checklist 本機功能。T18 的 dynamic registration／confidential client 仍屬已記錄的未支援能力，尚未實作，也不納入 public-client OAuth 完成標註。後續依序處理文末正式驗收；沿用使用者「先完成本機增修與驗證」，不自行發送訊息、啟用 production persona 或 push。
 
@@ -42,6 +42,8 @@
   - 邊界：批准 SQLite 預設存 workspace 外；任意 host 程式與第三方 MCP 仍須視為受信任程式，應用層批准不能對抗使用者 OS 權限。API 租戶隔離待 T05；通訊批准測試使用 adapter stub，尚未真實平台 round trip。
 
 - [ ] **T04 — Webhook 驗證缺失時拒絕與平台回覆完整性**
+  - [x] **Telegram polling 短暫交接恢復（2026-10-11）**：consumer 409 不再第一次即停止，持有本機鎖等待舊 long-poll 到期，預設兩次／每次 35 秒；恢復後印出 resumed。整個程序生命週期共用 0..3 次衝突預算，成功輪詢不重置，以免兩個 consumer 永久互搶。webhook／unknown／超出預算仍停止；不終止其他專案程序或更動 Bot credentials。
+  - 交接恢復驗證：乾淨 requirements-ci 全套 **655 passed、7 skipped、68 subtests passed（674.18 秒）**；225 檔語法、pip check 通過。正式 Bot 的原生 polling loop 兩次 10 秒 getUpdates 成功、0 updates，未帶 offset、未處理或發送訊息；此時 API 無衝突，不推定遠端 consumer 永久停用。驗證摘要：`agent_execution/operations/verification_telegram_handoff_2026-10-11.json`。
   - [x] **Telegram polling 409 修正（2026-10-11）**：getWebhookInfo preflight、本機 per-bot OS lock、HTTP／JSON 409 安全分類、永久衝突停止並清理；502 等暫時錯誤仍重試，不刪除 webhook 或丟棄 pending updates。正式 Bot 唯讀診斷為 webhook 未設定，409 的其他 consumer 需由部署者確認所在程序／主機。
   - polling 修正驗證：乾淨 requirements-ci 全套 **651 passed、7 skipped、58 subtests passed（557.53 秒）**；包含實際本機 HTTP 409、原生跨程序鎖／token rotation／crash 釋放、webhook 拒絕但不刪除、fatal conflict 不重試／背景清理，以及既有 502 重試。225 檔語法與 pip check 通過；保留既有 AnyIO 棄用警告。證據：`agent_execution/operations/verification_telegram_polling_2026-10-11.json`。
   - [x] **本機功能完成（2026-10-11 核對標註）**：production webhook 驗證、timestamp／去重、Discord deferred／follow-up、LINE 回覆策略；commit `bcecff0`，相關平台契約 53 passed。正式帳號送達另列待辦。

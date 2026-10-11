@@ -115,6 +115,8 @@ class TelegramPollingWorkerTests(unittest.TestCase):
                     "TELEGRAM_POLL_TIMEOUT": "3",
                     "TELEGRAM_POLL_IDLE_SLEEP": "0.05",
                     "TELEGRAM_POLL_ERROR_SLEEP": "0.5",
+                    "TELEGRAM_POLL_CONFLICT_RETRIES": "1",
+                    "TELEGRAM_POLL_CONFLICT_SLEEP": "7",
                 },
                 clear=False,
             ),
@@ -127,6 +129,8 @@ class TelegramPollingWorkerTests(unittest.TestCase):
         self.assertEqual(worker.poll_timeout_seconds, 3)
         self.assertEqual(worker.idle_sleep_seconds, 0.05)
         self.assertEqual(worker.error_sleep_seconds, 0.5)
+        self.assertEqual(worker.conflict_retries,1)
+        self.assertEqual(worker.conflict_retry_seconds,7)
 
     def test_run_forever_retries_transient_polling_http_errors(self):
         calls = []
@@ -178,7 +182,7 @@ class TelegramPollingWorkerTests(unittest.TestCase):
     def test_conflict_stops_loop_once_without_retry_and_releases_lock(self):
         from unittest.mock import Mock
         adapter=TelegramAdapter(bot_token='token',http_get=lambda url,params:{'ok':True,'result':{'url':''}})
-        worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock())
+        worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock(),conflict_retries=0)
         worker.poll_once=Mock(side_effect=TelegramPollingConflict('poller'))
         with self.assertRaises(TelegramPollingConflict):worker.run_forever()
         worker.poll_once.assert_called_once();worker.sleep.assert_not_called()
@@ -236,6 +240,45 @@ class TelegramPollingWorkerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code,1);scheduler.stop.assert_called_once()
         worker.worker.drain.assert_called_once();worker.runtime.memory_worker.stop.assert_called_once()
         self.assertIn('Another getUpdates consumer',output.call_args.args[0])
+
+    def test_transient_conflict_waits_for_long_poll_then_recovers(self):
+        from unittest.mock import Mock
+        adapter=TelegramAdapter(bot_token='token',http_get=lambda url,params:{'ok':True,'result':{'url':''}})
+        worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock(),poll_timeout_seconds=30)
+        worker.poll_once=Mock(side_effect=[TelegramPollingConflict('poller'),
+            {'updates':1,'processed':0},KeyboardInterrupt])
+        with patch('builtins.print') as output,self.assertRaises(KeyboardInterrupt):worker.run_forever()
+        self.assertEqual(worker.poll_once.call_count,3);worker.sleep.assert_called_once_with(35)
+        self.assertTrue(any('resumed after request handoff' in str(call) for call in output.call_args_list))
+        with PollingLease('token'):pass
+
+    def test_persistent_and_intermittent_consumers_have_lifetime_retry_cap(self):
+        from unittest.mock import Mock
+        for intervening in ([],[{'updates':1,'processed':0}]):
+            with self.subTest(intervening=bool(intervening)):
+                adapter=TelegramAdapter(bot_token='token',http_get=lambda url,params:{'ok':True,'result':{'url':''}})
+                worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock(),conflict_retry_seconds=1)
+                worker.poll_once=Mock(side_effect=[TelegramPollingConflict('poller'),*intervening,
+                    TelegramPollingConflict('poller'),*intervening,TelegramPollingConflict('poller')])
+                with self.assertRaises(TelegramPollingConflict):worker.run_forever()
+                self.assertEqual(worker.sleep.call_count,2)
+                self.assertEqual(worker.poll_once.call_count,3+2*len(intervening))
+
+    def test_webhook_and_unknown_conflicts_never_use_handoff_retry(self):
+        from unittest.mock import Mock
+        for kind in ('webhook','unknown'):
+            with self.subTest(kind=kind):
+                adapter=TelegramAdapter(bot_token='token',http_get=lambda url,params:{'ok':True,'result':{'url':''}})
+                worker=TelegramPollingWorker(None,adapter,Mock(),sleep=Mock())
+                worker.poll_once=Mock(side_effect=TelegramPollingConflict(kind))
+                with self.assertRaises(TelegramPollingConflict):worker.run_forever()
+                worker.poll_once.assert_called_once();worker.sleep.assert_not_called()
+
+    def test_invalid_handoff_configuration_is_rejected(self):
+        for options in ({'conflict_retries':-1},{'conflict_retries':4},{'conflict_retries':True},
+                {'conflict_retry_seconds':0},{'conflict_retry_seconds':301},{'conflict_retry_seconds':float('nan')}):
+            with self.subTest(options=options),self.assertRaises(ValueError):
+                TelegramPollingWorker(None,None,None,**options)
 
 
 if __name__ == "__main__":

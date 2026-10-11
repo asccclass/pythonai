@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-11",
+  "scope": "Bounded recovery for transient Telegram getUpdates handoff conflicts",
+  "clean_runtime": {
+    "requirements": "agent_execution/operations/requirements-ci.txt",
+    "passed": 655,
+    "skipped": 7,
+    "subtests_passed": 68,
+    "seconds": 674.18,
+    "warning": "existing AnyIO BlockingPortal deprecation",
+    "provider": "offline fixtures; Docker/browser/provider opt-ins disabled"
+  },
+  "related_iteration": {
+    "passed": 62,
+    "subtests_passed": 18,
+    "seconds": 20.81,
+    "note": "Before final resumed-log assertion and factory option assertions; final code covered by full regression"
+  },
+  "controls": {
+    "default_conflict_retries": 2,
+    "max_configured_conflict_retries": 3,
+    "default_delay_for_30_second_poll": 35,
+    "budget_scope": "entire process lifetime; not reset by successful polls",
+    "webhook_unknown_local_conflicts": "not retried"
+  },
+  "coverage": [
+    "temporary conflict followed by successful polling",
+    "persistent and intermittent conflicts exhaust lifetime budget",
+    "webhook/unknown conflicts exit immediately",
+    "invalid and non-finite configuration rejected",
+    "environment overrides",
+    "resumed log after verified polling success"
+  ],
+  "live_bot_probe": {
+    "native_polling_loop": "passed",
+    "successful_polls": 2,
+    "poll_timeout_seconds": 10,
+    "observed_updates": 0,
+    "offset_sent": false,
+    "messages_processed": false,
+    "messages_sent": 0,
+    "webhook_configured": false,
+    "scope": "Actual Bot API availability at diagnosis time; production Agent/model turn not executed"
+  },
+  "diagnosis": "No competing polling entry point found in inspected local processes or Docker containers. Bot API probes succeeded; original consumer may have exited or its request expired. API does not identify the conflicting host/process.",
+  "limitation": "A persistently active other consumer must still be stopped by the deployment owner. Local locks do not coordinate across hosts.",
+  "syntax": {
+    "tracked_python_files": 225,
+    "passed": true
+  },
+  "pip_check": {
+    "runtime": "clean requirements-ci",
+    "passed": true
+  },
+  "logs": [
+    "temp/telegram-handoff-related.log",
+    "temp/telegram-handoff-full.log",
+    "temp/telegram-handoff-live.log"
+  ]
+}

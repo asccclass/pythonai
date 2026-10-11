@@ -171,7 +171,7 @@ python .\telegram_polling_worker.py
 
 This mode does not require ngrok, a public IP, or webhook registration because the worker calls Telegram `getUpdates` from your machine.
 
-Polling startup checks `getWebhookInfo` and obtains a per-bot native lock. A configured webhook is rejected; the worker does not delete it or discard pending updates. One polling consumer must own a Bot across all hosts. HTTP 409 is a receiving-mode/consumer conflict, so the process prints a secret-free diagnosis and exits with code 1, cleaning scheduler and memory workers. Stop the other polling instance (including remote services) before restarting. Transient polling failures such as HTTP 502 still retry. Hook policy and loaded-Skill lines are normal startup diagnostics.
+Polling startup checks `getWebhookInfo` and obtains a per-bot native lock. A configured webhook is rejected; the worker does not delete it or discard pending updates. One polling consumer must own a Bot across all hosts. A getUpdates-consumer HTTP 409 can be a short handoff from an earlier long poll. The worker retains its local lock and permits two delayed retries by default; each wait is at least the configured poll timeout plus five seconds (normally 35 seconds). It logs successful recovery. The conflict budget is for the entire run, including intervening successful polls, so two active consumers cannot retry forever. A configured webhook, unknown conflict or exhausted conflict budget stops with code 1 and cleans scheduler/memory workers. Stop any persistently active other polling instance, including remote services, before restarting. `TELEGRAM_POLL_CONFLICT_RETRIES` accepts 0..3 (0 keeps immediate conflict exit); optional `TELEGRAM_POLL_CONFLICT_SLEEP` accepts 1..300 seconds. Transient polling failures such as HTTP 502 still retry. Hook policy and loaded-Skill lines are normal startup diagnostics.
 
 The default lock directory is `%LOCALAPPDATA%/PythonAI/telegram-polling` on Windows, with hashed Bot IDs; locks release on exit/crash. `AGENT_TELEGRAM_POLL_LOCK_DIR` can override this directory. Keep the same directory for processes that should exclude each other; different users/hosts need deployment-level single-consumer coordination. See [Telegram getUpdates](https://core.telegram.org/bots/api#getupdates) and [getWebhookInfo](https://core.telegram.org/bots/api#getwebhookinfo).
 
@@ -652,6 +652,10 @@ OAuth discovery 的授權網址若已有 state／client_id／redirect_uri／PKCE
 
 `papers/todo.md` 已分別標註本機功能完成與正式驗收待辦。T04、T06、T17–T21 的本機實作已完成並有測試紀錄，各項增加 [x] 子項與 commit；主項目仍維持 [ ]，正式平台／provider／品質／遠端 CI 的 7 個任務驗收条件依序集中列出。本輪只核對與標註文件，沒有新增程式或重跑全套測試。T18 的 dynamic registration／confidential client 仍未支援，未標記為已實作。
 
-### Telegram polling 409 修正驗證（2026-10-11）
+### Telegram polling 409 首輪修正驗證（2026-10-11）
 
 新增 receiving-mode preflight、per-bot 原生程序鎖及安全的 409 原因判讀；衝突停止並清理 worker，暫時 polling 錯誤仍重試。乾淨 requirements-ci 完整回歸 **651 passed、7 skipped、58 subtests passed（557.53 秒）**，225 檔語法及 pip check 通過。實測包括本機 HTTP 409 與程序 crash 後鎖釋放；正式 Bot 僅唯讀 getWebhookInfo，未消費 update 或發送訊息。證據保存於 `agent_execution/operations/verification_telegram_polling_2026-10-11.json`。
+
+### Telegram polling 短暫交接恢復（2026-10-11）
+
+遇到另一個 getUpdates 請求尚未結束時，不再第一次 409 就停止；保留本機鎖，預設兩次／每次 35 秒等待，成功後顯示 resumed。衝突預算不因成功輪詢重置；webhook／unknown／用完預算仍停止。正式 Bot 原生 loop 兩次 10 秒輪詢成功、0 updates，未帶 offset、未處理或發送訊息。完整回歸 **655 passed、7 skipped、68 subtests passed（674.18 秒）**；證據見 `agent_execution/operations/verification_telegram_handoff_2026-10-11.json`。另一個長期活動的 consumer 仍需由部署者停止。
