@@ -1,299 +1,255 @@
-# PythonAI 功能差距與開發待辦
+# PythonAI 跨平台本機發行任務規劃
 
-盤點日期：2026-10-09。現有功能、實作來源與限制見 [README.md](../README.md)。本檔於本次新增；原有 `docs/todos.md` 與其他規劃文件保留。以下記錄功能差距及逐項實作／驗收結果。主項目勾選代表其列出的驗收已完成；主項目未勾選時，請查看「本機功能完成」子項與正式驗收清單，不能據此推定功能尚未實作。正式服務未驗收不標成通過。不將已有 Hooks、記憶、Skills、MCP、排程與驗收重新列成未實作。
+規劃日期：2026-10-12。目標是讓使用者在 Windows、macOS、Linux 安裝並啟動 PythonAI，不必自行安裝 Python 或整理依賴。本檔是本機發行的新任務清單；工作目錄中的 `papers/1.todo.md` 保留原 T01–T21 功能與正式驗收紀錄，本次不修改該備份。以下全部為待執行工作，不代表已完成實作或跨平台驗收。
 
-比較基準：Codex 的編碼、worktree、多代理、批准與排程工作流程；「Agentic Agent」為規劃、工具執行、驗收、持久狀態及自主續跑的通用架構，非特定產品。此分析不主張模型品質等同或優於 Codex，也不以文件宣稱代替外部端到端驗證。
+## 產品範圍與交付原則
 
-## 完成狀態（2026-10-11 核對）
+- 首版採「內附 Python runtime＋既有 FastAPI／Web UI＋本機 launcher」，使用者啟動後自動開啟瀏覽器。保留 CLI、Telegram polling、`communication_server.py` 整合 Web／API／WebSocket 三種模式，共用核心設定與執行政策。
+- 核心程式共用；runtime、原生依賴、安裝器按 OS／CPU 架構分別製作。優先 Windows x64，再 macOS arm64、Linux x64；macOS x64、Windows arm64、Linux arm64 為擴充目標，通過驗收才列為支援。
+- 「本機安裝」與「完全離線」分開驗收：首版可以連遠端模型；離線版須另外完成本機推論、embedding、模型資源與禁網路驗證。Telegram／Discord／LINE、遠端 MCP 等仍須網路。
+- 模型、Laya、文件轉換、Playwright、語音、外部 Skill／MCP、Docker 沙箱分成明確功能組。未安裝的功能須在 UI／doctor 顯示原因，不能將精簡版宣稱為全功能版，也不能默默移除保護政策。
+- 程式、唯讀資源、可寫使用者設定、owner 隔離的狀態、使用者 workspace 分開。發行包不含真實 `.env`、Token、個人記憶、瀏覽器登入資料或本機工作檔。
+- Docker Compose 與桌面外殼列為後續選配；各自完成才標註其發行通過。Docker 沙箱功能仍依原本政策要求 Docker，不能因桌面打包而降級成 host 執行。
 
-| 範圍 | 本機功能 | 正式驗收 |
+## 原始碼分析與需先處理的落差
+
+| 現況與來源 | 對打包的影響 | 對應任務 |
 | --- | --- | --- |
-| T01–T03、T05、T07–T16 | 已完成，主項目 [x] | 依各項記載的驗收範圍與限制 |
-| T04、T06、T17–T21 | 已完成，各項新增「本機功能完成」[x] | 7 個任務保留主項目 [ ]，條件集中於文末正式驗收清單 |
+| 根目錄尚無 `pyproject.toml` 或正式發行建置設定 | 缺安裝入口、套件資源清單、可重現發行流程 | P03、P04、P16 |
+| `requirements.txt` 混合模型、轉換、開發依賴；CI 清單也含測試與替代版本 | 不能直接把 CI 環境或現有 venv 當成正式產品 | P02、P04 |
+| `server.py` import 時讀必要環境變數；API Key 驗證固定要求 LiteLLM `sk-` | 首次啟動缺設定即失敗，本機模型須另外處理 provider 契約 | P06、P13、P14 |
+| 多處使用 cwd、`__file__`、`LOCALAPPDATA`／home fallback | 安裝唯讀目錄、不同啟動目錄、macOS／Linux 目錄不一致 | P05、P08 |
+| coordinator、browser／audio／LSP worker 使用 `sys.executable` 與腳本路徑 | 凍結執行檔後不能直接當成 Python interpreter 使用 | P09、P16 |
+| Skills／動態工具／manifest 與 Web 靜態檔有檔案路徑依賴 | wheel 或安裝包可能漏檔；內建與使用者擴充需分開 | P08、P10 |
+| Windows Job Object、POSIX process group、平台命令與外部 executable | 純 Python 測試成功不等於各 OS 的程序取消與工具相容 | P09、P10、P15 |
+| 現有 CI 以 Windows unit/native、Ubuntu 部分 Docker/browser 整合為主 | 缺 macOS、安裝包、乾淨主機、簽章與更新驗收 | P15、P17–P23 |
+| Telegram 已有本機 Bot 鎖，但先前正式 API 實測仍有 consumer 409 | 安裝包須避免自己重複啟動，不能宣稱能排除其他主機 consumer | P11、P15、P23 |
 
-最近一次完整回歸為 polling 未完成請求恢復修正後的 **663 passed、7 skipped、92 subtests passed（1040.97 秒）**，證據見 [Telegram 未完成請求驗證摘要](../agent_execution/operations/verification_telegram_pending_2026-10-11.json)。這是本機離線 fixtures 的結果，不代表正式平台或 provider 驗收；正式 Bot 實測仍有另一個 consumer 的 409 衝突，尚未解除。
+## 執行順序與里程碑
 
-目前未找到現行支援範圍內尚未實作的 checklist 本機功能。T18 的 dynamic registration／confidential client 仍屬已記錄的未支援能力，尚未實作，也不納入 public-client OAuth 完成標註。後續依序處理文末正式驗收；沿用使用者「先完成本機增修與驗證」，不自行發送訊息、啟用 production persona 或 push。
+以下編號為建議交付順序；同階段工作可在滿足依賴後並行，但不得跳過驗收門檻。
 
-## P0：執行政策、身份與資料隔離
+| 階段 | 任務 | 交付門檻 |
+| --- | --- | --- |
+| M0：發行規格 | P01–P03 | 支援矩陣、功能分級、授權清單與目錄／入口設計確定 |
+| M1：核心可安裝 | P04–P10 | 依賴可重現、設定／資料隔離、資源與 worker 在安裝後可運作 |
+| M2：本機使用體驗 | P11–P15 | 單實例 launcher、首次設定、本機 UI 與核心測試通過 |
+| M3：可交付建置 | P16–P17 | 各平台 portable artifact 自動建置與發行驗證流程具備 |
+| M4：首版跨平台發行 | P18–P23 | Windows → macOS → Linux 的安裝、更新、移除與乾淨主機驗收完成 |
+| M5：後續選配 | P24–P30 | Docker、桌面外殼、額外架構、完整離線版分別驗收，不回填成首版已完成 |
 
-- [x] **T01 — 所有執行路徑共用工具政策與 workspace 邊界**
-  - 現況：`base.py` 核心路徑檢查與 RBAC 已存在；`tools/` 部分程式直接使用 cwd／Path，`SkillExecutor` 直接呼叫工具；排程命令直接 `shell=True`。
-  - 工作：建立共用執行入口，涵蓋一般工具、Skill 步驟、MCP、動態工具、子代理及排程；解析路徑、符號連結、cwd、來源身份與工具權限。
-  - 驗收：viewer／operator 不可透過 Skill、動態工具或排程繞過權限；跨 workspace 與路徑穿越均拒絕且留下可追蹤事件；合法 trusted Skill 資源仍可執行。
-  - 完成（2026-10-09，commit `328bcd8`）：新增 `agent_execution/` 共用政策與來源／身份 context；接入模型工具、Skill、動態工具、MCP、排程及子代理 context。工具路徑解析、Git repository 邊界、命令 option 路徑、索引位置亦已修正。
-  - 驗證：完整 pytest 349 passed；後續 MCP／索引補強及新增測試後相關 pytest 77 passed（含 18 項政策回歸）；變更檔案語法與 diff 檢查通過。Windows junction 越界拒絕已實測；未進行真實 MCP provider round trip。
-  - 邊界：此為應用層的角色與參數政策，不能限制已授權任意 Python／shell／第三方 MCP 內部副作用，OS 隔離由 T02 處理。舊排程遷移為 local/admin，新工作保存建立者身份／角色；shell operator 字串須改成 argv 或明確腳本。
+M4 不依賴 M5 的選配功能；P23 通過才可宣稱首版跨平台可用。若 P01 決定首版必須完全離線或具桌面外殼，須將相應 P25–P27／P30 納入 P23 發行門檻。
 
-- [x] **T02 — 真正的沙箱與程序生命週期管理**
-  - 現況：`sandbox.py` Docker 可寫掛載 workspace，fallback 是主機 subprocess；`run_command` 未設通用 timeout。
-  - 工作：明確區分 container 與 host 模式；需要隔離時無 Docker 應拒絕執行；加入唯讀／可寫範圍、secret 排除、網路政策、CPU／記憶體／磁碟限制、timeout、子程序終止及 artifacts 匯出。
-  - 驗收：容器不能讀取主機 secret／未授權路徑；超時與取消可終止整棵程序樹；隔離失效不可靜默退回主機；Windows 與 Docker 實測分別記錄。
-  - 完成（2026-10-09，commit `a95bb7e`）：Docker-only sandbox、唯讀 secret-filtered snapshot、禁網路、256 MiB／1 CPU／64 PID、16 MiB tmpfs 暫存及 32 MiB artifacts；安全 tar 匯出及拒絕覆寫。明確 host/container 模式、60 秒預設命令期限、2 MiB／stream 輸出上限、取消、Windows Job Object／程序樹清理。
-  - 驗證：完整 pytest（開啟 Docker integration）366 passed；Windows 原生成功／取消／超時／輸出超限／子程序清理，以及 Docker 網路、secret、唯讀掛載、資源上限、artifact 匯出與超時後容器移除均實測通過。
-  - 使用限制：container 適用 Linux 指令及唯讀 workspace，產出寫至 /artifacts；不轉交 env_file 中的 provider credentials。內建應用 helper 仍是受信任 Python host 程式，子程序統一使用有界 runner；第三方 MCP 與動態工具的可信發布流程由 T18 處理。
+## M0：發行規格
 
-- [x] **T03 — 遠端身份驗證與不可偽造的批准流程**
-  - [x] **通訊管理員設定接通（2026-10-11）**：修正 `get_user_role()` 忽略既有 `COMM_ADMIN_SENDERS`，使未指定角色檔時精確列出的 Telegram／Discord／LINE 身份取得 admin；指定角色檔仍優先，缺漏／無效／不可讀皆為 viewer。允許名單不升權；新增角色優先序與通訊 runner 的 Git 工具政策回歸測試。
-  - 管理員修正驗證：相關測試 **73 passed、35 subtests passed**；乾淨 requirements-ci 全套 **659 passed、7 skipped、85 subtests passed**，225 檔語法、pip check 與 diff 檢查通過。既有 `.env` 的指定 Telegram 身份解析為 admin、`git_status` 權限通過，未指定身份仍為 viewer；未修改 `.env` 或發送訊息。詳見 `agent_execution/operations/verification_telegram_roles_2026-10-11.json`。
-  - 現況：`permissions.py` 未設定 ROLES_CONFIG 時預設 admin；通訊命令自動批准；`manage_memory(confirm=True)` 依賴模型遵守提示；REST 管理 API 未整合身份／角色。
-  - 工作：遠端預設最小權限、API 登入／授權、綁定身份與操作內容的 approval ID、到期／一次性使用及稽核；保留遠端非互動執行，透過通訊／UI 批准，不使用 stdin。
-  - 驗收：未登入不能修改記憶；模型自行傳 confirm=True 不足以批准；批准只適用原始身份／參數，跨會話、重放及過期操作皆拒絕。
-  - 完成（2026-10-09，commit `b87d1ce`）：遠端預設 viewer、API Bearer token 驗證／RBAC（ASGI 與 HTTP）、SQLite 人類批准紀錄、5 分鐘 TTL、身份／會話／參數綁定、原子一次性消耗與稽核。CLI／通訊支援 /approvals、/approve、/deny；Dashboard 登入與操作批准流程。模型 confirm=True 無法授權。
-  - 驗證：完整 pytest 開啟 Docker／Chromium integration：377 passed；補強已批准後過期及 malformed UTF-8 後相關測試 11 passed、1 skipped（browser 已另以實際 Chromium 3 passed）。身份／會話／參數變更、重放、併發、拒絕及 API 無登入寫入均有回歸測試；語法與 diff 檢查通過。
-  - 邊界：批准 SQLite 預設存 workspace 外；任意 host 程式與第三方 MCP 仍須視為受信任程式，應用層批准不能對抗使用者 OS 權限。API 租戶隔離待 T05；通訊批准測試使用 adapter stub，尚未真實平台 round trip。
+- [ ] **P01 — 明確定義支援平台、功能組與首版驗收範圍**
+  - 工作：列出 OS 最低版本、CPU 架構、Python 基線、Linux glibc／桌面條件、磁碟與 RAM 需求。以現有 Python 3.12 CI 為候選，依原生 wheels 與功能測試決定，不能僅選最新版本。定義核心版／選配功能、遠端模型版／離線版、portable／installer 的支援承諾。
+  - 交付：版本化支援矩陣、功能能力表、首版 acceptance cases、已知不支援範圍；Desktop／Docker／其他架構列明是否延後。
+  - 驗收：每個「支援」組合均有對應驗收案例；未配置的外部服務與硬體驗收列為待辦，不以 fixture 代替。
+  - 依賴：無。
 
-- [ ] **T04 — Webhook 驗證缺失時拒絕與平台回覆完整性**
-  - [x] **Polling 未完成請求恢復（2026-10-11）**：原生 per-bot 鎖保存無憑證的 in-flight deadline；Ctrl+C／crash／斷線後，再次輪詢先等舊請求期限，正常回應立即清除。修正 409 日誌，不再將其他持續 consumer 宣稱為必定過期的交接；跨主機 consumer 仍須由部署者停用。
-  - 未完成請求恢復驗證：相關 **58 passed、23 subtests passed**；乾淨 requirements-ci 全套 **663 passed、7 skipped、92 subtests passed**，225 檔語法與 pip check 通過。正式 Bot webhook 未設定、pending updates 為 0、本機鎖可取得，但 10 秒 getUpdates 實測仍回 poller 409；未傳送 offset 或處理／發送訊息。已檢查的 Windows／Docker／WSL 程序未定位競爭 consumer，正式衝突保留未解決。摘要：`agent_execution/operations/verification_telegram_pending_2026-10-11.json`。
-  - [x] **Telegram polling 短暫交接恢復（2026-10-11）**：consumer 409 不再第一次即停止，持有本機鎖等待舊 long-poll 到期，預設兩次／每次 35 秒；恢復後印出 resumed。整個程序生命週期共用 0..3 次衝突預算，成功輪詢不重置，以免兩個 consumer 永久互搶。webhook／unknown／超出預算仍停止；不終止其他專案程序或更動 Bot credentials。
-  - 交接恢復驗證：乾淨 requirements-ci 全套 **655 passed、7 skipped、68 subtests passed（674.18 秒）**；225 檔語法、pip check 通過。正式 Bot 的原生 polling loop 兩次 10 秒 getUpdates 成功、0 updates，未帶 offset、未處理或發送訊息；此時 API 無衝突，不推定遠端 consumer 永久停用。驗證摘要：`agent_execution/operations/verification_telegram_handoff_2026-10-11.json`。
-  - [x] **Telegram polling 409 修正（2026-10-11）**：getWebhookInfo preflight、本機 per-bot OS lock、HTTP／JSON 409 安全分類、永久衝突停止並清理；502 等暫時錯誤仍重試，不刪除 webhook 或丟棄 pending updates。正式 Bot 唯讀診斷為 webhook 未設定，409 的其他 consumer 需由部署者確認所在程序／主機。
-  - polling 修正驗證：乾淨 requirements-ci 全套 **651 passed、7 skipped、58 subtests passed（557.53 秒）**；包含實際本機 HTTP 409、原生跨程序鎖／token rotation／crash 釋放、webhook 拒絕但不刪除、fatal conflict 不重試／背景清理，以及既有 502 重試。225 檔語法與 pip check 通過；保留既有 AnyIO 棄用警告。證據：`agent_execution/operations/verification_telegram_polling_2026-10-11.json`。
-  - [x] **本機功能完成（2026-10-11 核對標註）**：production webhook 驗證、timestamp／去重、Discord deferred／follow-up、LINE 回覆策略；commit `bcecff0`，相關平台契約 53 passed。正式帳號送達另列待辦。
-  - 現況：未配置 Telegram／LINE secret 或 Discord public key 可接受請求；Discord 缺 PyNaCl 會略過驗章；Discord command 路徑尚需確認符合 interaction 回覆時限。
-  - 工作：分開開發與對外模式，對外缺 secret／驗證依賴拒絕啟動或請求；補 timestamp／重放限制、Discord deferred response／follow-up 與 LINE 回覆策略。
-  - 驗收：缺少或錯誤簽章、過期／重放請求不能入列；Discord／LINE 真實帳號 round trip 成功；平台依賴及配置寫入安裝文件。
-  - 實作完成（2026-10-09，commit `bcecff0`，外部驗收待辦）：production 缺配置拒絕，development 明確豁免；真實 Ed25519 與 event timestamp 驗證、持久化去重、單次解析／附件下載、Discord deferred ACK 後放行 job／follow-up／過期 channel fallback、LINE push 與分段、API delivery error 檢查。新增 PyNaCl 依賴及部署設定。
-  - 相關測試：`python -m pytest tests/test_webhook_security.py tests/test_communication.py tests/test_communication_server.py tests/test_telegram_polling_worker.py -q`：53 passed；包含真實密碼學簽章驗證及缺套件拒絕，平台 HTTP POST 使用 stub。語法／diff 檢查通過。
-  - 保持未勾選：Discord／LINE 正式帳號 round trip 尚未驗證，須有配置完成的測試帳號與對外 HTTPS webhook。實作可供 T05 後續隔離工作使用，不能將本機協定測試等同正式平台交付。
-  - 完整驗證：開啟 Docker／Chromium integration 的 pytest：388 passed；其後補原始 Discord 回覆 PATCH 與原生 HTTP ACK 測試：相關 11 passed。無外部平台訊息傳送。
+- [ ] **P02 — 盤點依賴、外部程式、模型與再散布授權**
+  - 工作：區分直接／間接依賴、純 Python／原生 wheels、必需／選配；盤點 Git、Node、Docker、Chromium、OCR／音訊工具、Skill executable、MCP server 與 Laya／其他模型。確認來源、版本、平台、下載大小、授權、NOTICE、模型再散布權與更新方式，記錄已知漏洞／相容問題的處置。
+  - 交付：可機器讀取的依賴／資源 inventory、授權與第三方公告清單；決定哪些內附、首次下載或要求外部安裝。
+  - 驗收：發行所用套件與資源均有來源／授權記錄；不能因開發機已有某 executable 就忽略其安裝與驗證。禁止將帶個人資料的模型 cache 或整個現有 venv 直接打包。
+  - 依賴：P01。
 
-- [x] **T05 — 會話、使用者、專案與取消狀態隔離**
-  - 現況：`CommunicationWorker` 背景 threads 共用 runtime.messages／check_cancelled；記憶 scope 欄位尚非端到端隔離；/status、/cancel、/clear 需完整身份範圍。
-  - 工作：以 platform + conversation + identity + project 分配 runtime／鎖／記憶查詢範圍；每個 job 保存獨立取消 token，管理指令依身份授權。
-  - 驗收：兩使用者同時發送、取消或清除任務時互不影響；不可查看／取消他人 job；記憶檢索與管理 API 不會跨租戶洩漏。
-  - 完成（2026-10-09，commit `be2dcd4`）：獨立 runtime／messages／search state／會話 lock、身份／會話／專案分庫、可信 workspace map／ContextVar 根目錄；保存 command project、原子 claim／cancel、禁止取消狀態被完成覆寫，status／cancel／clear／resume owner filter。API 資料、任務計數及批准隔離到身份／project。WebSocket device／outbox／proactive key 加入 owner／project，移除預設 token，修正舊 socket 清除新連線。
-  - 驗證：完整 pytest 開啟 Docker／Chromium integration：395 passed；後續 workspace 與 WebSocket 補強相關測試 33 passed（含 8 項 sessions 測試），Chromium 登入／批准實測相關 27 passed。語法與 diff 檢查通過。
-  - 邊界：legacy 本機記憶不自動複製到遠端，新租戶由空 DB 開始；不同平台身份不自動合併。對話 runtime 仍是程序記憶體，重啟續跑由 T08 處理；各 task 的專用 worktree 由 T12 處理。自訂 runner 須實作 scoped clear callback。
+- [ ] **P03 — 規劃套件、發行專用目錄與相容入口**
+  - 工作：在 `distribution/` 集中 launcher、平台建置／安裝設定、需求文件、資源清單與測試；共用執行設定優先放既有 `agent_execution/`。根目錄新增 `pyproject.toml` 作專案 metadata。規劃套件納入既有模組的方式，避免無必要的大量改名；既有三個 Python 啟動入口保留相容轉接。
+  - 交付：目錄設計、套件邊界、CLI／worker 入口契約、資源／使用者資料邊界；建置輸出使用忽略於 Git 的 `build/`／`dist/`。
+  - 驗收：新增獨立程式資源集中於專用目錄；既有工具與 import 契約有遷移方案，不新增第四個重複 Agent 核心。
+  - 依賴：P01、P02。
 
-## P1：真實 Agent 體驗與長任務可靠性
+## M1：核心可安裝
 
-- [ ] **T06 — WebSocket 接入真實 Agent 串流及任務控制**
-  - [x] **本機功能完成（2026-10-11 核對標註）**：Agent 真實串流、工具／批准／驗收事件、取消與 owner-targeted fallback；commit `d8c6257`，SDK 本機 HTTP SSE／控制流程已有測試。正式 provider 與 fallback 送達另列待辦。
-  - 現況：`brain_reply_stream` 是示範 echo，主 Agent 使用非串流 Chat Completions；Telegram fallback 僅 append 到清單。
-  - 工作：/ws/v1 使用獨立 AgentRuntime，輸出模型 delta、工具開始／結果、驗收、批准及錯誤事件；實作真正平台 fallback 與 interrupt 傳遞。
-  - 驗收：一個需要工具的請求可串流執行並回實際結果；中斷可停止模型／工具工作；fallback 真正送達；協定測試、真實 provider 測試分開紀錄。依賴 T02、T05。
-  - 實作完成（2026-10-09，commit `d8c6257`，外部驗收待辦）：真實 Chat Completions stream、分段工具呼叫組裝、隔離 AgentRuntime、模型／工具／驗收／批准事件、busy 保護、取消與清理、owner-targeted Telegram adapter fallback；SDK 關閉串流並限制 timeout，慢 consumer 有界 queue。
-  - 驗證：server／hooks／streaming 49 passed、1 skipped；新增 SDK 本機 HTTP SSE、批准 project／device 與 busy 測試後相關 23 passed、1 skipped。包含實際檔案讀取與 host 子程序取消；語法／diff 檢查通過。
-  - 保持未勾選：真實 provider opt-in 測試失敗，2026-10-09 配置 endpoint DNS 成功但 TCP 443 連線逾時；尚需恢復 provider 後驗收工具串流。Telegram fallback 以 adapter stub 驗證路由與送出，正式帳號實際送達未驗收。建立模型連線中取消仍受最長 60 秒 timeout 約束。
+- [ ] **P04 — 建立 pyproject、功能分組與可重現依賴**
+  - 工作：宣告 build backend、Python 範圍、console scripts、套件資料；分出 core、local-model／guard、documents、browser、audio、development 等依賴組。使用 lock／constraints 記錄平台條件、版本與校驗；CI 清單與正式 runtime 分工，排除正式包中不必要的 pytest／lint 工具。
+  - 交付：wheel／sdist、各功能組安裝方式、各平台依賴鎖定與相容性記錄。
+  - 驗收：乾淨環境可 build、install、import 核心；`pip check` 通過。功能組缺依賴時能列明原因；使用特定開發工具的 Agent 功能仍可在受控工具環境安裝該工具。
+  - 依賴：P03。
 
-- [x] **T07 — 附件與可靠訊息持久化**
-  - 現況：`communication_store.py` 的附件 bytes 存於 _PENDING_ATTACHMENTS，WebSocket outbox／sessions 存於記憶體。
-  - 工作：附件落地或物件儲存、雜湊／MIME／大小與存取檢查、TTL；可靠事件持久化、去重、容量限制、backpressure、過期補送政策。
-  - 驗收：入列後重啟仍能處理圖檔及文件；斷線／重啟補送無重複副作用；未授權附件不可讀，過期資料可清理。依賴 T05。
-  - 完成（2026-10-09，commit `6f47254`）：附件 bytes／雜湊／MIME／大小／期限 SQLite、原子 inbound/job/attachment ingest、owner 範圍讀取與過期拒絕；可靠事件持久化 seq／ACK／TTL floor、容量拒絕／backpressure、chat ID 去重與 crash 後 uncertain；平台 delivery intent／原子 claim／lease，未知送達不盲目重送。
-  - 完整驗證：`python -m pytest tests agent_execution/tests -q`（Docker／Chromium 開啟）414 passed、1 skipped（外部 provider opt-in）、3 subtests passed；語法及 diff 檢查通過。相關驗證：67 passed、1 skipped；新增 8 項持久化測試通過，包含新 Python 程序讀回圖檔及中文文件、竄改／越權／到期、容量不覆寫、重啟 ACK 與輸入不重複執行。
-  - 邊界：平台回覆沒有 exactly-once 承諾；uncertain 需人工查詢，不會重跑 Agent。WS 對話 messages／執行 checkpoint 由 T08 處理。MIME magic 不是惡意文件掃描；服務 DB 仍受主機 OS 權限控制。過期 bytes 可清理，附件 metadata tombstone 達配置上限後須依管理保留政策整理。
+- [ ] **P05 — 統一跨平台設定、狀態、cache 與 workspace 路徑**
+  - 工作：以 `platformdirs` 或同等跨平台機制建立集中 path resolver；區分唯讀 app resources、config、SQLite 狀態、logs、cache、models、browser profile、user extensions 與使用者選擇的 workspace。統一目前分散的 LOCALAPPDATA／home fallback，保留 owner／project／tenant 隔離；提供明確覆寫方式。
+  - 交付：路徑 API、各平台目錄表、舊資料位置探測與遷移映射；CLI／服務／子代理使用相同 resolver。
+  - 驗收：中文／空白／非 ASCII 路徑、任意 cwd、唯讀安裝位置均可運作；狀態不寫入程式目錄；使用者擴充的可寫區不自動成為受信任 executable 區。
+  - 依賴：P04。
 
+- [ ] **P06 — 設定載入與 provider 契約重整**
+  - 工作：移除 import 階段必需的環境變數讀取，先建立設定物件再初始化 Agent；定義預設值、檔案、環境變數、CLI 的優先序。舊 `.env` 相容匯入但不覆蓋明確的新設定；ROLES_CONFIG／COMM_ADMIN_SENDERS 的優先序維持。遠端 LiteLLM、一般相容 endpoint、本機 endpoint 各自驗證 URL／auth／模型能力，取消所有 provider 共用 `sk-` 假設。
+  - 交付：設定 schema／版本、驗證與去密輸出、provider capability／health 契約、錯誤分類。
+  - 驗收：全新安裝缺設定仍可進入設定頁；遠端缺必要 credentials 應拒絕連線；允許本機無 auth 不代表放寬遠端驗證。文字／圖片／embedding 能力不相符時明確提示，不靜默替換模型。
+  - 依賴：P05。
 
-- [x] **T08 — 持久化任務計畫、checkpoint 與重啟恢復**
-  - 現況：ReAct 規劃靠提示與 15 次迭代上限；通訊已有 ask_user 暫停／恢復，未涵蓋任意執行點，且 ask_user 未列入預設工具 schema。
-  - 工作：註冊 ask_user schema 並驗證真實暫停／續跑入口；保存 task／plan／steps、依賴、輸入與驗收、執行狀態及 checkpoint；重啟恢復 pending／running；不可重放操作使用 idempotency key 或轉人工確認。
-  - 驗收：工具前／後、驗收前／後中斷程序仍可安全續跑；外部寫入不重複；失敗步驟可有限重試或重規劃；保留 episode 關聯。依賴 T01、T05。
-  - 完成（2026-10-09，commit `468cb5e`）：TaskStore goal／criteria／step 輸入、結果、依賴、episode 與 checkpoint；原子 lease／heartbeat／fencing、3 次 crash 恢復、模型／工具前後／驗收前後、直接 Skill 結果；CLI／通訊／WS 接入，ask_user schema／持久問答與人類 tasks／steps／resume／cancel／resolve。
-  - 相關驗證：54 passed、1 skipped（外部 provider）、4 subtests passed；使用真正退出的子程序，在 model_received、tool_done、evaluation_pending／done 中斷後仍僅一次寫入。tool_started 中斷會轉 uncertain，不猜測外部副作用；WS runtime 重建後問答成功，episode／tool pairing 保留。
-  - 完整測試首次 421 passed、1 failed（Docker rm 清理的 5 秒 timeout）、1 skipped、7 subtests passed；修復為 20 秒有界 runner 並忽略任務取消，單獨實際 Docker／程序測試 19 passed，修復 commit `dc68d4c`。完整測試重跑（Docker／Chromium 開啟）427 passed、1 skipped（外部 provider）、7 subtests passed；其後 /clear 持久暫停取消補強相關測試 55 passed、1 skipped、4 subtests passed。語法／diff 檢查通過。
-  - 邊界：plan 是現有 ReAct 實際產生的循序步驟與依賴，跨代理 DAG 由 T13 處理；task completed 不等同 verified_completed，T10 補明確條件。Skill 中途副作用須人工查核／取消，不自動重播。舊版無 task checkpoint 的 running job 保留人工處理，安全恢復須等待 180 秒 lease 過期。
+- [ ] **P07 — 資料遷移、備份還原與升版相容性**
+  - 工作：盤點記憶、通訊、任務、批准、排程、trace、OAuth 與擴充等 stores；沿用 operations 備份／migration，補齊整體 manifest、schema 版本、舊路徑搬遷與一致性策略。進行中的工作與不確定外部副作用須標記，不能更新後自動重放。
+  - 交付：先備份再遷移的流程、失敗復原、還原驗證、資料與程式版本相容表。
+  - 驗收：真實 SQLite fixture 的升版／中途失敗／重啟／還原均通過；不在連線仍開啟時直接搬移 DB，不只複製 SQLite 主檔而漏 WAL。降版不支援時保留資料並提示，不強制開啟新版 schema。
+  - 依賴：P05、P06。
 
+- [ ] **P08 — 套件資源與動態載入相容性**
+  - 工作：完整納入 Web 靜態檔、Skill metadata／腳本、builtins manifest、schema、prompt／範本與 worker 資源；改用明確 resource loader。內建唯讀 Skills 與使用者可寫／批准後擴充分離。需實體路徑的資源有受控生命週期與校驗。
+  - 交付：package-data 清單、資源解析 API、缺檔／版本不符的診斷。
+  - 驗收：離開 repository、wheel 安裝後仍可開 UI、列出／匹配 Skills、載入 manifest；資源存取不依賴開發機絕對路徑。生成工具不得寫入安裝目錄或繞過原批准／測試 gate。
+  - 依賴：P04、P05。
 
-- [x] **T09 — 任務總預算、模型路由與上下文治理**
-  - 現況：`request_budget.py` 主要限制記憶請求；工作記憶為摘要，所有開發任務主要使用 OLLAMA_MODEL。
-  - 工作：task／子代理總 token、成本、deadline、併發與 retry 預算；模型能力探測、文字／視覺／embedding 路由；依 token 壓縮並保留目標、批准、工具呼叫／結果配對。
-  - 驗收：連續 429／timeout／子代理遞迴不會突破預算；不支援 vision 時明確降級；壓縮後仍保持驗收條件與合法訊息結構。依賴 T08。
-  - 實作（commit `ed5abb8`）：根任務持久化 token／request／成本／deadline／子代理總數与深度；前景模型、embedding、Judge 與重試扣額，SDK 隱藏重試關閉；全域 SQLite model slots／串流 wall deadline、通訊背景入列上限與控制指令通道。子代理獨立 checkpoint 防止覆寫父任務；仍共享父預算。
-  - 模型／上下文：文字／視覺／embedding 配置、明確能力拒絕與 opt-in bounded probe；失敗能力標 unknown。UTF-8 bytes 保守 token 估算，整組工具配對裁剪、保留 goal／criteria／approval／最新輸入；不裁剪權威 checkpoint、不將摘要提高權限。
-  - 邊界：成本上限預設關閉，啟用須提供受信任費率；保留額度不退還，usage 超估向上記帳後停止後續工作，不是供應商帳單保證。圖片 Base64 保守計入，較大圖片需配置已驗證視窗，超限明確拒絕。真實 provider 能力探測仍受目前 TCP 443 連線逾時限制；不據本機 fixture 宣稱部署模型具備視覺品質。DAG／child crash coordinator 由 T13 處理。
-  - 完整驗證（2026-10-09）：`python -m pytest tests agent_execution/tests -q`，開啟實際 Docker／Chromium：444 passed、1 skipped（外部 provider）、7 subtests passed。新增 16 項預算／上下文測試，包含真實 SDK HTTP 429 無隱藏重試、Agent 連續 429 停止、Windows host 程序 deadline、blocked stream 關閉、SQLite 併發扣額與成本／重啟／child checkpoint；語法與 diff 檢查通過。前次相關測試 96 passed、1 skipped、4 subtests passed。
-  - 後續修復（2026-10-10，commit `aee5455`）：完整測試壓力下發現取消與 monotonic deadline 的微小競態，空 EOF 可能誤作正常完成；新增 explicit interrupted flag 與 EOF budget check。預算相關 17 passed，含新取消 EOF 回歸；完整重驗納入 T10。
+- [ ] **P09 — 統一 Python runtime 與 worker 啟動**
+  - 工作：內附可再散布的各平台 Python runtime；集中解析受信任 interpreter 與 worker argv，涵蓋 coordinator、browser、audio、LSP、operations 與 Python 工具。保留獨立程序、timeout、取消、輸出上限與 Windows／POSIX 清理；區分核心 runtime 與使用者專案 venv，Agent 不可直接更新 app runtime。
+  - 交付：runtime manifest、worker dispatch 契約、子程序啟動 helper、工具環境管理。
+  - 驗收：未安裝 Python、PATH 無 python、不同 cwd、空白路徑仍能啟動 worker；取消／crash 無殘留程序。若日後使用 PyInstaller，須另驗證 frozen dispatch，不能用凍結後的 `sys.executable` 直接執行 `.py`／`-m`。
+  - 依賴：P04、P05、P08。
 
-- [x] **T10 — 結構化工具結果與明確完成條件**
-  - 現況：工具混用字串／dict／CompletedProcess；驗收會解析文字測試輸出，部分 Skill 回傳非零 returncode 未必成為步驟失敗。
-  - 工作：統一 success、exit_code、error、artifacts、side_effects；任務起始明確驗收條件，避免只靠關鍵詞或 Judge；Skill 直跑路徑也接入驗收及稽核。
-  - 驗收：工具回失敗、測試沒跑、只有成功文字、直接 Skill 失敗等情境不能標為 verified_completed；Critic 只針對可修正失敗重試。依賴 T01、T08。
-  - 實作（2026-10-10，commit `d5f2a0d`）：ToolResult 正規化、實際 exit code／JUnit 測試證據、Skill 失敗停止後續步驟；起始凍結的 versioned file／hash／tests 契約、goal／project evaluator 修正。Judge schema／網路錯誤拒絕，無證據預設 completed／unverified，TaskStore 另存 verification。Skill 執行與驗收分 checkpoint，skill_executed 復原只續驗收；真實退出程序驗證副作用一次。
-  - 相關測試：103 passed、7 subtests passed；新增 crash 與 tool audit 補強 25 passed、4 subtests passed；補上 code 契約必須 tests、文件編輯分類、Judge 不重試及避免重跑同一測試後 31 passed、3 subtests passed。語法與 diff 檢查通過。
-  - 完整驗證首次 451 passed、2 failed（tool JSON 顯示的舊測試期待值、T09 cancel EOF 競態）、1 skipped、7 subtests passed；兩者修正後，Docker／Chromium 完整重驗：461 passed、1 skipped（外部 provider）、7 subtests passed。其後補通訊 runtime 工廠的 TaskEvaluator，工廠／結果／project 隔離相關 43 passed。新增 15 項 results 測試與 1 項真實 Skill 程序退出測試；語法／diff 檢查通過。
-  - 邊界：驗收依部署者配置的 checks，不能證明測試本身品質或未列出的外部行為；舊契約／資料不回溯標 verified。保留 legacy 工具显示 API，但字串不可當測試證據；side_effects 未知時不猜測。獨立 Reviewer、完整 artifacts 與品質 benchmark 分別由 T13／T14／T21 擴充。
+- [ ] **P10 — 外部工具、Skills、MCP 與平台命令相容性**
+  - 工作：清除固定 Windows `.exe`／PowerShell／絕對路徑假設；建立功能能力偵測、平台命令 adapter、受信任 executable resolver。依 P02 決策處理 Git／Node／OCR 等安裝或下載；MCP 使用者設定與 credentials 保存在資料區。
+  - 交付：跨平台工具能力表、安裝／補齊指引、缺依賴的統一錯誤；檔案模式、symlink／junction 與 executable 權限相容策略。
+  - 驗收：合法工具在支援 OS 成功，缺 executable 不阻塞整個 Agent；命令參數、workspace confinement、角色與批准政策一致。Docker 沙箱缺 Docker 時仍 fail closed。
+  - 依賴：P02、P06、P08、P09。
 
-- [x] **T11 — 將 Hook 框架接成可配置政策**（commit `c083809`）
-  - 現況：四個 lifecycle 與稽核已有測試，default_hook_manager 尚無內建 hook；Guard／權限／驗收不是全部經由共用 hook。
-  - 工作：加入政策註冊配置與啟動診斷，將參數驗證、身份／預算、結果正規化接入適當事件；補 Skill／排程路徑，避免雙重執行。
-  - 驗收：啟停、排序與 fail-closed 設定有效；無政策時明確顯示；每條執行路徑有一致稽核，阻擋不產生副作用。依賴 T01、T03、T10。
-  - 實作（2026-10-10）：六項內建政策及 AGENT_HOOK_POLICIES JSON 設定、啟動診斷；模型 request／response、native signature／基本 schema、角色／路徑／預算、結構化結果稽核。直接工具、Skill／排程與模型路由接共用事件，委派避免雙重執行；核心授權不因停用 Hook 而取消。
-  - 相關驗證：90 passed；checkpoint／結果補強 45 passed、4 subtests passed；型別／enum／array 驗證補強 98 passed、4 subtests passed；修正 SDK 訊息 mock 後相關 35 passed、3 subtests passed。完整重驗另記錄於下。
-  - 完整 Docker／Chromium 重驗：473 passed、1 skipped（外部 provider）、7 subtests passed。首次 470 passed／2 failed 的舊 SDK mock 與第二次 472 passed／1 failed 的舊 command 字串 fixture 均已修正成實際 SDK／工具格式；新增 12 項政策測試，語法／diff 檢查通過。
-  - 邊界：完整外部 MCP schema 仍由 T18 補；有 memory episode 的 Hook 事件持久化於該 episode，無記憶時保留 HookContext 稽核。custom hook 是可信 Python，既有 tool_done 恢復不重播自訂 post-tool hook，不承諾其外部副作用 exactly-once；完整 tracing 由 T21 補。
+## M2：本機啟動與使用體驗
 
-## P2：縮小與 Codex 的開發交付差距
+- [ ] **P11 — Launcher、單實例與背景 worker 生命週期**
+  - 工作：建立 GUI／CLI 共用 launcher，管理三種模式、服務 health／readiness、埠衝突、自動開啟 UI、啟停／重啟／退出、日誌位置。明確決定 UI 關閉時停止或留背景；scheduler／memory／polling ownership 不因多開重複執行。
+  - 交付：狀態機、可追蹤診斷、crash 復原、跨平台單實例機制；第二次啟動導向既有實例。
+  - 驗收：快速多開、長任務退出、Ctrl+C、程序 crash、休眠喚醒、網路斷線均有測試；服務尚未就緒不顯示可用。沿用 polling lease／pending deadline；遠端 consumer 409 仍提示真實限制，不主動搶占或刪除 webhook。
+  - 依賴：P06–P10。
 
-- [x] **T12 — 任務專用 Git worktree 與安全交付**
-  - 現況：有 git status／diff／commit／rollback，但任務與子代理共享 checkout。
-  - 工作：建立／回收 task worktree、保留使用者 dirty changes、限定修改／staging 範圍、diff 預覽、選檔回復、commit 與 artifacts；對破壞性 rollback 明確批准。
-  - 驗收：兩任務可獨立修改同檔且不互覆；失敗回復不刪使用者既有變更；只有任務檔案入 commit；清理前可恢復成果。依賴 T02、T08。
-  - 實作（2026-10-10，commit `bfdde21`）：可選 AGENT_TASK_WORKTREE=1、owner/task detached worktree、TaskStore 固定綁定與 scoped evaluator；選檔獨立 index commit、批准後選檔 rollback 與備份。人類 `/worktree` preview／archive／restore；清理前保存 committed bundle、dirty／ignored／deleted 檔及 digest manifest。來源 dirty changes 不複製進 worktree，保留原 checkout。
-  - 相關測試：底層 8 passed、6 subtests passed；接入任務／驗收後 41 passed、10 subtests passed；增加真正退出程序及防覆寫／ZIP 逃逸／digest 驗證後 worktree 16 passed、6 subtests passed。完整初次 486 passed、1 skipped、13 subtests passed；補強 hook 選檔與 archive limits 後完整重驗另記錄。
-  - 最終 Docker／Chromium 完整驗證：492 passed、1 skipped（外部 provider）、13 subtests passed；新增 19 項 worktree 測試，包含實際 Git hook 添加未選檔案的對照、staged 刪除回復、真正退出程序恢復與 Skill 的 worktree 契約驗收。批准／任務／worktree 相關 40 passed、10 subtests passed；語法／diff 檢查通過。
-  - 邊界：預設支援非 Git workspace 不開啟 worktree；不自動合併任務成果。scoped commit 停用 repository hooks，驗收需先執行；symlink／junction、submodule、nested repo、過大成果拒絕自動清理。封存需無其他編輯者，壞 archive／中途 crash 的殘留保留供人工處理；封存磁碟保留待 T21，合作結果合併待 T13、外部 PR 待 T14。
+- [ ] **P12 — 本機 Web、API、WebSocket 與 credentials 安全**
+  - 工作：預設只 bind loopback；維持 API 身份／批准政策，設計本機登入、短期 session 或 launcher credentials。補 Origin／Host／CORS／CSRF／WebSocket 檢查與安全 bootstrap，避免為了開瀏覽器把 token 放 URL query 或日誌。對 LAN／外網監聽提供明確配置與驗證。
+  - 交付：本機 UI 認證流程、credentials 儲存／輪替／去密、平台權限策略；若使用系統 keychain，另列其依賴與不可用時的受限 fallback。
+  - 驗收：外部網頁不能藉 loopback 操作 Agent；錯誤 Origin／未授權 API／WebSocket 被拒絕；角色與批准不因本機包裝而變全 admin。簽章密鑰與 runtime download trust 不交由模型管理。
+  - 依賴：P06、P11。
 
-- [x] **T13 — 可管理的多代理協作**
-  - 原況：planner／coder／reviewer daemon thread 與 JSON 狀態，無 durable coordinator。
-  - 工作：父子任務與 DAG、並行上限、獨立上下文／工具／預算／worktree、follow-up、等待／取消／超時、Reviewer 驗收、結果合併與衝突治理。
-  - 驗收：子代理 crash／程序重啟／衝突時主代理可收斂；取消無殘留工作；Reviewer 未通過不交付；不自動遞迴超過限制。依賴 T05、T08、T09、T12。
-  - 實作（2026-10-10）：SQLite 父子／依賴 DAG、跨 supervisor lease／併發與啟動恢復；獨立工作程序、persona 工具範圍、checkpoint 與 immutable working-copy snapshot／worktree，保留父 HEAD／index。invoke／check／manage 提供 follow-up、wait、子樹 cancel、deadline 及 Reviewer 通過後明確 merge；子代理與 Reviewer 共享且扣除根額度，限制深度與總數。
-  - 收斂：safe checkpoint 恢復不重播已完成工具，舊 lease publication 拒絕；未知工具／準備／合併效果停止，`/agents` 提供 answer／resolve／人工查核後 abandon。Reviewer 失敗、逾時、未驗證或 findings 未清，均不交付；父內容衝突不覆寫，合併前保存備份，失敗保守回復並保留現場。
-  - 相關驗證：16 passed、4 subtests passed；離線 SDK fixture 驅動真實 subprocess／Git worktree，測試實際 crash 後副作用計數一次、程序重啟、取消後 PID 退出、DAG／follow-up、owner／工具隔離、並行／深度上限、Reviewer 拒絕／程序失敗、晚到結果拒絕、衝突與 IO 失敗備份。語法／diff 檢查通過。
-  - 回歸修正：首次完整測試發現旧 daemon test 需遷移，以及快速 Git 程序在 Job Object assignment 前退出的 Windows race。改為 CREATE_SUSPENDED、加入 Job 後 ResumeThread；加入失敗不執行命令，父程序快速退出亦清除後代。執行器／政策／協作相關重驗 48 passed、4 subtests passed；模型端工具清單亦限制於 persona，執行端再次檢查。
-  - 快照補強：添加 Git 內容前驗證候選檔案與每層路徑，拒絕越界／symlink／junction，限制 10000 檔／256 MiB／單檔 64 MiB；使用真實 Windows junction 的前置拒絕與 DAG 相關測試 2 passed。
-  - Docker／Chromium 完整回歸：510 passed、1 skipped（外部 provider）、17 subtests passed。最後快照前置檢查補強另以最終協作模組重驗，不將新增測試混算為本輪完整回歸數量。
-  - 最終協作模組重驗（含快照補強）：17 passed、4 subtests passed；最終語法與 staged diff 檢查通過。
-  - 邊界：需要 Git root；忽略檔不複製，舊 daemon JSON 不自動遷移，需人工查核後重建節點。原生工作程序不是 OS sandbox，仍依 T02。多檔 merge 非全域原子；未知效果不自動重播，需人工查核，取消保留 worktree／證據供 T12 封存。模型 Reviewer 品質與外部模型／平台未由離線測試證明，品質 benchmark 待 T21；外部 PR／CI 待 T14。
+- [ ] **P13 — 首次設定與能力診斷 UI**
+  - 工作：在既有 Web UI 加模型／embedding endpoint、workspace、角色、通訊模式、可選功能組、模型安裝與連線測試。整合 readiness／doctor，列出缺依賴、停用原因、下載進度、錯誤修復與日誌匯出；保留 CLI 設定方式。
+  - 交付：全新安裝 onboarding、設定儲存／套用／重啟流程、能力狀態頁。
+  - 驗收：缺模型、無網路、錯誤 API Key、埠被占用、無寫入權限皆可從 UI 處理；匯出 diagnostics 去密。測試只驗證連線與 capability，預設不發正式平台訊息。
+  - 依賴：P06、P10–P12。
 
-- [x] **T14 — Patch、PR／CI 與審查閉環**
-  - 原況：edit_file 字串替換、Python AST 編輯與 Git 工具已有實作，未見完整 PR／CI 流程。
-  - 工作：帶前置內容驗證的多檔 patch、衝突提示、diff 審查；可配置 GitHub／其他 Git 平台 PR、CI 狀態、review feedback 修復及交付摘要。
-  - 驗收：過期 patch 不覆蓋新內容；review findings 有檔案／行號／重現；CI 未通過不宣稱完成；外部發布／合併遵守批准政策。依賴 T03、T10、T12。
-  - 實作（2026-10-10）：在既有 `agent_execution/` 加入 owner／task／workspace 綁定的 UTF-8 多檔 patch，完整 diff／前置 SHA-256／失敗補償；GitHub PR、GitLab MR、SHA 綁定的 CI／review 門檻、同 PR 修復、merge 摘要。沿用 T03 一次性批准，publish／merge 各自批准，修復保留原始 acceptance；納入 Coder 工具清單與人類 `/delivery` 查核命令。
-  - 發布範圍：選檔涵蓋 base 至 HEAD 全部新 commit 的變更，包含已刪除／還原的歷史檔案；提供 final diff 與 history_diff。要求乾淨 worktree、本機驗收通過，確切 SHA／branch lease push，過期 head／remote／配置拒絕；未知發布／合併只讀 reconcile，不重播 API 寫入。
-  - 最終驗證：新增 27 項 T14 測試，真實 Git bare remote、localhost HTTP server、實際 pytest 與真正退出程序，涵蓋過期 patch、並行修改、局部 IO 失敗、junction／Windows Git 路徑別名、身份／批准隔離、CI／review／過期 SHA、修復驗收不可弱化、不明結果、歷史選檔與慢速 HTTP 讀取期限。完整 Docker／Chromium 回歸 538 passed、1 skipped（外部 provider）、25 subtests passed（548.94 秒）；既有 outbox／批准早期整合另驗 40 passed、5 subtests passed，兩平台／慢速 HTTP 最終相關測試 3 passed。語法及 staged diff 檢查通過。
-  - 邊界：支援 UTF-8 普通檔案，拒絕 links／越界／Git metadata，不宣稱多檔全域原子；patch 32 檔／8 MiB 單檔／16 MiB 合計，diff 2 MiB，delivery 256 檔／256 commit，artifact 10000 筆／64 MiB。中斷保留證據，人工 abandon 需 180 秒後查核 worker；不自動回復遠端或重試未知副作用。
-  - 平台邊界：不支援 fork PR／MR。GitHub 以同作者在 comment 更新後對當前 SHA 的 APPROVED 確認 finding；GitLab 需 resolved DiffNote、approval reset-on-push 及 approvals API 權限。finding 重現欄位保存審查者原文，未自動執行。平台 branch protection 與實際帳號／CI／合併須部署者另驗；本次本機 fixture 不代表已建立外部 PR。`verified_delivery` 僅在明確確認 merge 後為 true，與 T10 task 驗收分開。
+- [ ] **P14 — 模型與大型選配資源管理**
+  - 工作：依授權與平台決策建立 Laya、local inference／embedding、Chromium／文件／語音資源的 manifest；區分內附與選配下載、CPU／GPU 能力、磁碟空間、checksum／來源、取消／斷點／原子完成、cache 與移除。外部模型服務可偵測與導引安裝，不強制產品包包含推論引擎。
+  - 交付：資源管理與能力檢查、模型／引擎相容表、無 GPU 使用方式。
+  - 驗收：下載中斷、損壞、空間不足、平台不相容與無網路有可恢復行為；未就緒的 guard 明確標示政策，不能藉失敗直接宣稱完整保護可用。單純把依賴改為 optional 不算成功提供該功能。
+  - 依賴：P02、P06、P10、P13。
 
-- [x] **T15 — 程式碼索引與跨語言理解**
-  - 原況：Python Tree-sitter／Jedi、手動 embedding 建索引；語意搜尋讀取候選並算 cosine。
-  - 工作：增量索引與檔案變更追蹤、embedding 模型版本、ignore／secret 過濾、精確文字搜尋、LSP／多語言符號、較大資料的 ANN。
-  - 驗收：修改／刪除／更換模型不殘留舊索引；Python、Go、JS／TS 的符號與引用以 fixture 驗證；建立品質與延遲基準。依賴 T01、T09。
-  - 實作（2026-10-10）：新增既有 `agent_execution/code_index/`，SHA-256 增量同步／刪除清理、workspace／grammar／embedding 版本、nested ignore／秘密過濾、literal／symbol／semantic 三種查詢、Python／Go／JS／TS／JSX／TSX 語法符號、接收者 qualified name、持久化 LSH ANN（最多 512 候選）。原 build／search／definition／references entry points 接入，新增 refresh_code_index／code_symbols，接入協作角色工具清單。舊無版本向量首次查詢即重建；generated DB 停止 Git 追蹤，原本機檔案保留。
-  - 解析與治理：Python Jedi 與部署者配置的 stdio LSP 均用 bounded worker，支援 initialize／didOpen／definition／references／documentSymbol／shutdown、UTF-16／Unicode 轉換、越界／排除檔過濾、程序樹 timeout／cancel。未配置 LSP 的 Go／JS／TS 明確回傳 unresolved syntax candidates，不猜測 binding。Windows Tree-sitter 0.26 Point 屬性在 700 函式壓測觸發原生崩潰，改依 byte offsets 計算位置，保留大索引回歸測試。
-  - 向量治理：預設離線 hashing；遠端 opt-in 身份包括 endpoint／model／revision／dimension。refresh 最多 32 API，首錯即停止、不 retry／fallback 混用；搜尋不做 remote backfill，保留 pending 狀態及 T09 預算。單檔 1 MiB／檔案合計 64 MiB／10000 files／20000 symbols／200000 identifiers／256 MiB DB，超過 aggregate 額度拒絕。
-  - 品質基準：四語言 fixture + 1000 合成函式，1017 symbols、10 query；symbol recall 1.0、ANN recall@5 1.0，build 1301.994 ms／unchanged refresh 35.907 ms／query median 59.504 ms、max 81.722 ms。重現 `python -m agent_execution.code_index.benchmark --symbols 1000 --queries 10`，紀錄 `agent_execution/code_index/benchmark_baseline.json`；完整 chunk query 對照 exhaustive cosine，不代表自然語言模型品質或正式工程延遲。
-  - 索引快照：查詢期間重驗原始內容，並行 refresh 不能令舊 LSP 結果通過；task worktree 的 cache 自動放在外部 TaskStore 同層，支援受信任 AGENT_CODE_INDEX_DIR，以 workspace 雜湊隔離，不讓搜尋破壞 T14 的 clean-worktree 門檻。
-  - 驗證紀錄：新增 27 項索引測試；索引／政策階段相關 39 passed、5 subtests passed，與協作整合 56 passed、9 subtests passed；增量／秘密／Unicode／原生 grammar／實際 Jedi／本機 LSP protocol／取消／ANN／品質與延遲均有案例。最終索引專項 27 passed、5 subtests passed（20.94 秒）；開啟 Docker／Chromium 的完整回歸 565 passed、1 skipped（外部 provider）、30 subtests passed（620.86 秒），另有 1 項既有 AnyIO 棄用警告。package／tools 語法與 Git diff 檢查通過。
-  - 邊界：秘密檢測是可誤判／漏判的規則，須另設專案 ignore；只處理有界 UTF-8，未支援全部語言型別推導。LSP command 是受信任部署設定，host 依 T02；正式 gopls／TS server 與遠端 embedding 語意品質尚待外部環境驗證。provider 模型同名換版須由部署者更新 revision，LSH 屬近似搜尋，真實任務 benchmark 待 T21。
+- [ ] **P15 — 安裝後核心功能與跨平台程序回歸**
+  - 工作：建立適用來源／wheel／發行包的同一套 acceptance：CLI、UI／API／WS、工具／Skill／MCP、記憶、附件、任務恢復、排程、coordinator／media worker、角色／批准／workspace。支援功能使用真實本機執行，不只 mock；外部平台另列 opt-in。
+  - 交付：安裝後 smoke runner、固定案例、故障注入與環境證據格式。
+  - 驗收：無 repository、無開發機 Python、唯讀 app 路徑的環境可通過核心案例；每平台驗證程序樹終止、路徑逃逸拒絕與 DB 關閉。browser／Docker／provider／平台送達均分列結果；不能沿用既有 Windows source pytest 作為 macOS 發行通過。
+  - 依賴：P07–P14。
 
-- [x] **T16 — IDE 與 Dashboard 的任務審查介面**
-  - 原況：VS Code 串流直接取代選取文字；Dashboard 主要管理記憶與觀察任務。
-  - 工作：套用前 diff、atomic apply／undo、串流 UTF-8 與取消處理；統一顯示 task plan、工具事件、驗收、批准與 artifacts。
-  - 驗收：斷線／取消／並行串流不破壞原始選取；UI 操作與身份政策一致；瀏覽器與 VS Code 實測並留證據。依賴 T03、T06、T10、T14。
-  - 實作（2026-10-10）：既有 vscode-extension 新增 readonly diff 提案、明確 atomic editor apply／undo、原生 Undo、UTF-8 incremental decoder／done 完整性、abort／斷線拒絕、文件版本與並行保護、SecretStorage Token。ide_server.py 保留入口，實作收攏 agent_execution/ide/，admin Token／workspace／JSON 限額、T08 checkpoint／T09 模型預算，不讀檔上下文或寫入來源。
-  - 審查：新增 owner-bound review API／Dashboard 會話欄、計畫／工具事件／驗收／人工問題／artifact diff 與歷史證據／待批准操作；文字安全顯示、過期回覆拒絕、admin 取消／批准／拒絕，viewer 唯讀。批准仍從原 task 入口續跑，UI 不重播工具或發布／合併。
-  - 邊界：提案 process-local、僅支援既有 workspace 文件；空／未變替換拒絕、最多 32 提案。API 任務資料不跨通道身份推定；無背景輪詢／任意 artifact filesystem 下載。完成生成僅 unverified，不等同已套用或交付；provider cancel 受下一寫入／SDK timeout 約束，正式外部 LLM 尚待驗證。
-  - 驗證紀錄：T16 最終驗證（2026-10-10）：新增 11 項 Python 測試；最終 UI／API 與舊 Dashboard 整合重驗 14 passed（24.70 秒），Node 9 passed，實際 VS Code 1.141.0 Extension Host 14 案例通過。開啟 Docker／Chromium 的完整回歸 576 passed、1 skipped（外部 provider）、30 subtests passed（884.64 秒），另有 1 項既有 AnyIO 棄用警告；Python／Node 語法及 Git diff 檢查通過。證據摘要保存於 vscode-extension/tests/verification_baseline.json，原始 log／截圖保留於忽略的 temp/。
+## M3：建置與發行基礎
 
-## P3：自動化、整合、記憶與品質治理
+- [ ] **P16 — 製作可重現的各平台 portable bundle**
+  - 工作：以各 OS／arch 的 runtime、鎖定依賴及套件資源產生可搬移的本機服務包；安裝後在目標機建立／修正必要路徑，不能直接搬開發機帶絕對路徑的 venv。建置全程與秘密設定、個人 DB／workspace 分離；驗證離線安裝所需 wheels／資源。
+  - 交付：`distribution/` 建置腳本、portable ZIP／tar 包、版本／來源／依賴／checksum manifest、第三方 notices 與 SBOM。
+  - 驗收：不同路徑解壓後可啟動，使用者資料不隨解壓覆蓋；archive 無路徑穿越、secret 或個人檔。可重現須定義 runtime／依賴／來源固定與差異原因，不誇稱每次簽章或 archive 時戳可 byte-identical。
+  - 依賴：P02–P15。
 
-T17–T21 的本機功能增修已提交，並在各項內標註 [x]；主項目未勾選表示正式服務或品質驗收仍未完成。
-「現況」保留增修前基線，請依「實作／補齊／邊界」與最後驗證紀錄判斷下一步。
+- [ ] **P17 — 跨平台 build／test／release CI**
+  - 工作：延伸 `.github/workflows/verification.yml`，分 source tests、wheel tests、portable tests、選配整合、release。加入 macOS，OS／arch runner 覆蓋 P01 矩陣；固定 toolchain、依賴與資源校驗，產出 evidence／checksums／SBOM。簽章 credentials 放 CI secret，pull request 不取得 production 發行權限。先完成 portable matrix 與 installer job 接入契約，平台 installer 的具體 jobs 與驗收由 P18–P20 各自補齊，不將尚未製作的安裝器算作本任務已驗收。
+  - 交付：建置矩陣、artifact 保存、測試報告、tag／version 與發布 gate。
+  - 驗收：每個發布 artifact 都是被驗收的同一版本／digest；缺目標 runner 或實機驗證不標為支援。僅配置 workflow 不等於已跑遠端 CI；外部發布依使用者授權進行。
+  - 依賴：P15、P16。
 
-- [ ] **T17 — Agent／Skill 排程與持續追蹤**
-  - [x] **本機功能完成（2026-10-11 核對標註）**：Agent／Skill／script／watch、時區、lease／retry／停止條件、原會話通知；commit `99922f0`、`a775d0a`、`b033659`、`b1dde57`，最新相關 31 passed、2 subtests passed。
-  - 現況：排程已有 command、maintenance.summary、SQLite 工作鎖，未實作 CLI help 提到的通用 script job。
-  - 工作：新增 Agent／Skill job、自然語言排程、時區、會話 follow-up、停止條件、只在有意義變更通知；補 command timeout、鎖 lease、重啟／misfire 與 bounded retry。
-  - 驗收：多入口同時啟動不重複執行；Asia/Taipei 排程時間正確；長工作／crash 不永久卡住；狀態未變保持安靜，完成或需人處理才通知。依賴 T01、T05、T08、T09。
-  - 實作（2026-10-10）：獨立 scheduling package、Agent／Skill／script／唯讀 watch、明確自然語句與 ZoneInfo、owner／會話／workspace 還原、人工批准；原子 claim／續租／fencing、原生 worker timeout／取消、misfire 合併、未知副作用停用與唯讀最多兩次 retry。通知去重、四次歷史與停止條件，舊遠端工作隔離停用。
-  - Commit：`99922f0`。
-  - 驗證：排程／policy 38 passed；最後排程／Hook／舊 scheduler 整合 32 passed。完整回歸先遇既有 CLI 測試載入本機 Laya 原生模型存取錯誤，改為離線 classifier fixture；後續舊 Hook fixture 需明確授予 owner 現行 admin，修正後相關案例通過。整體最終回歸結果集中記錄於 T21。
-  - 通知推送補齊：通訊服務接入原會話 Telegram／Discord／LINE adapter；現行角色／allowlist 再驗、原子 claim、單訊息容量、shutdown 停止新 claim；失敗／crash 不確定狀態不重送，手動 disable 取消待送。其他入口保留 owner 查詢，不推定跨平台收件人。
-  - Telegram long polling 亦啟動 scheduler 並於 poll 後推送；通知儲存故障不終止主通訊 loop。補強相關案例包含真實 adapter contract／併行認領／不確定發送／角色撤銷／取消與兩入口生命週期。
-  - 補強 Commit：`a775d0a`；相關 53 passed（22.25 秒）。
-  - 2026-10-11 補強：watch 執行上限／最終重試失敗轉 needs_input，未變觀察亦通知；失敗 digest 包含有界 error evidence，避免不同錯誤被當成同一狀態。排程／通知／舊 scheduler 30 passed（34.07 秒）；正式平台驗收依使用者指示保留待辦，不發送外部訊息。
-  - 2026-10-11 第二輪補強：排程停止／失敗原因優先於長觀察，避免 64 KiB 儲存及 1800 字平台容量截掉人工處理理由；原始 run output 維持不變。排程／通知／舊 scheduler **31 passed、2 subtests passed（22.17 秒）**，包含實際 Telegram adapter 本機契約與單次送達斷言。
-  - 邊界／後續：正式平台實際送達及真實 provider 追蹤尚待驗收，因此保留未勾選；未向正式收件人發送測試訊息。
+## M4：首版跨平台交付
 
-- [ ] **T18 — MCP 與動態工具／Skills 的可信生命週期**
-  - [x] **本機功能完成（2026-10-11 核對標註）**：trusted 工具／Skill 版本、Docker 測試／人工批准／rollback、remote MCP、預先註冊 public-client OAuth／loopback callback；commit `38f2eb9`、`4e45c76`、`4a9c7ee`、`503c580`，最新相關 26 passed、15 subtests passed、1 Docker opt-in skipped。
-  - 現況：stdio MCP 與工具熱載入可用；動態 Python 模組直接載入；MCP 路由依工具名稱分割，需補 server 名含底線案例。
-  - 工作：remote MCP transport／OAuth、timeout／重連／health、完整 schema 與結果驗證、明確工具到 server 映射；工具／Skill 安装、版本、來源、測試、核准啟用與 rollback。
-  - 驗收：缺 server／網路斷線不阻塞其他工具；名稱碰撞／底線不誤路由；惡意 schema 或未通過測試的生成工具不能啟用。依賴 T01、T03、T10。
-  - 實作（2026-10-10）：exact MCP route／碰撞雜湊、離線有界 JSON Schema 與 structuredContent／isError 驗證、stdio EOF／取消／程序樹清理、四 worker startup、health／明確 reconnect；2025-11-25 remote POST JSON／SSE、session／token_env。生成工具只 stage，工具／Skill 版本來源與 digest、Docker tests、人工批准、撤回與批准 rollback；提交的 builtin inventory。
-  - Commit：`38f2eb9`；blocked pipe／JSON-RPC 補強 `838bf86`，補強相關 13 passed、1 skipped（Docker opt-in）。
-  - 驗證：相關 48 passed，包含原生 stdio fixture、實際 Docker 成功／失敗版本、一次性批准／回復／owner 隔離及惡意 schema；正式 remote provider 驗收仍未完成，保留未勾選。激活需重啟刷新 schema。
-  - OAuth 補齊：trusted issuer／protected resource／OAuth 與 OIDC discovery、S256 PKCE、一次性 owner state／精確 callback、resource indicator、refresh rotation 與未知結果停止；人工 CLI 登入，不重播 401 tools/call。原生本機 HTTP 7 案例通過（含併行 refresh）；仍待正式帳號 consent／callback round trip。採預先註冊 public client，未提供 dynamic registration／confidential client／callback listener。
-  - OAuth Commit：`4e45c76`；MCP／OAuth 最終 18 passed、1 skipped（Docker opt-in，已於 T18 原先開啟驗證）。
-  - 2026-10-11 補齊：CLI login 的實際 loopback callback listener；原始 IP／port／path、不替換 redirect URI、Host／constant-time state／單次 callback、請求容量／slow-client deadline／timeout／取消及 socket／新 state 清理，port 衝突先於 begin 拒絕。原生 CLI ＋真實本機 HTTP PKCE／token exchange 通過；相關 MCP／OAuth 24 passed、1 skipped（Docker opt-in）、6 subtests passed（29.90 秒）。正式帳號 consent 仍待驗收；listener 缺口已補，dynamic registration／confidential client 仍未提供。
-  - 2026-10-11 第二輪補強：授權 endpoint 的 client 管理參數衝突（含 percent-encoded key／空值）在建立 state 前拒絕，query 最多 32 欄；保留非 OAuth query 與既有 grant。真實本機 HTTP discovery／exchange 回歸 **26 passed、1 skipped（Docker opt-in）、15 subtests passed（18.48 秒）**。
+- [ ] **P18 — Windows x64 安裝包與實機驗收**
+  - 工作：選定 per-user 安裝器，內附 runtime／launcher，建立開始選單／移除入口；不依賴 PowerShell 特殊 execution policy。預設非管理員執行；若需開機自啟，提供 opt-in 與清楚生命週期。正式對外發行評估程式／installer 簽章。
+  - 交付：Windows portable 與 installer、安裝／設定／移除指引、證據。
+  - 驗收：乾淨 Windows VM 無 Python／Git 等預設開發工具可啟動核心版；中文帳號／路徑、Program Files 唯讀、Job Object 取消、安裝中斷與移除皆驗證。用戶資料預設保留，清除須明確選擇；已知外部工具缺失可診斷。
+  - 依賴：P16、P17。
 
-- [ ] **T19 — 持久瀏覽器、文件解析與語音**
-  - [x] **本機功能完成（2026-10-11 核對標註）**：持久 browser／斷言／artifact、PDF／Office／OCR、真正 SDK STT／TTS 與音訊取消／隔離；commit `26eaed2`，Chromium／Tesseract 與 SDK 本機 HTTP 契約已有實測。正式品質與裝置驗收另列待辦。
-  - 現況：Playwright action／截圖、文字及圖片附件可用；WebSocket audio 只解析 metadata，未提供 STT／TTS。
-  - 工作：使用者隔離的持久 browser session、動作後斷言、下載 artifacts；PDF／Office 解析／OCR 與來源頁碼；真正 STT／TTS、音訊容量與取消。可分成三個獨立交付。
-  - 驗收：多步登入／表單流程可續跑並驗證結果；PDF／Office 不以截斷 Base64 充作理解；語音可辨識及播放，重連／中斷不混流。依賴 T02、T05、T06、T07。
-  - 實作（2026-10-10）：media package 的 owner profile／cookie state、嚴格動作斷言／私有下載、原生 worker timeout／取消；PDF／Office 來源單位、ZIP／XML 限制、實際 Tesseract OCR；真正 SDK STT／TTS worker、可播放 WAV、WebSocket 有序 frame／容量／取消／reconnect 隔離。
-  - Commit：`26eaed2`；私有 artifact 路徑最終重驗 8 passed。
-  - 驗證：相關 51 passed，實際 Chromium cookie 登入／續跑／異主隔離／assert／下載，原生 DOCX／PPTX／XLSX 中文、扫描 PDF OCR，本機 HTTP SDK 語音 contract／WAV／取消。正式外部語音品質、真實裝置播放與外部網站尚未驗收，保持未勾選。profile admission limits 不是硬磁碟配額；host browser／document parser 仍需部署層隔離。
+- [ ] **P19 — macOS arm64 安裝包與實機驗收**
+  - 工作：建立 app bundle／DMG 或符合首版服務包的 launcher，驗證 native wheels／可執行權限、Finder 啟動的 PATH、bundle 唯讀與 user data。準備正式簽章／notarization 的資格與 CI 流程，避免依賴開發者機器的 Gatekeeper 例外。
+  - 交付：macOS arm64 發行包、最低 OS／依賴條件、安裝與驗證證據。
+  - 驗收：乾淨 Apple Silicon 機器安裝、第一次啟動、模型／worker、睡眠喚醒、取消／退出、更新／移除可用；正式發行包檢查簽章／公證與 quarantine 後啟動。macOS x64 另依 P28 驗收。
+  - 依賴：P18 已建立首版交付基線、P16、P17；不依賴 Electron 桌面外殼。
 
-- [ ] **T20 — 記憶品質與可控自我改善**
-  - [x] **本機功能完成（2026-10-11 核對標註）**：owner 提案、retrieval 評測、固定案例 A/B gate、人工批准／撤回／rollback 與可信 runner；commit `7629e7f`，正式 provider 品質另列待辦。
-  - 現況：三類記憶、遺忘、背景更新與 Skill Doctor 已存在。
-  - 工作：租戶／專案隔離、retrieval precision／recall 評測、來源信任與矛盾測試；Doctor persona／Skill 建議經版本審查、A/B 驗證、啟用及撤回，避免錯誤準則無限累積。
-  - 驗收：跨使用者記憶不能注入；過期／矛盾資料可測試淘汰；新 persona 必須有可量測改善且可回復。依賴 T05、T09、T10。
-  - 實作（2026-10-10）：owner 版本提案、來源／suite／評測 digest；固定案例 A/B 成功率改善＋零回歸／非預期效果 gate，baseline 防過期、人工批准／撤回／批准 rollback、有界原生評測 runner。Doctor --apply 改 stage；Skill 建議引用 T18 版本且不能自動啟用。來源標示、legacy persona／單值矛盾排除、quoted reference 低權限注入與 labeled precision／recall／forbidden-hit 評測。
-  - Commit：`7629e7f`。
-  - 驗證：相關最終 58 passed；adapter scope 補強重驗 6 passed。涵蓋真實原生 adapter、Doctor 不注入、owner／過期／矛盾／來源、評測回歸／副作用／baseline／批准／rollback。正式 provider persona／Skill A/B 與較廣標記資料集品質尚待驗收，保留未勾選；未啟用任何 production persona。
+- [ ] **P20 — Linux x64 發行包與實機驗收**
+  - 工作：決定最低 glibc／發行版與 desktop／headless 支援；優先 tar portable 或選定 DEB／AppImage。驗證 runtime／native libraries、browser 系統依賴、XDG 目錄、可執行權限與 POSIX 程序清理。自啟／systemd user service 為明確 opt-in。
+  - 交付：Linux x64 發行包、支援發行版矩陣、安裝／服務設定／移除說明。
+  - 驗收：最低支援發行版及一個代表性較新版環境通過；缺 GUI 或 Chromium 系統依賴可診斷。容器內測試不取代桌面／程序樹／實際安裝驗收，且不要求 root 使用 Agent。
+  - 依賴：P19、P16、P17。
 
-- [ ] **T21 — 端到端評測、成本觀測與運維**
-  - [x] **本機功能完成（2026-10-11 核對標註）**：trace／費用與延遲、去密、readiness／doctor、備份還原／migration、15 項固定驗收與分層 CI 設定；commit `d4bc545`、`ea333c2`，遠端 CI 執行與正式品質另列待辦。
-  - 現況：已有 unittest 與 CLI events／health；缺整體成功率基準及分散式 tracing。
-  - 工作：task／episode／tool／子代理 trace ID、token／費用／延遲／重試統計、redaction、readiness；CI 測試層級、migration／備份還原、依賴 doctor；建立固定任務集與失敗注入。
-  - 維護腳本：本次靜態掃描發現既有 `patch_server.py:1` 含字面 `\n` 而無法解析；確認用途後修復或移除過期腳本，將維護腳本語法檢查納入 CI，避免只跑 tests 而漏掉。
-  - 驗收：報告區分 mock unit、Docker／browser integration、真實 provider／平台測試；顯示完成率、非預期副作用、恢復成功率與成本；日誌無 secret；備份可還原。
-  - 實作（2026-10-10）：operations package 的 owner trace／task／episode／node、retry／保守預算 token／費用／延遲、redaction／readiness／dependency doctor；SQLite 線上 snapshot／hash／schema／新目錄 restore、先備份 offline migration；十項 fixed suite／failure injection 及完成／恢復率。修復 patch_server.py、pytest testpaths，增加分層 GitHub CI。
-  - Commit：`d4bc545`。
-  - 相關驗證：trace／Hook／budget 29 passed，運維首輪 7 passed、最後原生 child trace／API 補強 9 passed；固定 suite 含真正 crash 子程序與案例內副作用斷言，外部模型成本未知。
-  - 本機基線：啟用 Docker／Chromium 的完整回歸 622 passed、1 skipped（外部 provider）、30 subtests passed（777.14 秒）；Node 9 passed，VS Code 1.141.0 原生 Extension Host 14 案例通過。最後運維／CKIP lazy import 11 passed、5 subtests passed；離線 fixed suite 10/10、恢復案例 100%，報告保存 operations/benchmark_baseline.json。
-  - CI 乾淨環境發現舊測試依賴未列齊，補 PyNaCl／Jedi／敘事分析套件，文字切分不載入 CKIP 模型；補齊後 story／index 36 passed、5 subtests passed。實際 provider 單案請求逾時（25.66 秒），未通過；不以本機 fixture 替代此驗收。
-  - 最終驗證（2026-10-10 所有當次程式增修後）：乾淨 requirements-ci 環境完整回歸 **634 passed、7 skipped、35 subtests passed（482.16 秒）**；skip 為 Docker／Chromium opt-in 及外部 provider，另開啟 opt-in 的 Docker／Chromium／OCR／MCP／OAuth／通知整合 **40 passed（105.52 秒）**，無 skip。保留 1 項既有 AnyIO 棄用警告。Node 9、實際 VS Code Extension Host 14、tracked Python 語法 222 檔、Git diff／CI YAML／pip check 均通過。fixed suite 重驗 10/10、完成／恢復率 100%，無 tracked source 異動；證據摘要保存 `agent_execution/operations/verification_baseline.json`，原始 log 在忽略的 temp/。
-  - 尚待正式驗收：GitHub CI job 未推送／執行、真實 provider／通訊平台／語音與品質 benchmark；保留未勾選。固定 suite 的成功率是 fixture acceptance，不能當正式模型品質或完整 OS 副作用監測。
+- [ ] **P21 — 核心發行包的更新、復原與移除**
+  - 工作：首版先提供人工下載更新或受控 updater；下載校驗、版本相容、停止 worker、資料備份／migration、原子切換、啟動 health 確認、失敗復原。程式回退與資料降版分開處理；保留 release notes。移除可選清理 cache，個人狀態／workspace 不預設刪除。
+  - 交付：更新／復原 manifest 與操作流程、原生更新入口、資料清理契約。
+  - 驗收：從前一版有資料／進行中任務更新到新版；斷網、壞包、空間不足、schema 失敗、新版無法啟動均可安全恢復，不重放已送達訊息或外部命令。驗證各 OS 移除無殘留背景程序。
+  - 依賴：P07、P11、P17–P20。
 
-### 2026-10-11 本機增修與驗證
+- [ ] **P22 — 發行文件、診斷與使用者支援資料**
+  - 工作：更新 README 與平台指南：安裝、首次設定、三種模式、功能組、遠端／離線差異、sandbox、角色、Telegram 單 consumer／webhook 擇一、更新／移除與資料位置。整合去密 diagnostics bundle，列明版本、OS／arch、依賴、worker／模型狀態與可重現命令。
+  - 交付：快速開始、功能限制、第三方 notices、疑難排解與回報範本。
+  - 驗收：首次使用者按文件可完成設定；不包含開發者磁碟路徑、真實 Key 或已失效指令。診斷匯出前提供內容說明，排除個人對話／附件／credential。
+  - 依賴：P13、P18–P21。
 
-- 依使用者「先完成本機增修與驗證」：不發送正式平台訊息、不進行帳號 consent、不啟用 production persona、不 push。T04／T06／T17–T21 的外部驗收條件維持未勾選。
-- T17：`b033659` 補強 watch 上限、最終重試失敗及錯誤變更通知；T18：`4a9c7ee` 補齊有界 loopback callback CLI 登入。
-- T19／T20：將既有實際 SDK 本機 HTTP 語音契約／取消，以及人工批准 rollback／拒絕未審核版本納入固定驗收；語音品質、裝置播放與 production A/B 仍待正式驗收。
-- T21：固定 suite 由 10 項擴充為 15 項，新增 watch 上限、原生 OAuth CLI callback／PKCE、slow-client deadline、語音 SDK 契約、人工審核 rollback。固定 suite **15/15**，完成／恢復案例成功率 100%，無 tracked source 異動；不代表外部模型品質或完整 OS 副作用監測，provider 費用未測量。
-- 乾淨 requirements-ci 完整回歸 **642 passed、7 skipped、41 subtests passed（652.13 秒）**；保留既有 AnyIO 棄用警告。opt-in 整合首輪 **55 passed、1 failed、6 subtests passed（127.01 秒）**，失敗為 Docker availability probe 拒絕執行，確認引擎可連線後單案重驗 **1 passed（16.20 秒）**；實際 Chromium／Tesseract／Docker 與本機 HTTP／SDK workers 已驗證。運維 **9 passed、5 subtests passed**，tracked Python 語法 **224 檔**與乾淨環境 pip check 通過。
-- 證據：`agent_execution/operations/benchmark_baseline.json`、`agent_execution/operations/verification_2026-10-11.json`；上一輪日期基線保留於 `verification_baseline.json`。
+- [ ] **P23 — 首版跨平台 release candidate 與正式交付門檻**
+  - 工作：對 P01 首版支援矩陣執行乾淨主機完整旅程：下載／校驗／安裝 → 首次設定 → CLI／UI 與核心 Agent → restart／取消／crash → 更新 → 移除／還原。保存每個 artifact 的 version／digest、機器環境、測試結果與限制；確認簽章／授權／無 secret。
+  - 交付：三平台驗收報告、RC artifacts、已知問題與發布清單；獲授權後才發布正式下載。
+  - 驗收：核心必需案例不得有未解決失敗；缺 provider／帳號／硬體的功能單獨列未驗收，不能用 source fixtures 覆蓋。若沒有 macOS／Linux 實機或簽章資格，先交付已通過的平台並如實標示，不宣稱全平台已完成。
+  - 依賴：P01–P22；P01 指定為首版必需的選配任務亦必須完成。
 
-### 2026-10-11 第二輪補強驗證
+## M5：後續選配產品與擴充
 
-- Commit：`b1dde57` 保留有界通知中的停止／失敗原因；`503c580` 拒絕授權 endpoint query 與 client 管理參數衝突，避免殘留待登入 state。
-- 乾淨 requirements-ci 全套 **645 passed、7 skipped、52 subtests passed（539.05 秒）**；略過 Docker／Chromium opt-in 與正式 provider，保留既有 AnyIO 棄用警告。包含 15 項固定 fixture 驗收。tracked Python 語法 **224 檔**、pip check／diff check 通過。
-- 證據保存在 `agent_execution/operations/verification_2026-10-11_followup.json`。此前各輪基線保留；沒有重複宣稱上一輪 Docker／Chromium 結果為本輪實測。依使用者本機驗證範圍，正式服務、production 品質與遠端 CI 仍待驗收，未 push。
+- [ ] **P24 — Docker Compose 本機／背景服務發行**
+  - 工作：建立專用 Dockerfile／Compose、非 root、healthcheck、config／data／workspace volumes、固定依賴與架構標籤。使用 Docker secrets 或受限外部設定；預設不掛載 host Docker socket。說明 container Agent 不能直接使用 host executable，Docker 沙箱巢狀使用需獨立設計與風險決策。
+  - 交付：Compose 部署包、備份／升版／權限說明與 image SBOM；image 發布另需授權。
+  - 驗收：Windows／macOS Docker Desktop、Linux Docker 的目標組合實測，bind mount 的權限／中文路徑、資料持久化、退出／重啟、連 host 模型與網路邊界可用；不把 image 可啟動當完整 Agent 驗收。
+  - 依賴：P16、P21、P22；選配，不阻擋首版 native 包。
 
-### 尚未完成的正式驗收（依任務順序）
+- [ ] **P25 — 桌面外殼技術選型與最小 prototype**
+  - 工作：優先評估 Electron Forge 包裝既有 Web UI；若評估 Tauri／其他 webview，比較 runtime 大小、平台 webview、sidecar、更新／簽章與團隊維護成本。用實際 prototype 比較啟動時間、RAM、worker 生命周期、中文輸入與 artifact 開啟，不僅比較理論包體。
+  - 交付：選型 ADR、prototype 證據、支援平台與資源成本；桌面程式置於 `distribution/desktop/` 或選定專用目錄。
+  - 驗收：能啟動受控後端、顯示既有 UI、正確退出；不能複製 Agent 核心或另建不相容 API。
+  - 依賴：P11–P13、P16；選配。
 
-- [ ] T04：以正式 Discord／LINE 測試帳號與對外 HTTPS webhook 驗證簽章、deferred／follow-up 及實際送達；需明確指定測試收件人。
-- [ ] T06：以可用真實 provider 驗證需要工具的串流與中斷；以指定 Telegram 收件人驗證 fallback 實際送達。
-- [ ] T17：配置現行 admin identity／sender allowlist／正式 adapter，確認原會話的 quiet watch、完成／需人工通知及未知發送不重送；需明確指定測試收件人。
-- [ ] T18：正式 issuer 預先註冊 public client、精確 redirect URI；透過 OAuth CLI login（HTTP loopback IP）或手動 begin／finish 完成真人 consent／callback，確認 remote initialize／tools／refresh。未配置 dynamic registration／confidential client 的 provider 不屬目前支援範圍。
-- [ ] T19：配置真正 STT／TTS 模型，以已標記語音驗證辨識品質和實際裝置播放；另外驗證目標外部網站登入及有權存取的文件。
-- [ ] T20：提供部署者信任的 AGENT_IMPROVEMENT_RUNNER／固定標記案例，以正常可用 provider 跑 A/B；保存品質差異，維持人工批准、撤回與 rollback gate。
-- [ ] T21：在獲授權的遠端發布流程執行分層 GitHub CI；provider 恢復可用後重跑 opt-in 測試。正式品質報告須保留非預期副作用／恢復／成本證據，不沿用 fixture 成功率。
+- [ ] **P26 — 桌面版生命周期、系統整合與 IPC 安全**
+  - 工作：實作單實例、system tray、前景／背景狀態、workspace 選擇、附件／artifact 開啟與通知。只載入受信任本機 UI；限制 IPC 方法、參數與外部導航，避免 renderer 取得任意 shell／檔案／credentials 權限。Web auth 與原 Agent RBAC／approval 仍一致。
+  - 交付：桌面 UI、受限 bridge、sidecar 狀態監控、三平台互動測試。
+  - 驗收：視窗關閉／系統登出／後端 crash／多開不留殘留 worker；外部網站／惡意內容不能呼叫 native bridge。桌面通知不洩漏個人對話，設定背景模式時有明確呈現。
+  - 依賴：P12、P21、P25。
 
-## 開發與完成標準
+- [ ] **P27 — 桌面版 installers、簽章與自動更新**
+  - 工作：依選型建立 Windows／macOS／Linux 桌面 installers、各平台簽章／公證、可信更新來源與更新提示；桌面 shell 與 Python 後端用共同相容 manifest。若啟用自動更新，驗證資料 migration、版本回退、channel 與下載失敗；沿用 P21 的資料安全策略。
+  - 交付：桌面 release matrix、installer／update artifacts、簽章證據與手動更新 fallback。
+  - 驗收：跨版本桌面＋後端配對正確；壞包／未簽章更新不能載入；完整三平台使用旅程通過才宣稱桌面版支援。憑證與發布權限缺失記為門檻，不繞過平台安全檢查。
+  - 依賴：P17–P22、P26。
+  - 首版前置：沿用核心平台包基線；若 P01 指定桌面版為首版必需，本任務先驗收，再進入 P23，避免循環依賴。
 
-1. 建議順序：T01–T05 → T06–T11 → T12–T16 → T17–T21；可依需求拆小交付，但不得繞過其隔離與授權依賴。
-2. 沿用既有模組；新增獨立程式時依 AGENTS.md 建立專用目錄，集中程式碼、設定、需求及測試。
-3. 每次程式變更增加／更新相關測試；執行相關驗證與 `git diff --check`，完成後建立範圍明確的 commit。
-4. 勾選完成前記錄 commit、測試命令與結果、外部驗證限制，並同步 README；不以 mock 通過宣稱正式服務可用。
+- [ ] **P28 — 擴充架構與平台相容範圍**
+  - 工作：逐一評估 macOS x64、Windows arm64、Linux arm64 及更多 Linux 發行版；驗證 Python／native wheels、模型引擎、browser／MCP executable、最低 OS 與硬體。emulation 可另記，但不得等同 native 通過。
+  - 交付：增量 runtime／installer／CI matrix 與支援表。
+  - 驗收：每個新組合重跑 P15、P21、P23；桌面／Docker 宣稱也須跑相應驗收。沒有相容依賴或硬體時不提供標為正式支援的空包。
+  - 依賴：P23；桌面／Docker 擴充另依 P24、P27。
 
-## 後續驗證環境備註
+- [ ] **P29 — PyInstaller／其他凍結方案可行性實驗**
+  - 工作：在 P09 的 worker 契約上評估 onedir 優先、onefile 後續；驗證 dynamic imports、資源、原生 libraries、工具專案 venv、multiprocessing／worker dispatch。比較內附 interpreter 包的大小、啟動、維護與功能成本；實驗結果可為「不採用」。
+  - 交付：各平台 prototype、spec／hooks、量測與採用／拒絕決策。
+  - 驗收：不能因簡單 demo 可打包就宣稱整個 Agent 可用；採用時重跑完整安裝後功能驗收並按目標 OS／arch 建置。onefile 暫存解壓與子程序存活／清理均須驗證。
+  - 依賴：P09、P15、P23；選配，不阻擋內附 runtime 首版。
 
-- 2026-10-09：直接從根目錄 `pytest -q` 會收集到忽略於 Git 的 `temp/test_vision.py` 舊實驗檔，因舊 import 名称而 collection 失敗。正式驗證依 README 使用 `python -m pytest tests agent_execution/tests -q`。T21 應補 testpaths／排除實驗目錄，並處理已列出的 patch_server.py 語法問題。
+- [ ] **P30 — 完全離線功能組與硬體品質驗收**
+  - 工作：依 P14 選定本機文字／圖片／embedding、guard、文件與選配 STT／TTS 的引擎／模型，提供受授權的 offline resource bundle、離線安裝與 CPU／GPU profile。網路依賴工具明確停用；不在離線 mode 失敗時自動改用雲端。
+  - 交付：離線能力矩陣、硬體需求、資源版本／授權、品質／延遲／RAM 報告、離線操作指南。
+  - 驗收：完全斷網且無先前 cache 的乾淨環境可安裝／啟動；固定中文、圖片、記憶檢索與重啟案例驗證，網路外連監測為零。語音與特定 GPU／架構未測即列未支援；不以 runtime 在本機執行代表模型與工具已離線。
+  - 依賴：P14、P15、P16–P22。
+  - 首版前置：若為首版必需，先完成本任務再通過 P23，避免循環依賴。
 
-## 比較來源
+## 工作紀錄與完成標準
 
-OpenAI 官方文件，查核日期 2026-10-09；來源提供能力基準，本檔的優先序與待辦為本專案程式分析所得：
+1. 每項記錄實作來源、對應 commit、測試命令／結果、OS／arch、artifact digest、驗收證據與外部限制。只有文件規劃不勾選實作完成；選配未採用時記錄決策，不假勾為已實作。
+2. 每次程式修改增加／更新相關測試，交付前相關測試與必要完整回歸通過；新增平台需實際安裝後驗證。文件單獨修改不新增程式測試，但須驗證編號、依賴、文件連結與 `git diff --check`。
+3. 每次完成變更建立範圍明確的 commit；保留既有使用者修改，不把 `.env`、roles credentials、DB、模型 cache、workspace、build 輸出或簽章憑證納入 Git。
+4. build、簽章、安裝、使用者旅程、外部 provider／正式平台、對外發布分別記錄結果。遠端 CI 設定已存在不等同 CI 執行成功，容器或模擬器結果不能直接等同 native 實機。
+5. 更新程式不丟失個人資料、角色、批准政策或不確定工作狀態；更新後不自動重放外部副作用。不提供會悄悄降低沙箱或身份驗證的「修復」。
 
-- [Git worktrees](https://learn.chatgpt.com/docs/environments/git-worktrees)：隔離任務及保留可審查改動。
-- [Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)：專門角色、並行委派及 agent thread 控制。
-- [Scheduled tasks](https://learn.chatgpt.com/docs/automations?surface=app)：背景任務、會話追蹤、Skills 與執行結果管理。
-- [Agent approvals & security](https://learn.chatgpt.com/docs/agent-approvals-security)：sandbox、approval 與網路存取政策。
+## 技術參考
 
-## 原始盤點驗證（文件基線）
+以下用於技術選型；具體版本與支援矩陣須在 P01／P02 執行時再次確認。
 
-- 僅修改 README.md 及新增本檔，未修改程式或新增測試。
-- `venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`：325 tests，OK。
-- 檢查文件本機連結、功能對應模組及 `git diff --check`。
-- 額外 AST 語法掃描根目錄、tools、tests、communication_adapters 的 107 個 Python 檔案：106 個通過；既有 `patch_server.py:1` 語法錯誤，記入 T21，未在本次文件變更中修復。
-- 未進行真實 LLM provider、Telegram／Discord／LINE、Docker、瀏覽器／VS Code 或正式部署驗證；測試通過不代表這些整合已通過。
+- [uv Python versions](https://docs.astral.sh/uv/concepts/python-versions/)：managed Python 與平台／架構版本。
+- [platformdirs](https://platformdirs.readthedocs.io/en/latest/)：跨平台使用者資料、設定與 cache 目錄。
+- [PyInstaller operating modes](https://pyinstaller.org/en/stable/operating-mode.html)：平台分別建置、onedir／onefile。
+- [PyInstaller runtime information](https://pyinstaller.org/en/stable/runtime-information.html)：bundle 資源與 `sys.executable` 的差異。
+- [Electron packaging](https://www.electronjs.org/docs/latest/tutorial/tutorial-packaging)：Forge、平台 installers 與簽章／公證。
+
+本次僅新增發行工作規劃，未修改程式、執行建置、平台安裝或對外發布。舊功能驗收不能代替本清單的安裝包驗收。
