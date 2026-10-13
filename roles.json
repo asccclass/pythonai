@@ -1,4 +1,5 @@
 {
   "telegram:7736461491": "admin",
-  "telegram:其他使用者ID": "viewer"
+  "telegram:其他使用者ID": "viewer",
+  "websocket:user": "admin"
 }
