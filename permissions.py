@@ -49,10 +49,10 @@ def check_tool_permission(tool_name: str) -> bool:
     if role == ROLE_VIEWER:
         # viewers cannot use any write/exec tools, maybe allow read? 
         # For simplicity, no tools or just read_file.
-        return tool_name in ("read_file", "ask_user")
+        return tool_name in ("read_file", "ask_user", "desktop_tool")
         
     if role == ROLE_OPERATOR:
-        allowed = {"read_file", "list_files", "fetch_url", "run_skill", "ask_user"}
+        allowed = {"read_file", "list_files", "fetch_url", "run_skill", "ask_user", "desktop_tool"}
         return tool_name in allowed
         
     return False

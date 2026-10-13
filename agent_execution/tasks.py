@@ -336,7 +336,7 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
         _active.reset(active)
 
 
-def dispatch_task_input(text, runtime):
+def dispatch_task_input(text, runtime, attachments=None):
     """Human transport commands and answers. Never register as a model tool."""
     from .policy import current_context, execution_scope
     from agent_runtime import AgentTurnResult, resume_agent_turn
@@ -346,6 +346,8 @@ def dispatch_task_input(text, runtime):
     owner = task_owner(context)
     parts = text.strip().split(maxsplit=3)
     command = parts[0] if parts else ''
+    if attachments and command.startswith('/'):
+        raise ValueError('Attachments cannot accompany transport control commands')
     if command in {'/clear','/reset'}:
         store.cancel_session(owner)
         runtime.messages = [message for message in runtime.messages if message.get('role')=='system']
@@ -405,6 +407,9 @@ def dispatch_task_input(text, runtime):
         if suspended:
             row = store.get(owner,suspended['id'])
             messages = row['checkpoint']['messages'] + [{'role':'tool','tool_call_id':row['checkpoint']['suspended_tool_call_id'],'content':text}]
+            if attachments:
+                from agent_runtime import build_user_message
+                messages.append(build_user_message('Attached files for this answer', attachments))
             with execution_scope(task_id=row['id']):
                 return resume_agent_turn(messages,runtime,row['episode'])
     return None

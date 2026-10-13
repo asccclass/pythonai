@@ -747,6 +747,10 @@ def analyze_image(image_path: str | Path, prompt: str = "Describe this image in 
     except Exception as e:
         return f"Vision analysis failed: {e}"
 
+from agent_execution.companion.desktop import desktop_tool, SCHEMA as DESKTOP_SCHEMA
+TOOLS['desktop_tool'] = desktop_tool
+TOOLS_SCHEMAS.append(DESKTOP_SCHEMA)
+
 DYNAMIC_TOOLS_DIR = Path(__file__).parent / "tools"
 DYNAMIC_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 

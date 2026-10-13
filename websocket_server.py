@@ -13,6 +13,8 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agent_execution.delivery import EventStore, CapacityError
+from agent_execution.companion.protocol import (conversation_id, scope_device, decode_attachments,
+    dedup_input, desktop_features, MAX_MESSAGE_BYTES)
 
 
 PROTOCOL_VERSION = 1
@@ -68,10 +70,17 @@ class Session:
     request_id: str | None = None
     audio_turn: Any = None
     audio_task: asyncio.Task | None = None
+    conversation_id: str = ""
+    attachments: tuple = ()
+    desktop_requests: dict = field(default_factory=dict)
+
+    @property
+    def scoped_device(self):
+        return scope_device(self.device_id, self.conversation_id)
 
     @property
     def owner(self):
-        return EventStore.owner(self.user_id, self.project, self.device_id)
+        return EventStore.owner(self.user_id, self.project, self.scoped_device)
 
     async def send(self, type_: str, payload: dict[str, Any], ref: str | None = None) -> dict[str, Any]:
         message: dict[str, Any] = {
@@ -116,16 +125,53 @@ class Session:
             self.outbox.popleft()
 
 
+async def request_desktop_tool(session, action, arguments):
+    connection = session.ws
+    if connection is None or 'desktop.' + action not in session.caps:
+        return {'success': False, 'error': 'Desktop tool unavailable; enable tools in MyAI settings'}
+    key = new_id()
+    future = asyncio.get_running_loop().create_future()
+    session.desktop_requests[key] = (future, connection)
+    try:
+        # Register the waiter before sending: a fast client may respond immediately.
+        message = {'v': 1, 'type': 'tool.call', 'id': key, 'ref': session.request_id,
+                   'ts': now_ms(), 'payload': {'action': action, 'arguments': arguments, 'timeout_ms': 60000,
+                                              'connection_id': session.state.get('desktop_connection_id')}}
+        if session.event_store is not None:
+            message = session.event_store.append(session.owner, message)
+            session.seq = message['seq']
+        else:
+            if len(session.outbox) >= 200:
+                raise CapacityError('Reliable outbox full')
+            session.seq += 1
+            message['seq'] = session.seq
+        session.outbox.append(message)
+        await asyncio.wait_for(connection.send_text(json.dumps(message, ensure_ascii=False)), 5)
+        return await asyncio.wait_for(future, 60)
+    except (asyncio.TimeoutError, OSError):
+        return {'success': False, 'error': 'Desktop request expired; do not repeat without checking result'}
+    finally:
+        session.desktop_requests.pop(key, None)
+
+
 class Hub:
     def __init__(self, event_store=None) -> None:
         self.sessions: dict[tuple[str, str, str], Session] = {}
         self.telegram_fallbacks: list[str] = []
         self.event_store = event_store
 
-    def get(self, device_id: str, device_type: str = "web", user_id: str = "user", project="default") -> Session:
-        key = (user_id, project, device_id)
+    def get(self, device_id: str, device_type: str = "web", user_id: str = "user", project="default", conversation="") -> Session:
+        key = (user_id, project, scope_device(device_id, conversation))
         session = self.sessions.get(key)
         if session is None:
+            peers = [key for key, value in self.sessions.items() if value.user_id == user_id
+                     and value.project == project and value.device_id == device_id]
+            if len(peers) >= 50:
+                idle = [key for key in peers if self.sessions[key].ws is None and
+                        (self.sessions[key].current_chat_task is None or self.sessions[key].current_chat_task.done())]
+                if not idle:
+                    raise CapacityError("Conversation capacity reached")
+                del self.sessions[min(idle, key=lambda item: self.sessions[item].last_active)]
             from agent_execution.delivery import positive_limit
             if len(self.sessions) >= positive_limit('COMPANION_MAX_SESSIONS',10000):
                 idle = [key for key,value in self.sessions.items() if value.ws is None and (value.current_chat_task is None or value.current_chat_task.done())]
@@ -134,7 +180,8 @@ class Hub:
                 del self.sessions[min(idle,key=lambda key:self.sessions[key].last_active)]
             if self.event_store is None:
                 self.event_store = EventStore()
-            session = Session(device_id=device_id, device_type=device_type, user_id=user_id, project=project, event_store=self.event_store)
+            session = Session(device_id=device_id, device_type=device_type, user_id=user_id, project=project,
+                              event_store=self.event_store, conversation_id=conversation)
             session.seq, _, events = self.event_store.snapshot(session.owner)
             session.outbox.extend(events)
             self.sessions[key] = session
@@ -197,7 +244,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
     from base import auto_approve_command_runs
     from permissions import get_user_role, set_current_role
     identity = f"websocket:{session.user_id}"
-    scoped_session = f"{session.project}:{session.device_id}"
+    scoped_session = f"{session.project}:{session.scoped_device}"
     cancelled = session.cancel_chat or threading.Event()
     events = asyncio.Queue(maxsize=128)
     loop = asyncio.get_running_loop()
@@ -227,13 +274,30 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
             runtime = session.runtime
             runtime.check_cancelled = cancelled.is_set
             runtime.event_callback = emit
+            from agent_execution.companion.desktop import desktop_bridge, human_desktop_command
+            def request_desktop(action, arguments):
+                future = asyncio.run_coroutine_threadsafe(request_desktop_tool(session, action, arguments), loop)
+                while True:
+                    try:
+                        return future.result(timeout=.2)
+                    except __import__('concurrent.futures', fromlist=['TimeoutError']).TimeoutError:
+                        if cancelled.is_set():
+                            future.cancel()
+                            raise InterruptedError("Desktop tool cancelled")
             with execution_scope(source="websocket", identity=identity, session=scoped_session,
                     project=session.project, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
-                    set_current_role(get_user_role(identity)), auto_approve_command_runs():
+                    set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop):
                 from agent_execution.tasks import dispatch_task_input
-                result = dispatch_task_input(user_text,runtime)
+                desktop_result = human_desktop_command(user_text)
+                if desktop_result is not None:
+                    from agent_runtime import AgentTurnResult
+                    result = AgentTurnResult(desktop_result, None)
+                elif session.attachments:
+                    result = dispatch_task_input(user_text, runtime, attachments=session.attachments)
+                else:
+                    result = dispatch_task_input(user_text,runtime)
                 if result is None:
-                    result = run_agent_turn(user_text, runtime)
+                    result = run_agent_turn(user_text, runtime, attachments=session.attachments) if session.attachments else run_agent_turn(user_text, runtime)
             emit("end", {"text": result.reply, "episode_id": result.episode_id,
                           "suspended": result.suspended, "failed": result.reply.startswith("Error:"),
                           "emotion": "neutral", "action": "none"})
@@ -293,10 +357,16 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if len(device_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", project):
             await ws.close(code=4400)
             return
-        session = hub.get(device_id, str(payload.get("device_type") or "web"), tokens[token], project)
+        conversation = conversation_id(payload.get("conversation_id", ""))
+        session = hub.get(device_id, str(payload.get("device_type") or "web"), tokens[token], project, conversation)
         if session.ws is not None:
             await session.ws.close(code=4409)
+        for future, connection in list(session.desktop_requests.values()):
+            if not future.done():
+                future.set_result({'success': False, 'error': 'Desktop connection replaced'})
+        session.desktop_requests.clear()
         session.ws = ws
+        session.state['desktop_connection_id'] = new_id()
         if session.audio_turn:session.audio_turn.cancelled.set()
         session.audio_turn=None
         def runtime_factory():
@@ -320,9 +390,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
             "welcome",
             {
                 "session_id": new_id(),
+                "connection_id": session.state['desktop_connection_id'],
                 "server_time": now_ms(),
                 "resumed": resumable,
-                "features": __import__('agent_execution.media.audio',fromlist=['features']).features(),
+                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features()},
                 "last_seq": session.seq,
                 "history_floor": floor,
             },
@@ -354,6 +425,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
             await session.send("error", {"code": "bad_message", "message": "invalid JSON", "retryable": False})
     finally:
         if session is not None and session.ws is ws:
+            for future, connection in list(session.desktop_requests.values()):
+                if not future.done():
+                    future.set_result({"success": False, "error": "Desktop disconnected; result may be uncertain"})
+            session.desktop_requests.clear()
             if session.cancel_chat is not None:
                 session.cancel_chat.set()
             if session.audio_turn:session.audio_turn.cancelled.set();session.audio_turn=None
@@ -378,6 +453,13 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
         session.ack(int(payload.get("seq") or 0))
     elif message_type == "chat.send":
         text = str(payload.get("text") or "")
+        try:
+            attachments = decode_attachments(payload.get("attachments"))
+            if attachments and text.lstrip().startswith('/'):
+                raise ValueError('Attachments cannot accompany transport control commands')
+        except ValueError as error:
+            await session.send("error", {"code": "bad_attachment", "message": str(error), "retryable": False}, ref=message_id)
+            return
         if not text:
             await session.send("error", {"code": "bad_message", "message": "chat text is required", "retryable": False}, ref=message_id)
             return
@@ -388,12 +470,13 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
             if not isinstance(message_id, str) or not message_id or len(message_id) > 128:
                 await session.send('error', {'code':'bad_message','message':'chat.send requires a stable ID (1..128 characters)','retryable':False})
                 return
-            previous = session.event_store.accept_input(session.owner, message_id, text)
+            previous = session.event_store.accept_input(session.owner, message_id, dedup_input(text, attachments))
             if previous is not None:
                 await session.send('notify', {'request_id':message_id,'status':previous,'text':'Duplicate input was not executed; inspect replayed events.'}, ref=message_id)
                 return
         session.cancel_chat = threading.Event()
         session.request_id = message_id
+        session.attachments = attachments
         session.current_chat_task = asyncio.create_task(handle_chat(session, text, str(message_id or "")))
     elif message_type == "chat.interrupt":
         if session.current_chat_task is not None and not session.current_chat_task.done():
@@ -408,7 +491,7 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
             return
         identity = f"websocket:{session.user_id}"
         with set_current_role(get_user_role(identity)):
-            result = await asyncio.to_thread(human_command, f"/{decision} {approval_id}", identity, f"{session.project}:{session.device_id}")
+            result = await asyncio.to_thread(human_command, f"/{decision} {approval_id}", identity, f"{session.project}:{session.scoped_device}")
         await session.send("approval.result", {"message": result}, ref=message_id)
     elif message_type == "audio.start":
         from agent_execution.media.audio import AudioTurn,features
@@ -432,7 +515,17 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
     elif message_type == "state.report":
         session.state.update(payload)
     elif message_type == "tool.result":
-        handle_tool_result(session, data.get("ref"), payload)
+        reference = data.get("ref")
+        pending = session.desktop_requests.get(reference)
+        if pending:
+            future, connection = pending
+            if connection is session.ws and not future.done() and type(payload.get("ok")) is bool:
+                encoded = json.dumps(payload, ensure_ascii=False)
+                if len(encoded.encode()) > 16384:
+                    raise ValueError("Desktop result too large")
+                future.set_result({"success": payload['ok'], "output": payload.get('data'), "error": payload.get('error')})
+        else:
+            handle_tool_result(session, reference, payload)
     elif message_type == "settings.update":
         session.settings.update(payload)
     else:
@@ -515,8 +608,8 @@ def handle_tool_result(session: Session, ref: str | None, payload: dict[str, Any
 
 
 def parse_text_message(text: str) -> dict[str, Any]:
-    if len(text.encode()) > 1024*1024:
-        raise ValueError('message exceeds 1 MiB')
+    if len(text.encode()) > MAX_MESSAGE_BYTES:
+        raise ValueError('message exceeds 4 MiB')
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
