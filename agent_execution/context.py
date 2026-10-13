@@ -12,6 +12,45 @@ def count_tokens(value):
     return token_upper_bound(value)
 
 
+def message_tokens(messages, image_tokens=None):
+    """Count text conservatively, reserving vision tokens instead of Base64 bytes.
+
+    This is a configurable provider-independent reservation, not a tokenizer for
+    a specific vision model. Never modify the images passed to the provider.
+    Tool schemas, ordinary text and tool arguments still use the byte bound.
+    """
+    text_messages=[]
+    images=0
+    for message in messages:
+        content=message.get('content')
+        if not isinstance(content,list):
+            text_messages.append(message)
+            continue
+        parts=[]
+        for part in content:
+            image=part.get('image_url') if isinstance(part,dict) and part.get('type')=='image_url' else None
+            if isinstance(image,dict) and isinstance(image.get('url'),str) and image['url']:
+                images+=1
+                parts.append({**part,'image_url':{**image,'url':'<image>'}})
+            else:
+                parts.append(part)
+        text_messages.append({**message,'content':parts})
+    if not images:
+        return count_tokens(text_messages)
+    if image_tokens is None:
+        import os
+        image_tokens=os.environ.get('AGENT_MODEL_IMAGE_TOKENS','8192')
+    if isinstance(image_tokens,bool):
+        raise ValueError('Image token reservation must be a positive integer')
+    try:
+        reservation=int(image_tokens)
+    except (ValueError,TypeError,OverflowError) as error:
+        raise ValueError('Image token reservation must be a positive integer') from error
+    if reservation<=0 or str(reservation)!=str(image_tokens):
+        raise ValueError('Image token reservation must be a positive integer')
+    return count_tokens(text_messages)+images*reservation
+
+
 def normalize_blocks(messages):
     """Group calls/results; do not submit orphaned or unresolved historical calls."""
     values=copy.deepcopy(messages)
@@ -54,7 +93,7 @@ def has_approval(block):
     return 'approval_required:' in text or 'approval_id' in text
 
 
-def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None):
+def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None, image_tokens=None):
     blocks=normalize_blocks(messages)
     schema_tokens=count_tokens(tools or [])
     protected={index for index,block in enumerate(blocks) if any(m.get('role') in {'system','developer'} for m in block) or has_approval(block)}
@@ -68,14 +107,14 @@ def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None):
     def flatten(chosen):
         return [m for index,block in enumerate(blocks) if index in chosen for m in block]+constraints
     chosen=set(range(len(blocks)))
-    if count_tokens(flatten(chosen))+schema_tokens<=max_tokens:
+    if message_tokens(flatten(chosen),image_tokens)+schema_tokens<=max_tokens:
         return flatten(chosen)
     # Drop entire old call/result groups, never half of a pair or the active goal.
     for index in range(len(blocks)):
         if index in protected:
             continue
         chosen.discard(index)
-        if count_tokens(flatten(chosen))+schema_tokens<=max_tokens:
+        if message_tokens(flatten(chosen),image_tokens)+schema_tokens<=max_tokens:
             return flatten(chosen)
     raise ContextTooLarge('Protected instructions, goal, approvals or latest input exceed model context budget')
 

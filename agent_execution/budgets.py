@@ -287,7 +287,7 @@ class BudgetEndpoint:
     @traced('model','model.request')
     def create(self,**kwargs):
         from .policy import current_context
-        from .context import govern_messages, route_model, model_capabilities
+        from .context import govern_messages, route_model, model_capabilities, message_tokens
         budget=active_budget()
         if budget is None:
             endpoint=self.client.chat.completions if self.kind=='chat' else self.client.embeddings
@@ -310,8 +310,9 @@ class BudgetEndpoint:
             task=_active.get()
             row=task[0].get(task[1],task[2]) if task else None
             kwargs['messages']=govern_messages(kwargs['messages'],window-output,kwargs.get('tools'),
-                goal=row['goal'] if row else '',criteria=row['criteria'] if row else None)
-            prompt=token_upper_bound(kwargs['messages'])+token_upper_bound(kwargs.get('tools',[]))
+                goal=row['goal'] if row else '',criteria=row['criteria'] if row else None,
+                image_tokens=capabilities.get('image_input_tokens'))
+            prompt=message_tokens(kwargs['messages'],capabilities.get('image_input_tokens'))+token_upper_bound(kwargs.get('tools',[]))
             if kwargs.get('stream'):
                 kwargs['stream_options']={**kwargs.get('stream_options',{}),'include_usage':True}
         else:

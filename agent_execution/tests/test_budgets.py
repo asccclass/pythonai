@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from agent_execution.budgets import TaskBudget, BudgetExhausted, budget_scope, budget_client, child_scope, _depth
-from agent_execution.context import govern_messages, normalize_blocks, ContextTooLarge
+from agent_execution.context import govern_messages, normalize_blocks, ContextTooLarge, message_tokens
 from agent_execution.policy import execution_scope, execute_tool, current_context
 from agent_execution.tasks import task_owner, _active
 
@@ -116,6 +116,38 @@ class BudgetTests(unittest.TestCase):
             self.assertNotIn('max_completion_tokens',values)
             with self.assertRaises(ValueError):client.embeddings.create(model='embed',input='test')
             raw.embeddings.create.assert_not_called()
+
+    def test_large_image_reaches_provider_with_multimodal_reservation_and_usage(self):
+        import base64,io,random
+        from PIL import Image
+        stream=io.BytesIO()
+        Image.frombytes('RGB',(256,256),random.Random(23).randbytes(256*256*3)).save(stream,'PNG')
+        url='data:image/png;base64,'+base64.b64encode(stream.getvalue()).decode()
+        messages=[{'role':'system','content':'Recognize the image'}, {'role':'user','content':[
+            {'type':'text','text':'請辨識圖檔內容資訊'}, {'type':'image_url','image_url':{'url':url}}]}]
+        raw=self.client(NS(usage=NS(total_tokens=1300,prompt_tokens=1200,completion_tokens=100)))
+        profile={'vision':{'vision':True,'context_tokens':32768,'image_input_tokens':4096}}
+        with patch.dict(os.environ,{'AGENT_MODEL_CAPABILITIES':json.dumps(profile),'OLLAMA_VISION_MODEL':'vision'}),budget_scope() as budget:
+            budget_client(raw).chat.completions.create(model='text',messages=messages)
+            self.assertGreaterEqual(budget.snapshot()['tokens'],1300)
+            self.assertLess(budget.snapshot()['tokens'],6000)
+            with closing(budget.connect()) as conn:
+                reservation=conn.execute('SELECT tokens,status FROM budget_calls').fetchone()
+            self.assertEqual(reservation['status'],'reported')
+            self.assertEqual(reservation['tokens'],budget.snapshot()['tokens'])
+        sent=raw.chat.completions.create.call_args.kwargs['messages']
+        self.assertEqual(sent,messages)
+        self.assertEqual(sent[-1]['content'][1]['image_url']['url'],url)
+        self.assertLess(message_tokens(sent,4096),10000)
+        self.assertGreater(len(url),200000)
+
+    def test_image_reservation_limit_stops_provider_before_call(self):
+        raw=self.client()
+        images=[{'role':'user','content':[{'type':'image_url','image_url':{'url':'data:image/png;base64,abc'}}]*4}]
+        with budget_scope():
+            with self.assertRaises(ContextTooLarge):
+                budget_client(raw).chat.completions.create(model='m',messages=images)
+        raw.chat.completions.create.assert_not_called()
 
     def test_stream_usage_reconciles_and_close_releases_capacity(self):
         class Stream:
@@ -240,6 +272,39 @@ class BudgetTests(unittest.TestCase):
 
 
 class ContextTests(unittest.TestCase):
+    def test_image_encoding_length_is_not_text_context_and_images_remain_intact(self):
+        import copy
+        messages=[{'role':'user','content':[{'type':'text','text':'辨識'},
+            {'type':'image_url','image_url':{'url':'data:image/png;base64,'+'A'*1000000,'detail':'high'}}]}]
+        original=copy.deepcopy(messages)
+        with patch.dict(os.environ,{'AGENT_MODEL_IMAGE_TOKENS':'8192'}):
+            self.assertEqual(govern_messages(messages,32768),original)
+            self.assertEqual(messages,original)
+            short=copy.deepcopy(messages)
+            short[0]['content'][1]['image_url']['url']='https://example.com/image.png'
+            self.assertEqual(message_tokens(short),message_tokens(messages))
+            self.assertEqual(message_tokens(messages*2,8192)-message_tokens(messages*2,4096),8192)
+
+    def test_image_metadata_and_large_text_are_still_budgeted(self):
+        image={'type':'image_url','image_url':{'url':'data:image/png;base64,'+'A'*100000}}
+        messages=[{'role':'user','content':[image,{'type':'text','text':'text'*10000}]}]
+        with self.assertRaises(ContextTooLarge):govern_messages(messages,32768)
+        with self.assertRaises(ContextTooLarge):govern_messages([{'role':'system','content':'x'*40000},{'role':'user','content':[image]}],32768)
+        with self.assertRaises(ContextTooLarge):govern_messages([{'role':'user','content':[image]}],32768,tools=[{'description':'x'*40000}])
+        for value in (0,-1,True,1.5,'nan'):
+            with self.assertRaises(ValueError):message_tokens([{'role':'user','content':[image]}],value)
+
+    def test_compaction_keeps_latest_image_and_protected_approval(self):
+        image={'type':'image_url','image_url':{'url':'data:image/png;base64,'+'A'*100000}}
+        messages=[{'role':'system','content':'trusted'}, {'role':'user','content':'old'*10000},
+            {'role':'assistant','tool_calls':[{'id':'call','function':{'name':'x','arguments':'{}'}}]},
+            {'role':'tool','tool_call_id':'call','content':'approval_required: 123'},
+            {'role':'user','content':[image]}]
+        result=govern_messages(messages,10000,image_tokens=4096,goal='recognize the image')
+        self.assertIn(image,result[-2]['content'])
+        self.assertIn('approval_required: 123',json.dumps(result))
+        self.assertNotIn('old'*10000,json.dumps(result))
+
     def test_compaction_preserves_goal_approval_latest_input_and_complete_tool_groups(self):
         messages=[{'role':'system','content':'trusted'}, {'role':'user','content':'old'*1000},
             {'role':'assistant','tool_calls':[{'id':'call','type':'function','function':{'name':'x','arguments':'{}'}}]},
