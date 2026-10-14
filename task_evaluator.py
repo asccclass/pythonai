@@ -118,7 +118,7 @@ class TaskEvaluator:
                     continue
                 func_name = getattr(tc, "function", None)
                 name = getattr(func_name, "name", "") if func_name else tc.get("function", {}).get("name", "")
-                if name in {'ast_edit','run_test_suite'}:
+                if name in {'ast_edit','run_test_suite','project_scaffold'}:
                     return True
                 if name in {'write_file','edit_file','patch'}:
                     arguments=getattr(func_name,'arguments','{}') if func_name else tc.get('function',{}).get('arguments','{}')
@@ -138,9 +138,10 @@ class TaskEvaluator:
         """Locate test targets mentioned in user goal, messages, or existing in workspace."""
         targets: list[str] = []
         test_pattern = re.compile(r"(?:[\w.-]+[/\\])*test_[\w.-]+\.py\b", re.IGNORECASE)
+        go_test_pattern = re.compile(r"(?:[\w.-]+[/\\])*[\w.-]+_test\.go\b", re.IGNORECASE)
 
         # 1. From user goal
-        for match in test_pattern.findall(user_goal):
+        for match in test_pattern.findall(user_goal)+go_test_pattern.findall(user_goal):
             clean_target = match.replace("\\", "/")
             if clean_target not in targets:
                 targets.append(clean_target)
@@ -148,7 +149,7 @@ class TaskEvaluator:
         # 2. From tool calls or arguments in messages
         for msg in messages:
             content = str(msg.get("content") or "")
-            for match in test_pattern.findall(content):
+            for match in test_pattern.findall(content)+go_test_pattern.findall(content):
                 clean_target = match.replace("\\", "/")
                 if clean_target not in targets:
                     targets.append(clean_target)
@@ -157,7 +158,7 @@ class TaskEvaluator:
             for tc in tool_calls:
                 func = getattr(tc, "function", None)
                 args_str = getattr(func, "arguments", "") if func else tc.get("function", {}).get("arguments", "")
-                for match in test_pattern.findall(args_str):
+                for match in test_pattern.findall(args_str)+go_test_pattern.findall(args_str):
                     clean_target = match.replace("\\", "/")
                     if clean_target not in targets:
                         targets.append(clean_target)

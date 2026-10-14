@@ -499,7 +499,7 @@ TOOLS_SCHEMAS = [
         "type": "function",
         "function": {
                 "name": "run_command",
-                "description": "Run a command inside the Agent workspace and return its completed process result. cwd is workspace-relative; paths outside the workspace are rejected.",
+                "description": "Run an executable directly (no shell) inside the Agent workspace. cwd is workspace-relative; outside paths are rejected. On Windows do not use shell builtins or Unix commands such as dir, mkdir, ls, rm. Use list_files, write_file (creates parent directories), delete_file and project_scaffold instead. For test evidence use run_test_suite.",
                 "parameters": {
                     "type": "object",
                     "properties": {

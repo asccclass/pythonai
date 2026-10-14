@@ -20,7 +20,8 @@ def project_scaffold(project_name: str, framework: str) -> str:
             "python_basic": _scaffold_python_basic,
             "fastapi": _scaffold_fastapi,
             "node_express": _scaffold_node_express,
-            "react_vite": _scaffold_react_vite
+            "react_vite": _scaffold_react_vite,
+            "go_basic": _scaffold_go_basic,
         }
         
         if framework not in scaffold_map:
@@ -40,6 +41,16 @@ def _write_file(project_dir: Path, rel_path: str, content: str) -> str:
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(content)
     return rel_path
+
+
+def _scaffold_go_basic(project_dir: Path, name: str) -> list[str]:
+    return [
+        _write_file(project_dir,'go.mod','module example.com/hello\n\ngo 1.22\n'),
+        _write_file(project_dir,'main.go','package main\n\nimport "fmt"\n\nfunc greeting() string { return "Hello, World!" }\n\nfunc main() { fmt.Println(greeting()) }\n'),
+        _write_file(project_dir,'main_test.go','package main\n\nimport "testing"\n\nfunc TestGreeting(t *testing.T) {\n\tif got := greeting(); got != "Hello, World!" { t.Fatalf("unexpected greeting: %q", got) }\n}\n'),
+        _write_file(project_dir,'README.md','# Go Hello World\n\nRun: `go run .`\n\nTests: `go test ./...`\n'),
+        _write_file(project_dir,'.gitignore','*.exe\n'),
+    ]
 
 def _scaffold_python_basic(project_dir: Path, name: str) -> list[str]:
     files = []

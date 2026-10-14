@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
@@ -47,6 +48,41 @@ class ResultTests(unittest.TestCase):
         path=self.root/'.agent'/'acceptance.json'
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps({'version':1,'checks':checks}),encoding='utf-8')
+
+    @unittest.skipUnless(shutil.which('go'),'requires Go runtime')
+    def test_go_scaffold_test_evidence_and_evaluator(self):
+        from tools.project_scaffold import project_scaffold
+        output=project_scaffold('hello','go_basic')
+        self.assertIn('Successfully scaffolded',output)
+        self.assertFalse((self.root/'hello'/'requirements.txt').exists())
+        result=run_test_suite('hello')
+        self.assertTrue(result.success,str(result))
+        self.assertEqual(result.evidence['framework'],'go')
+        self.assertEqual(result.evidence['tests']['passed'],1)
+        process=subprocess.run(['go','run','.'],cwd=self.root/'hello',capture_output=True,text=True,timeout=30)
+        self.assertEqual(process.returncode,0,process.stderr)
+        self.assertEqual(process.stdout.strip(),'Hello, World!')
+        messages=[{'role':'assistant','tool_calls':[{'function':{'name':'write_file',
+            'arguments':json.dumps({'path':'hello/main_test.go','content':'fixture'})}}]}]
+        evaluation=TaskEvaluator(self.root,git_status_fn=lambda:'clean').evaluate(
+            '用 Go 撰寫 hello world',messages,'已完成')
+        self.assertTrue(evaluation.success,evaluation.feedback)
+        self.assertTrue(evaluation.criteria_met['test_passed:hello/main_test.go'])
+
+    @unittest.skipUnless(shutil.which('go'),'requires Go runtime')
+    def test_go_test_failure_and_no_tests_are_not_verified(self):
+        from tools.project_scaffold import project_scaffold
+        project_scaffold('hello','go_basic')
+        target=self.root/'hello'/'main_test.go'
+        target.write_text('package main\nimport "testing"\nfunc TestFailure(t *testing.T) { t.Fatal("failure") }\n')
+        result=run_test_suite('hello/main_test.go')
+        self.assertFalse(result.success)
+        self.assertEqual(result.evidence['tests']['failed'],1)
+        target.unlink()
+        result=run_test_suite('hello',framework='go')
+        self.assertFalse(result.success)
+        self.assertEqual(result.exit_code,0)
+        self.assertEqual(result.evidence['tests']['passed'],0)
 
     def test_process_failure_and_explicit_false_are_not_success_text(self):
         result=normalize_result(subprocess.CompletedProcess([],3,'All tests passed','actual failure'))

@@ -115,8 +115,13 @@ class TaskBudget:
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             row=conn.execute('SELECT * FROM task_budgets WHERE owner=? AND id=?',(self.owner,self.key)).fetchone()
-            if row['deadline']<=time.time() or row['requests']>=self.max_requests or row['tokens']+tokens>self.max_tokens or (self.max_cost and row['cost']+cost>self.max_cost):
-                raise BudgetExhausted('Task request/token/cost/deadline budget exhausted')
+            reasons=[]
+            if row['deadline']<=time.time():reasons.append('deadline')
+            if row['requests']>=self.max_requests:reasons.append(f"requests ({row['requests']}/{self.max_requests})")
+            if row['tokens']+tokens>self.max_tokens:reasons.append(f"tokens ({row['tokens']} + {tokens} > {self.max_tokens})")
+            if self.max_cost and row['cost']+cost>self.max_cost:reasons.append('cost')
+            if reasons:
+                raise BudgetExhausted('Task budget exhausted: '+', '.join(reasons))
             conn.execute('UPDATE task_budgets SET requests=requests+1,tokens=tokens+?,cost=cost+? WHERE owner=? AND id=?',(tokens,cost,self.owner,self.key))
             conn.execute('INSERT INTO budget_calls VALUES(?,?,?,?,?,?)',(key,self.owner,self.key,tokens,cost,'reserved'))
             conn.execute('CREATE TABLE IF NOT EXISTS budget_rates (id TEXT PRIMARY KEY, input REAL, output REAL)')
@@ -125,19 +130,20 @@ class TaskBudget:
         # Failed/unknown calls stay charged. An SDK retry cannot silently reset the budget.
         return key
 
-    def reconcile(self, key, usage):
+    def reconcile(self, key, usage, settle=True):
         if usage is None:
             return
         total=getattr(usage,'total_tokens',None)
-        if not isinstance(total,int) or total<0:
+        if type(total) is not int or total<0:
             return
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             call=conn.execute("SELECT tokens,cost FROM budget_calls WHERE id=? AND owner=? AND task_id=? AND status='reserved'",(key,self.owner,self.key)).fetchone()
             if call is None:
                 return
-            # Never refund a reservation. Reconcile underestimates upward, including reasoning tokens.
-            delta=max(0,total-call['tokens'])
+            # Partial streams may increase charges; only successful completion can refund.
+            charged=total if settle else max(total,call['tokens'])
+            delta=charged-call['tokens']
             actual_cost=call['cost']
             if self.max_cost:
                 rates=conn.execute('SELECT input,output FROM budget_rates WHERE id=?',(key,)).fetchone()
@@ -147,7 +153,7 @@ class TaskBudget:
                     output=output if isinstance(output,int) and output>=0 else max(0,total-prompt)
                     actual_cost=max(actual_cost,(prompt*rates['input']+output*rates['output'])/1_000_000)
             conn.execute('UPDATE task_budgets SET tokens=tokens+?,cost=cost+? WHERE owner=? AND id=?',(delta,actual_cost-call['cost'],self.owner,self.key))
-            conn.execute("UPDATE budget_calls SET status='reported',tokens=MAX(tokens,?),cost=? WHERE id=?",(total,actual_cost,key))
+            conn.execute("UPDATE budget_calls SET status=?,tokens=?,cost=? WHERE id=?",('reported' if settle else 'reserved',charged,actual_cost,key))
             row=conn.execute('SELECT tokens,cost FROM task_budgets WHERE owner=? AND id=?',(self.owner,self.key)).fetchone()
             over=row['tokens']>self.max_tokens or (self.max_cost and row['cost']>self.max_cost)
         if over:
@@ -255,16 +261,20 @@ class BudgetStream:
         self.thread.start()
 
     def __iter__(self):
+        usage=None
         try:
             for chunk in self.stream:
                 self.budget.check()
                 if self.closed:
                     raise BudgetExhausted('Model stream deadline/cancellation reached')
-                self.budget.reconcile(self.key,getattr(chunk,'usage',None))
+                if getattr(chunk,'usage',None) is not None:
+                    usage=chunk.usage
+                    self.budget.reconcile(self.key,usage,settle=False)
                 yield chunk
-            self.budget.check()
-            if self.interrupted.is_set() or time.monotonic()>=self.deadline:
+            if self.closed or self.interrupted.is_set() or time.monotonic()>=self.deadline:
                 raise BudgetExhausted('Model stream wall deadline exhausted')
+            self.budget.reconcile(self.key,usage)
+            self.budget.check()
         finally:
             self.close()
 

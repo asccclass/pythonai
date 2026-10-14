@@ -12,8 +12,8 @@
         },
         "framework": {
           "type": "string",
-          "description": "The framework to scaffold. Options: 'python_basic', 'fastapi', 'node_express', 'react_vite'.",
-          "enum": ["python_basic", "fastapi", "node_express", "react_vite"]
+          "description": "Use go_basic for Go programs; includes go.mod, main.go, main_test.go and README. Other options: python_basic, fastapi, node_express, react_vite.",
+          "enum": ["go_basic", "python_basic", "fastapi", "node_express", "react_vite"]
         }
       },
       "required": ["project_name", "framework"]

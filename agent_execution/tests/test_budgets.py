@@ -60,6 +60,49 @@ class BudgetTests(unittest.TestCase):
             self.assertEqual(sum(pool.map(reserve,range(20))),3)
         self.assertEqual(budget.snapshot()['requests'],3)
 
+    def test_successful_usage_settles_estimate_once_and_survives_restart(self):
+        budget=TaskBudget(self.owner,'settle')
+        key=budget.reserve('m',18000,100)
+        budget.reconcile(key,NS(total_tokens=400,prompt_tokens=300,completion_tokens=100))
+        budget.reconcile(key,NS(total_tokens=400,prompt_tokens=300,completion_tokens=100))
+        self.assertEqual(budget.snapshot()['tokens'],400)
+        restored=TaskBudget(self.owner,'settle')
+        restored.reserve('m',18000,100)
+        self.assertEqual(restored.snapshot()['tokens'],18500)
+        self.assertEqual(restored.snapshot()['requests'],2)
+
+    def test_missing_or_invalid_usage_keeps_reservation(self):
+        budget=TaskBudget(self.owner,'unknown')
+        key=budget.reserve('m',1000,100)
+        for usage in (None,NS(total_tokens=-1),NS(total_tokens=True),NS(total_tokens='100')):
+            budget.reconcile(key,usage)
+        self.assertEqual(budget.snapshot()['tokens'],1100)
+        with self.assertRaisesRegex(BudgetExhausted,r'tokens \(1100 \+ 20000 > 20000\)'):
+            budget.reserve('m',20000,0)
+
+    def test_failed_stream_does_not_refund_partial_usage(self):
+        class Stream:
+            def __iter__(self):
+                yield NS(usage=NS(total_tokens=1))
+                raise RuntimeError('stream failed')
+            def close(self):pass
+        with budget_scope() as budget:
+            stream=budget_client(self.client(Stream())).chat.completions.create(model='m',messages=[],stream=True)
+            reserved=budget.snapshot()['tokens']
+            with self.assertRaises(RuntimeError):list(stream)
+            self.assertEqual(budget.snapshot()['tokens'],reserved)
+
+    def test_partial_stream_usage_charges_upward_before_failure(self):
+        class Stream:
+            def __iter__(self):
+                yield NS(usage=NS(total_tokens=1000))
+                raise RuntimeError('stream failed')
+            def close(self):pass
+        with budget_scope() as budget:
+            stream=budget_client(self.client(Stream())).chat.completions.create(model='m',messages=[],stream=True)
+            with self.assertRaises(RuntimeError):list(stream)
+            self.assertEqual(budget.snapshot()['tokens'],1000)
+
     def test_cost_rates_are_persisted_missing_rates_rejected_and_usage_reconciled(self):
         with patch.dict(os.environ,{'AGENT_TASK_MAX_COST_USD':'0.001','AGENT_MODEL_RATES':'{"m":{"input":1,"output":10}}'}):
             budget=TaskBudget(self.owner,'cost')
