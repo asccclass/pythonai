@@ -162,8 +162,30 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
     except PermissionError as error:
         _audit_denial(name, str(error))
         if isinstance(error, ApprovalRequired):
-            raise
-        raise PolicyDenied(str(error)) from error
+            from .companion.approval_bridge import wait_for_approval
+            approved = wait_for_approval(error.approval_id, name, arguments)
+            if approved is None:
+                raise
+            if not approved:
+                raise PolicyDenied('Human denied the operation; it was not executed') from error
+            # The original operation remains paused in this stack. Recheck paths,
+            # role and delivery snapshot before consuming its single-use grant.
+            from permissions import get_user_role, set_current_role
+            with set_current_role(get_user_role(context.identity)):
+                if not check_tool_permission(name):
+                    raise PolicyDenied('Role changed while awaiting approval')
+            _validate_paths(arguments, assets)
+            if budget is not None:
+                budget.check()
+            if context.check_cancelled and context.check_cancelled():
+                raise InterruptedError('Task cancelled while awaiting approval')
+            if external_delivery:
+                latest = ArtifactStore().get(values.get('plan_id'), 'delivery')
+                if latest['state'] != required or latest['payload']['digest'] != plan['payload']['digest'] or latest['payload']['head'] != plan['payload']['head']:
+                    raise PolicyDenied('Delivery changed while awaiting approval')
+            store.consume(error.approval_id, context.identity, context.session, action, approval_values)
+        else:
+            raise PolicyDenied(str(error)) from error
     token = _approved.set(authorization)
     delegate=_delegated_wrapper.set(function if getattr(function,'_policy_tool_name',None)==name else None)
     try:

@@ -18,7 +18,7 @@ from agent_execution.companion.protocol import (conversation_id, scope_device, d
 
 
 PROTOCOL_VERSION = 1
-RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "error"}
+RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error"}
 DEFAULT_FEATURES = {"stt": False, "tts": False, "tts_voices": []}
 
 
@@ -73,6 +73,7 @@ class Session:
     conversation_id: str = ""
     attachments: tuple = ()
     desktop_requests: dict = field(default_factory=dict)
+    waiting_approvals: set = field(default_factory=set)
 
     @property
     def scoped_device(self):
@@ -250,7 +251,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
     loop = asyncio.get_running_loop()
 
     def emit(kind, payload):
-        if cancelled.is_set() and kind != "end":
+        if cancelled.is_set() and kind not in {"end", "approval.cancelled"}:
             return
         future = asyncio.run_coroutine_threadsafe(events.put((kind, payload)), loop)
         try:
@@ -275,6 +276,39 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
             runtime.check_cancelled = cancelled.is_set
             runtime.event_callback = emit
             from agent_execution.companion.desktop import desktop_bridge, human_desktop_command
+            from agent_execution.companion.approval_bridge import approval_bridge
+            def wait_approval(approval_id, name, arguments):
+                from agent_execution.approvals import ApprovalStore
+                from agent_execution.budgets import active_budget
+                store = ApprovalStore()
+                state = 'pending'
+                completed_wait = False
+                session.waiting_approvals.add(approval_id)
+                try:
+                    emit('approval.required', {'approval_id': approval_id, 'name': name,
+                         'arguments': arguments, 'auto_resume': True})
+                    while True:
+                        if cancelled.is_set():
+                            raise InterruptedError('Approval wait cancelled; operation was not executed')
+                        budget = active_budget()
+                        if budget is not None:
+                            budget.check()
+                        state = store.decision_state(approval_id, identity, scoped_session)
+                        if state == 'approved':
+                            completed_wait = True
+                            return True
+                        if state == 'denied':
+                            completed_wait = True
+                            return False
+                        if state != 'pending':
+                            raise PermissionError('Approval expired or unavailable; operation was not executed')
+                        cancelled.wait(.1)
+                finally:
+                    if not completed_wait:
+                        store.cancel_wait(approval_id, identity, scoped_session)
+                    if not completed_wait:
+                        emit('approval.cancelled', {'approval_id': approval_id, 'reason': 'cancelled' if cancelled.is_set() else 'expired'})
+                    session.waiting_approvals.discard(approval_id)
             def request_desktop(action, arguments):
                 future = asyncio.run_coroutine_threadsafe(request_desktop_tool(session, action, arguments), loop)
                 while True:
@@ -286,7 +320,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                             raise InterruptedError("Desktop tool cancelled")
             with execution_scope(source="websocket", identity=identity, session=scoped_session,
                     project=session.project, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
-                    set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop):
+                    set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop), approval_bridge(wait_approval if 'approval.auto_resume' in session.caps else None):
                 from agent_execution.tasks import dispatch_task_input
                 desktop_result = human_desktop_command(user_text)
                 if desktop_result is not None:
@@ -393,7 +427,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "connection_id": session.state['desktop_connection_id'],
                 "server_time": now_ms(),
                 "resumed": resumable,
-                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features()},
+                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'approval_auto_resume': True},
                 "last_seq": session.seq,
                 "history_floor": floor,
             },
@@ -490,9 +524,15 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
             await session.send("error", {"code": "bad_approval", "message": "approval_id and approve/deny decision required", "retryable": False}, ref=message_id)
             return
         identity = f"websocket:{session.user_id}"
+        waiting = approval_id in session.waiting_approvals
         with set_current_role(get_user_role(identity)):
             result = await asyncio.to_thread(human_command, f"/{decision} {approval_id}", identity, f"{session.project}:{session.scoped_device}")
-        await session.send("approval.result", {"message": result}, ref=message_id)
+        saved = result.startswith('Approval decision saved.')
+        auto_resume = saved and decision == 'approve' and waiting
+        if auto_resume:
+            result = 'Approval decision saved. Continuing the original operation.'
+        await session.send("approval.result", {"message": result, 'auto_resume': auto_resume,
+                           'approved': saved and decision == 'approve'}, ref=message_id)
     elif message_type == "audio.start":
         from agent_execution.media.audio import AudioTurn,features
         if not features()['stt']:raise ValueError('STT not configured')

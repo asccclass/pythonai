@@ -87,6 +87,19 @@ class ApprovalStore:
             return [dict(row) for row in conn.execute("SELECT id,action,arguments,expires,state FROM approvals WHERE identity=? AND session=? AND state='pending' AND expires>?",
                                                       (identity, session, time.time()))]
 
+    def decision_state(self, approval_id, identity, session):
+        with closing(self.connect()) as conn:
+            row = conn.execute('SELECT state,expires FROM approvals WHERE id=? AND identity=? AND session=?',
+                               (approval_id, identity, session)).fetchone()
+        if row is None or row['expires'] <= time.time():
+            return 'expired'
+        return row['state']
+
+    def cancel_wait(self, approval_id, identity, session):
+        with closing(self.connect()) as conn, conn:
+            conn.execute("UPDATE approvals SET state='cancelled' WHERE id=? AND identity=? AND session=? AND state IN ('pending','approved')",
+                         (approval_id, identity, session))
+
 
 def human_command(text, identity, session):
     """Only call from a human input transport, never register as a model tool."""
