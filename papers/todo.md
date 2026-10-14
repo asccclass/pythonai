@@ -2,15 +2,15 @@
 
 規劃日期：2026-10-14。詳細設計：[workspace_cleanup_plan.md](workspace_cleanup_plan.md)。既有全專案待辦保留於 [1.todo.md](1.todo.md)。
 
-使用者已決定：暫存／封存資料保留至所屬對話 session 被使用者刪除，不使用天數到期清理。本清單均為未實作；本次只提交文件。
+使用者已決定：暫存／封存資料保留至所屬對話 session 被使用者刪除，不使用天數到期清理。2026-10-14 開始實作；完成範圍與待驗收項分別記錄，不以部分功能宣稱整個里程碑完成。
 
 ## M1 — 歸屬清冊與可檢視預覽
 
-- [ ] **W01 — 凍結生命周期與接口契約**（無依賴）
+- [x] **W01 — 凍結生命周期與接口契約**（無依賴）
   - 決定 temporary／retained／shared／unmanaged 分類、canonical session 映射、舊「原有對話」、session-owner 的窄範圍清理能力、封存根與容量限制。
   - 交付：`agent_execution/workspace_lifecycle/README.md`、協定與狀態契約、fixture 規格。
   - 驗收：使用者刪 session 的語意與 preview／confirm／status 一致；刪訊息、`/clear`、斷線及退出不觸發 purge。
-- [ ] **W02 — 建立版本化 registry 與 session deletion/outbox schema**（W01）
+- [x] **W02 — 建立版本化 registry 與 session deletion/outbox schema**（W01）
   - 實作 workspace identity、managed directories、引用、plans、operations、tombstones 與 migration；復用 TaskStore 所有權與 lease，跨 DB 使用 outbox。
   - 驗收：身份偽造、空 conversation_id 合併、金鑰輪替失去 owner、跨帳號讀寫、重啟遺失進度測試均拒絕／正確處理。
 - [ ] **W03 — 接入建立與持續使用入口**（W02）
@@ -25,6 +25,8 @@
   - 驗收：`go_hello_world`／`hello_world` 等既有未知目錄預設 unmanaged；預覽不改檔、不顯示憑證內容。
 
 M1 交付門檻：只讀清冊與預覽可用，正式使用者資料沒有破壞操作；建立相應程式／測試 commit。
+
+M1 實作進度：已建立 `workspace_lifecycle/` version 1 registry、canonical conversation／legacy device 身份、建立前登記、跨 session attach／retain、未知目錄 inventory、exact-list snapshot 預覽與人類 `/workspace` 入口。新 scaffold／write/edit/delete 與共用政策接入；其餘入口、原生 handle 保護與後續 lifecycle 仍列於未完成項。首次相關測試 45 passed、6 subtests passed；不觸碰正式 workspace 目錄。
 
 ## M2 — 可還原封存
 

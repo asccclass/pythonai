@@ -14,8 +14,6 @@ def project_scaffold(project_name: str, framework: str) -> str:
         if project_dir.exists():
             return f"Error: Directory {project_dir} already exists."
             
-        project_dir.mkdir(parents=True)
-        
         scaffold_map = {
             "python_basic": _scaffold_python_basic,
             "fastapi": _scaffold_fastapi,
@@ -26,6 +24,8 @@ def project_scaffold(project_name: str, framework: str) -> str:
         
         if framework not in scaffold_map:
             return f"Error: Unknown framework '{framework}'."
+        from agent_execution.workspace_lifecycle import LifecycleStore, inferred_purpose
+        LifecycleStore().create(str(project_dir.relative_to(workspace_root())), inferred_purpose())
             
         # Execute specific scaffolder
         files_created = scaffold_map[framework](project_dir, project_name)

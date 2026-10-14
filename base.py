@@ -116,11 +116,15 @@ def list_files(path: str | Path = ".") -> list[str]:
 
 def write_file(path: str | Path, content: str) -> None:
     target = resolve_workspace_path(path)
+    from agent_execution.workspace_lifecycle import prepare_write
+    prepare_write(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
 
 def edit_file(path: str | Path, old_str: str, new_str: str) -> dict[str, str]:
     target = resolve_workspace_path(path)
+    from agent_execution.workspace_lifecycle import prepare_write
+    prepare_write(target)
     if not target.exists():
         if old_str == "":
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +155,8 @@ def subprocess_text_options() -> dict:
 def delete_file(path: str | Path) -> subprocess.CompletedProcess[str]:
     try:
         target = resolve_workspace_path(path)
+        from agent_execution.workspace_lifecycle import LifecycleStore
+        LifecycleStore().assert_writable(target)
     except PermissionError as error:
         return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=str(error))
     if target.is_dir():

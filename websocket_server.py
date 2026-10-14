@@ -319,7 +319,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                             future.cancel()
                             raise InterruptedError("Desktop tool cancelled")
             with execution_scope(source="websocket", identity=identity, session=scoped_session,
-                    project=session.project, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
+                    project=session.project, conversation=session.conversation_id, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
                     set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop), approval_bridge(wait_approval if 'approval.auto_resume' in session.caps else None):
                 from agent_execution.tasks import dispatch_task_input
                 desktop_result = human_desktop_command(user_text)

@@ -22,6 +22,7 @@ class ExecutionContext:
     source: str = "local"
     identity: str = "local"
     session: str = "local"
+    conversation: str = ""
     project: str = "default"
     task_id: str | None = None
     workspace: Path | None = None
@@ -135,6 +136,10 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
             raise PolicyDenied(f'Tool is outside this agent role: {name}')
         assets = _context.get().trusted_assets if name == "run_command" else ()
         _validate_paths(arguments, assets)
+        if name in {'write_file','edit_file','ast_edit','patch','delete_file'}:
+            from .workspace_lifecycle import LifecycleStore
+            for field in ('path','file_path'):
+                if arguments.get(field):LifecycleStore().assert_writable(resolve_path(arguments[field]))
         external_delivery=name=='project_delivery' and values.get('action') in {'publish','merge'}
         if name=='manage_schedule' and values.get('action')=='add':
             from .scheduling.store import natural_cron,validate_job
