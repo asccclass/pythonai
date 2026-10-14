@@ -48,6 +48,8 @@ def resolve_workspace_path(path: str | Path) -> Path:
     root = workspace_root()
     target = Path(path).expanduser()
     resolved = (root / target).resolve() if not target.is_absolute() else target.resolve()
+    if '.pythonai-workspace-trash' in resolved.parts:
+        raise PermissionError('Workspace archive storage is service-only')
     if not path_is_inside(resolved, root):
         raise PermissionError(workspace_error(path, root))
     return resolved

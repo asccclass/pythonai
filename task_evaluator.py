@@ -50,7 +50,7 @@ class TaskEvaluator:
             for path in self.workspace_root.rglob("*"):
                 # Ignore git and venv internals
                 parts = path.parts
-                if any(ignored in parts for ignored in (".git", "venv", "__pycache__", ".pytest_cache", ".system_generated")):
+                if any(ignored in parts for ignored in (".git", "venv", "__pycache__", ".pytest_cache", ".system_generated", ".pythonai-workspace-trash")):
                     continue
                 if path.is_file():
                     try:

@@ -17,7 +17,7 @@
   - 先接 project_scaffold、一般新程式目錄建立；再接工具、Skill、子代理、coordinator、受管理排程／附件及 worktree dispatch。
   - 交付：先登記再建檔、部分建立失敗狀態、跨 session 引用入口。
   - 驗收：同目的沿用既有目錄；未知 host 副作用不自動接管；未登記跨 session 寫入被拒絕。
-- [ ] **W04 — 實作路徑／file identity 與 manifest 保護**（W02）
+- [x] **W04 — 實作路徑／file identity 與 manifest 保護**（W02）
   - Windows／POSIX 對應安全列舉、連結拒絕、根與重疊檢查、容量／時間上限，鎖定服務管理封存根。
   - 驗收：workspace 根、祖先、其他使用者、junction、symlink、hard link、置換及跨 volume 不發生越界副作用；失敗原目錄保留。
 - [ ] **W05 — 列出、接管與刪除預覽**（W03、W04）
@@ -30,17 +30,19 @@ M1 實作進度：已建立 `workspace_lifecycle/` version 1 registry、canonica
 
 ## M2 — 可還原封存
 
-- [ ] **W06 — 精確清單批准、lease 與冪等操作**（W05）
+- [x] **W06 — 精確清單批准、lease 與冪等操作**（W05）
   - 復用 ApprovalStore，綁定身份、目標 session、清單摘要、generation 與內容版本；操作使用 fence。
   - 驗收：模型不能自批、參數篡改、過期、重複消費、並發引用與租約取代均不執行移動。
-- [ ] **W07 — 原子封存／還原與崩潰恢復**（W06）
+- [x] **W07 — 原子封存／還原與崩潰恢復**（W06）
   - 同 volume rename、服務隔離目錄、manifest；原位置衝突拒絕覆寫，partial/unknown 狀態可檢視。
   - 驗收：移動前／後各斷點可恢復；內容一致；session 存在時不因時間或容量壓力自動刪封存；跨磁碟不使用不完整 copy-delete。
-- [ ] **W08 — 索引、驗收、Git 與工具可見性整合**（W07）
+- [x] **W08 — 索引、驗收、Git 與工具可見性整合**（W07）
   - 封存區排除於 `.gitignore`、code index、snapshot、模型搜尋、artifact 發布；封存後重建活躍引用。
   - 驗收：封存副本不造成驗收誤判、Git staging 混入或模型重讀；還原後索引一致。
 
 M2 交付門檻：封存／還原在原生 Windows 與本機 fixture 通過，永久 purge 尚未開放；建立对应 commit。
+
+M2 實作：原生 handle、same-volume rename、ACL 保護、extended/virtualized path、精確清單批准、一次性 consume、操作 lease、移動後重新鎖定驗證、原地衝突拒絕、崩潰後續跑與 partial purge 原 manifest 子集保護。已新增原生 Windows 封存／還原、占用、junction、crash-after-move 與新增檔案不刪除測試；封存區排除於一般工具、Git、snapshot 與 code index。session 刪除的 transport／資料清除與 UI 接入屬 M3，尚未宣告可用。
 
 ## M3 — 刪除 session 與永久清理
 

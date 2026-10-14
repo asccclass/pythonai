@@ -24,6 +24,15 @@ def directory(root, relative):
     target = root / value
     if target == root or not target.resolve().is_relative_to(root.resolve()):
         raise PermissionError('Directory is outside the registered workspace')
+    from base import PROJECT_ROOT
+    protected={'agent_execution','desktop_assistant','tools','tests','venv','communication','memory','papers','.git','artifacts','dist','build'}
+    for application in (PROJECT_ROOT,PROJECT_ROOT.parent/'myai'):
+        if target.resolve()==application.resolve() or application.resolve().is_relative_to(target.resolve()):
+            raise PermissionError('Application roots cannot be managed temporary directories')
+        if target.resolve().is_relative_to(application.resolve()):
+            relative=target.resolve().relative_to(application.resolve())
+            if relative.parts and relative.parts[0] in protected:
+                raise PermissionError('Application resources cannot be adopted')
     for item in [root, *[root.joinpath(*value.parts[:i]) for i in range(1, len(value.parts)+1)]]:
         if item.exists() or item.is_symlink():
             identity(item)

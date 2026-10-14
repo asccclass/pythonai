@@ -348,7 +348,7 @@ def dispatch_task_input(text, runtime, attachments=None):
     command = parts[0] if parts else ''
     if attachments and command.startswith('/'):
         raise ValueError('Attachments cannot accompany transport control commands')
-    if command == '/workspace':
+    if command in {'/workspace','/session-delete'}:
         from .workspace_lifecycle.commands import human_command
         try:return AgentTurnResult(human_command(text),None)
         except (ValueError,PermissionError,OSError) as error:return AgentTurnResult(f'Error: {error}',None)

@@ -52,6 +52,8 @@ class LifecycleStore:
                     error TEXT NOT NULL DEFAULT '', updated REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS wl_outbox (
                     session TEXT PRIMARY KEY, payload TEXT NOT NULL, state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS wl_leases (
+                    operation TEXT PRIMARY KEY, token TEXT NOT NULL, expires REAL NOT NULL);
             ''')
             if conn.execute('SELECT MAX(version) FROM wl_version').fetchone()[0] != 1:
                 raise ValueError('Unsupported workspace lifecycle schema')
@@ -184,7 +186,7 @@ class LifecycleStore:
                 manifest = snapshot(location)
                 if action=='restore' and directory(Path(row['root_path']),row['relative']).exists():raise FileExistsError('Restore destination exists')
                 items.append({'id':row['id'],'path':row['relative'],'generation':row['generation'],'state':row['state'],
-                    'digest':manifest['digest'],'files':manifest['files'],'bytes':manifest['bytes']})
+                    'digest':manifest['digest'],'files':manifest['files'],'bytes':manifest['bytes'],'manifest':manifest['records']})
             owners = [r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(session,))]
             blocking = []
             for owner in owners:
@@ -194,4 +196,41 @@ class LifecycleStore:
             plan = uuid.uuid4().hex
             conn.execute('INSERT INTO wl_plans(id,session,principal,action,payload,expires) VALUES(?,?,?,?,?,?)',
                 (plan,session,principal(),action,json.dumps(payload),time.time()+300))
-            return {'plan_id':plan,**payload,'expires_in':300}
+            return {'plan_id':plan,**public_payload(payload),'expires_in':300}
+
+    def plan(self, key, conn=None):
+        if conn is None:
+            with closing(self.connect()) as db:return self.plan(key,db)
+        row=conn.execute('SELECT * FROM wl_plans WHERE id=?',(key,)).fetchone()
+        if not row or row['principal']!=principal() or row['session']!=session_key():
+            raise PermissionError('Plan does not belong to this conversation')
+        return {**dict(row),'payload':json.loads(row['payload'])}
+
+    def request(self, key):
+        from agent_execution.approvals import ApprovalStore
+        plan=self.plan(key)
+        if plan['expires']<=time.time():raise ValueError('Preview expired; preview again')
+        if plan['payload']['blocking_tasks']:raise ValueError('Finish/cancel active tasks before cleanup')
+        context=current_context()
+        approval=ApprovalStore().request(context.identity,context.session,'workspace:'+key,public_payload(plan['payload']))
+        with closing(self.connect()) as conn,conn:conn.execute('UPDATE wl_plans SET approval=? WHERE id=?',(approval,key))
+        return {'plan_id':key,'approval_id':approval,'preview':public_payload(plan['payload'])}
+
+    def execute(self, key, approval):
+        from .operations import execute
+        return execute(self,key,approval)
+
+    def confirm(self,key):
+        """Only human transport dispatchers may call this method."""
+        from agent_execution.approvals import ApprovalStore
+        plan=self.plan(key)
+        if not plan['approval']:
+            self.request(key)
+            plan=self.plan(key)
+        context=current_context()
+        ApprovalStore().decide(plan['approval'],context.identity,context.session,True)
+        return self.execute(key,plan['approval'])
+
+
+def public_payload(payload):
+    return {**payload,'items':[{k:v for k,v in item.items() if k!='manifest'} for item in payload['items']]}

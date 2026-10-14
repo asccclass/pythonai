@@ -14,7 +14,7 @@ import time
 from .syntax import extract,LANGUAGES
 from ..policy import resolve_path,current_context
 
-HARD_DIRS={'.git','.venv','venv','node_modules','__pycache__','.pytest_cache','.agent','.codex','temp','models','dist','build'}
+HARD_DIRS={'.git','.venv','venv','node_modules','__pycache__','.pytest_cache','.agent','.codex','temp','models','dist','build','.pythonai-workspace-trash'}
 TEXT_EXT=set(LANGUAGES)|{'.md','.txt','.json','.yaml','.yml','.toml','.ini','.html','.css','.sql','.sh','.ps1'}
 SECRET=re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bAKIA[A-Z0-9]{16}\b|\b(?:gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,})\b|(?:api[_-]?key|password|secret|(?:access[_-]?|auth[_-]?)?token)[\"\']?\s*[:=]\s*(?:[\"\'][^\"\'\r\n]{8,}[\"\']|[A-Za-z0-9_+/=-]{12,})',re.I)
 
