@@ -193,6 +193,11 @@ def run_agent(
         task_evaluator.workspace_root=workspace_root()
     if hook_manager is None:hook_manager=default_hook_manager()
     resume_state = resume_state or {}
+    evaluation_start = resume_state.get('evaluation_start')
+    if evaluation_start is None:
+        evaluation_start = next((index for index in range(len(messages)-1, -1, -1)
+            if messages[index].get('role') == 'user' and not
+            str(messages[index].get('content') or '').startswith('【任務驗收未通過')), 0)
     tool_results = dict(resume_state.get('tool_results',{}))
     iteration = resume_state.get('iteration', 0)
     if resume_state.get('phase') == 'model_pending':
@@ -202,7 +207,7 @@ def run_agent(
     if pre_state is None and task_evaluator is not None:
         pre_state = task_evaluator.capture_state()
     def checkpoint(phase, **metadata):
-        save_checkpoint(phase,messages,iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,**metadata)
+        save_checkpoint(phase,messages,iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,**metadata)
     def pending_assistant():
         for index in range(len(messages)-1,-1,-1):
             message = messages[index]
@@ -225,7 +230,10 @@ def run_agent(
             iteration += 1
             from agent_execution.policy import current_context
             allowed=current_context().allowed_tools
-            schemas=TOOLS_SCHEMAS if allowed is None else [schema for schema in TOOLS_SCHEMAS if schema.get('function',{}).get('name') in allowed]
+            from permissions import check_tool_permission
+            schemas=[schema for schema in TOOLS_SCHEMAS
+                     if check_tool_permission(schema.get('function',{}).get('name'))
+                     and (allowed is None or schema.get('function',{}).get('name') in allowed)]
             request={'model':OLLAMA_MODEL,'tools':schemas}
             if hook_manager is not None:
                 hook_context = HookContext(
@@ -401,7 +409,7 @@ def run_agent(
                 result=raw_result
                 tool_results[tool_call.id]=raw_result.to_dict()
                 save_checkpoint('tool_done',messages+[{'role':'tool','tool_call_id':tool_call.id,'content':str(result)}],
-                    iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,
+                    iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,
                     step={**step,'state':'completed' if raw_result.success else 'failed','result':json.dumps(raw_result.to_dict(),ensure_ascii=False)})
                 if hook_manager is not None:
                     hook_context = HookContext(
@@ -458,7 +466,7 @@ def run_agent(
 
         if task_evaluator is not None:
             user_goal = ""
-            for msg in messages:
+            for msg in messages[evaluation_start:]:
                 if msg.get("role") == "user":
                     content = str(msg.get("content") or "")
                     if not content.startswith("【任務驗收未通過"):
@@ -477,7 +485,7 @@ def run_agent(
                 post_state = task_evaluator.capture_state()
                 eval_res = task_evaluator.evaluate(
                     user_goal=user_goal,
-                    messages=messages,
+                    messages=messages[evaluation_start:],
                     final_reply=assistant_message.content or "",
                     pre_state=pre_state,
                     post_state=post_state,
@@ -512,7 +520,7 @@ def run_agent(
                         f"【任務驗收未通過 (Critic Feedback - 第 {eval_retries}/{max_eval_retries} 次修正)】\n"
                         f"評估結果: 未達成目標 (得分: {eval_res.score})\n"
                         f"問題反饋:\n{eval_res.feedback}\n"
-                        f"請根據上述反饋自主修正，檢查程式碼或執行相應的修復工具，直到完成任務目標。"
+                        f"請針對原始任務目標與上述反饋修正，僅使用已授權工具；權限不足時請說明需要的設定。"
                     )
                     messages.append({"role": "user", "content": critic_feedback})
                     checkpoint('model_pending')
@@ -534,8 +542,10 @@ def run_agent(
                             "feedback": eval_res.feedback,
                         },
                     )
+                    reason = (f"已達最大修正次數 {max_eval_retries}" if eval_retries >= max_eval_retries
+                              else "此失敗無法自動修正，已停止重試")
                     return (
-                        f"⛔ 任務驗收未通過 (已達最大修正次數 {max_eval_retries})，已轉交人工審核 (HITL)。\n"
+                        f"⛔ 任務驗收未通過 ({reason})，已轉交人工審核 (HITL)。\n"
                         f"未通過原因:\n{eval_res.feedback}\n\n"
                         f"Agent 最終回覆:\n{assistant_message.content or ''}"
                     )

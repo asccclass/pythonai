@@ -2,6 +2,10 @@
 
 PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Agent，提供本機 CLI、Telegram long polling，以及整合 webhook、管理網頁、REST API、WebSocket 的 FastAPI 服務。核心包含工具呼叫、Skills、長期記憶、背景維護、排程、任務驗收及可擴充 Hooks。
 
+MyAI／WebSocket 任務若出現 `Role 'viewer' cannot execute ...`，代表連線身份沒有該工具權限。請核對實際服務使用的 `ROLES_CONFIG` 與 token 身份；無身份 token 對應 `websocket:user`，助手自動啟動的 token 對應 `websocket:desktop`。角色檔內容於新指令重新讀取，修改角色檔路徑或更新後端程式後需重新啟動服務。`viewer` 不允許 Skills；需要 Skills 的身份可配置 `operator`，管理工具依既有政策要求 `admin`。模型工具清單依角色及任務 allowlist 過濾，執行端仍檢查權限。
+
+任務驗收只檢查當次任務的對話與工具呼叫，保留此邊界供中斷後續跑使用；先前對話的程式操作不會讓待辦查詢被要求提供程式測試。被權限拒絕的程式工具呼叫也不構成程式開發證據，但真正的程式需求仍須通過測試。權限拒絕停止 Critic 自動重試，保留失敗狀態並回報權限原因；不會誤稱已用盡修正次數。
+
 以下盤點以 **2026-10-09 的初始盤點及 2026-10-10 的增修**為準。「已實作」表示有可追溯程式路徑，不代表已通過所有外部服務或正式環境驗證；「基礎實作」表示尚有整合、隔離或可靠性限制。後續改善及驗收條件見 [papers/todo.md](papers/todo.md)。
 
 ## 現有功能表

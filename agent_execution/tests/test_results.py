@@ -172,6 +172,23 @@ class ResultTests(unittest.TestCase):
         with patch('server.get_client',return_value=raw):run_agent_turn('current goal',runtime)
         self.assertEqual(evaluator.evaluate.call_args.kwargs['user_goal'],'current goal')
 
+    def test_denied_checkpoint_stops_retries_without_message_history(self):
+        token = self.store.claim(self.owner, 'result-task', '列出待辦', [],
+                                criteria={'version': 1, 'checks': []})
+        denial = ToolResult(False, error="Role 'viewer' cannot execute run_skill")
+        self.store.checkpoint(self.owner, 'result-task', token, 'tool_done', {'messages': []},
+            {'id': 'denied', 'name': 'run_skill', 'arguments': {}, 'state': 'failed',
+             'result': json.dumps(denial.to_dict())})
+        from agent_execution.tasks import _active
+        active = _active.set((self.store, self.owner, 'result-task', token))
+        try:
+            result = TaskEvaluator(self.root, git_status_fn=lambda: 'clean').evaluate('列出待辦', [], 'failed')
+        finally:
+            _active.reset(active)
+        self.assertFalse(result.success)
+        self.assertFalse(result.retryable)
+        self.assertIn("Role 'viewer' cannot execute run_skill", result.feedback)
+
     def test_project_sessions_clone_evaluator_workspace(self):
         from agent_execution.sessions import RuntimeSessions
         first=self.root/'first';second=self.root/'second'

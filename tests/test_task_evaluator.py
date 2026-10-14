@@ -21,6 +21,118 @@ class TaskEvaluatorTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_denied_code_tool_does_not_make_todo_query_a_code_task(self):
+        messages = [
+            {'role': 'assistant', 'tool_calls': [{'id': 'denied', 'function': {
+                'name': 'run_test_suite', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': 'denied',
+             'content': "Error: Role 'viewer' cannot execute run_test_suite"},
+        ]
+        result = TaskEvaluator(self.workspace, git_status_fn=lambda: 'clean').evaluate(
+            '列出我的待辦事項', messages, '無法查詢')
+        self.assertFalse(result.criteria_met['is_code_task'])
+        self.assertFalse(result.success)
+        self.assertFalse(result.retryable)
+        self.assertIn('ROLES_CONFIG', result.feedback)
+        self.assertNotIn('測試目標', result.feedback)
+        # A genuine development request still requires tests even if its tools were denied.
+        self.assertTrue(TaskEvaluator(self.workspace).is_code_development_task('請修復程式', messages))
+
+    def test_current_turn_evaluation_excludes_historical_code_calls(self):
+        evaluator = TaskEvaluator(self.workspace, git_status_fn=lambda: 'clean')
+        messages = [
+            {'role': 'user', 'content': '撰寫程式'},
+            {'role': 'assistant', 'tool_calls': [{'id': 'old', 'function': {
+                'name': 'ast_edit', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': 'old', 'content': 'done'},
+            {'role': 'user', 'content': '列出我的待辦事項'},
+        ]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(
+            message=ChatCompletionMessage(role='assistant', content='待辦：整理報告'))])
+        with patch('server.get_client', return_value=mock_client), patch.object(
+                TaskEvaluator, 'evaluate', wraps=evaluator.evaluate) as evaluate:
+            reply = server.run_agent(messages, task_evaluator=evaluator)
+        self.assertEqual(reply, '待辦：整理報告')
+        self.assertEqual(evaluate.call_args.kwargs['user_goal'], '列出我的待辦事項')
+        self.assertEqual(evaluate.call_args.kwargs['messages'][0], messages[3])
+
+    def test_model_tools_respect_role_and_scoped_allowlist(self):
+        from permissions import set_current_role
+        from agent_execution.policy import execution_scope
+        for role, allowed, expected in [
+            ('viewer', None, {'read_file', 'ask_user', 'desktop_tool'}),
+            ('operator', frozenset({'read_file', 'run_skill', 'write_file'}), {'read_file', 'run_skill'}),
+            ('admin', frozenset({'write_file'}), {'write_file'}),
+        ]:
+            with self.subTest(role=role):
+                client = MagicMock()
+                client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(
+                    message=ChatCompletionMessage(role='assistant', content='reply'))])
+                with set_current_role(role), execution_scope(allowed_tools=allowed), patch(
+                        'server.get_client', return_value=client):
+                    server.run_agent([{'role': 'user', 'content': 'hello'}])
+                schemas = client.chat.completions.create.call_args.kwargs['tools']
+                self.assertEqual({item['function']['name'] for item in schemas}, expected)
+
+    def test_permission_failure_does_not_run_critic_retries(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(
+            message=ChatCompletionMessage(role='assistant', content='權限不足'))])
+        evaluator = MagicMock()
+        evaluator.capture_state.return_value = {}
+        evaluator.evaluate.return_value = EvaluationResult(False, 0, '工具權限不足', retryable=False)
+        with patch('server.get_client', return_value=client):
+            reply = server.run_agent([{'role': 'user', 'content': '列出待辦'}], task_evaluator=evaluator)
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+        self.assertIn('已停止重試', reply)
+        self.assertNotIn('已達最大修正次數', reply)
+
+    def test_resumed_correction_preserves_current_task_boundary(self):
+        messages = [
+            {'role': 'user', 'content': '撰寫程式'},
+            {'role': 'assistant', 'tool_calls': [{'id': 'old', 'function': {
+                'name': 'run_test_suite', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': 'old', 'content': 'done'},
+            {'role': 'user', 'content': '列出待辦'},
+            {'role': 'assistant', 'content': 'first attempt'},
+            {'role': 'user', 'content': '【任務驗收未通過：補齊遺漏待辦】'},
+        ]
+        client = MagicMock()
+        client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(
+            message=ChatCompletionMessage(role='assistant', content='完整待辦'))])
+        evaluator = MagicMock()
+        evaluator.capture_state.return_value = {}
+        evaluator.evaluate.return_value = EvaluationResult(True, 1, 'ok')
+        with patch('server.get_client', return_value=client), patch('agent_execution.tasks.save_checkpoint') as save:
+            server.run_agent(messages, task_evaluator=evaluator,
+                resume_state={'phase': 'model_pending', 'evaluation_start': 3, 'eval_retries': 1})
+        self.assertEqual(evaluator.evaluate.call_args.kwargs['messages'][0]['content'], '列出待辦')
+        self.assertEqual(evaluator.evaluate.call_args.kwargs['user_goal'], '列出待辦')
+        self.assertTrue(save.call_args_list)
+        self.assertTrue(all(call.kwargs['evaluation_start'] == 3 for call in save.call_args_list))
+
+    def test_viewer_denial_through_real_hooks_stops_at_first_evaluation(self):
+        from permissions import set_current_role
+        from hooks import default_hook_manager
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            MagicMock(choices=[MagicMock(message=ChatCompletionMessage(role='assistant',
+                tool_calls=[{'id': 'denied', 'type': 'function', 'function': {
+                    'name': 'run_test_suite', 'arguments': '{"test_target": "tests/test_todo.py"}'}}]))]),
+            MagicMock(choices=[MagicMock(message=ChatCompletionMessage(role='assistant', content='權限不足'))]),
+        ]
+        evaluator = TaskEvaluator(self.workspace, git_status_fn=lambda: 'clean')
+        with set_current_role('viewer'), patch('server.get_client', return_value=client), patch(
+                'server.run_tool_with_context') as execute:
+            reply = server.run_agent([{'role': 'user', 'content': '列出我的待辦事項'}],
+                task_evaluator=evaluator, hook_manager=default_hook_manager())
+        execute.assert_not_called()
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertIn('已停止重試', reply)
+        self.assertIn('ROLES_CONFIG', reply)
+        self.assertNotIn('程式任務未提供', reply)
+
     # =========================================================
     # 1. 規則型斷言測試 (Rule-based Assertions)
     # =========================================================

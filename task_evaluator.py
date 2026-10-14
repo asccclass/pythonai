@@ -108,9 +108,14 @@ class TaskEvaluator:
 
         # Check tool calls in messages
         from agent_execution.acceptance import CODE_SUFFIXES
+        denied_calls = {msg.get('tool_call_id') for msg in messages
+                        if msg.get('role') == 'tool' and self._permission_denied(str(msg.get('content') or ''))}
         for msg in messages:
             tool_calls = msg.get("tool_calls") or []
             for tc in tool_calls:
+                call_id = getattr(tc, 'id', None) if not isinstance(tc, dict) else tc.get('id')
+                if call_id in denied_calls:
+                    continue
                 func_name = getattr(tc, "function", None)
                 name = getattr(func_name, "name", "") if func_name else tc.get("function", {}).get("name", "")
                 if name in {'ast_edit','run_test_suite'}:
@@ -124,6 +129,10 @@ class TaskEvaluator:
                     except (ValueError,TypeError):
                         pass
         return False
+
+    @staticmethod
+    def _permission_denied(text: str) -> bool:
+        return bool(re.search(r"^\s*(?:Error:\s*)?(?:PermissionError|PolicyDenied|Permission denied|Role\s+['\"]?\w+['\"]?\s+cannot execute)", text, re.IGNORECASE))
 
     def find_target_test_files(self, user_goal: str, messages: list[dict[str, Any]]) -> list[str]:
         """Locate test targets mentioned in user goal, messages, or existing in workspace."""
@@ -366,6 +375,17 @@ Please output your decision strictly in JSON format with keys:
             for step in steps:
                 if step['state']!='completed':
                     issues.append(f"Tool step not successful: {step['id']}")
+                    try:
+                        result = json.loads(step.get('result') or '{}')
+                    except (ValueError, TypeError):
+                        result = {}
+                    if isinstance(result, dict) and self._permission_denied(str(result.get('error') or '')):
+                        issues.append(f"工具權限不足 ({step['name']}): {result['error']}")
+        permission_denied = any('PermissionError' in issue or '工具權限不足' in issue or self._permission_denied(issue) for issue in issues) or any(
+            msg.get('role') == 'tool' and self._permission_denied(str(msg.get('content') or ''))
+            for msg in messages)
+        if permission_denied and not any('工具權限不足' in issue for issue in issues):
+            issues.append('工具權限不足：請檢查後端 ROLES_CONFIG 的連線身份與角色；權限拒絕無法透過重試修復。')
         rules_passed=rules_passed and not issues
 
         # Track 2: LLM-as-a-Judge
@@ -392,7 +412,7 @@ Please output your decision strictly in JSON format with keys:
             criteria_met=criteria,
             side_effects=side_effects,
             verified=overall_success and bool(checks) and all(checks.values()),
-            retryable=not llm_feedback.startswith('Judge unavailable:') and not any('PermissionError' in issue for issue in issues),
+            retryable=not llm_feedback.startswith('Judge unavailable:') and not permission_denied,
             evidence=evidence,
         )
 
