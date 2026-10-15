@@ -42,6 +42,67 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(preview['kept'][0]['id'],retained)
         self.assertTrue(self.root.joinpath('example/main.txt').exists())
 
+    def test_scaffold_failure_is_preserved_and_marked_failed(self):
+        from tools.project_scaffold import project_scaffold
+        from permissions import set_current_role
+        def fail(folder,name):
+            (folder/'partial.txt').write_text('partial')
+            raise OSError('injected failure')
+        with set_current_role('admin'),patch('tools.project_scaffold._scaffold_go_basic',side_effect=fail):
+            self.assertIn('failed',project_scaffold('partial','go_basic'))
+        row=self.store.inventory()['managed'][0]
+        self.assertEqual(row['build_state'],'failed')
+        self.assertEqual((self.root/'partial/partial.txt').read_text(),'partial')
+
+    def test_host_program_reuses_registered_directory_and_tracks_nonzero(self):
+        import sys
+        from base import run_command,auto_approve_command_runs
+        with auto_approve_command_runs(),patch.dict(os.environ,{'EXECUTION_MODE':'host'}):
+            result=run_command([sys.executable,'-c',"open('main.py','w').write('hello')"],
+                trusted_asset_roots=[Path(sys.executable).parent],program_directory='host-program')
+            self.assertEqual(result.returncode,0,result.stderr)
+            result=run_command([sys.executable,'-c','raise SystemExit(3)'],
+                trusted_asset_roots=[Path(sys.executable).parent],program_directory='host-program')
+        self.assertEqual(result.returncode,3)
+        self.assertEqual((self.root/'host-program/main.py').read_text(),'hello')
+        rows=self.store.inventory()['managed'];self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['build_state'],'failed')
+
+    def test_skill_program_output_has_one_registration_and_rejects_unknown(self):
+        from skills import Skill
+        from base import run_skill,write_file
+        from permissions import set_current_role
+        from types import SimpleNamespace
+        skill=Skill('output','test',[],{'type':'object','properties':{}},['write_file'],
+            {'mode':'tool_sequence','steps':[{'tool':'write_file','args':{'path':'nested/main.py','content':'hello'}}]},self.home,'')
+        with set_current_role('admin'),patch('base.SkillRegistry',return_value=SimpleNamespace(get=lambda name:skill)):
+            self.assertTrue(run_skill('output',program_directory='skill-program')['success'])
+            self.assertTrue(run_skill('output',program_directory='skill-program')['success'])
+            self.root.joinpath('unknown').mkdir()
+            with self.assertRaises(PermissionError):run_skill('output',program_directory='unknown')
+        self.assertEqual(len(self.store.inventory()['managed']),1)
+        self.assertTrue((self.root/'skill-program/nested/main.py').exists())
+
+    def test_new_file_failure_tracks_state_and_child_root_cannot_overlap(self):
+        from base import write_file
+        with patch.object(Path,'write_text',side_effect=OSError('disk failure')):
+            with self.assertRaises(OSError):write_file('new-program/main.py','hello')
+        row=self.store.inventory()['managed'][0]
+        self.assertEqual(row['build_state'],'failed')
+        with execution_scope(workspace=self.root/'new-program'):
+            with self.assertRaises(ValueError):self.store.create('nested')
+
+    def test_interrupted_build_requires_human_recovery_before_reuse(self):
+        from agent_execution.workspace_lifecycle import program_directory
+        key=self.create()
+        self.store.build_status(key,'building')
+        with self.assertRaises(ValueError):self.store.preview('delete_session')
+        with self.assertRaises(ValueError):
+            with program_directory('example'):pass
+        self.store.recover_build(key)
+        with program_directory('example'):pass
+        self.assertEqual(self.store.get(key)['build_state'],'ready')
+
     def test_same_conversation_on_another_device_has_same_identity(self):
         before=session_key()
         with execution_scope(session='default:other-device:one'):

@@ -35,6 +35,7 @@ class ExecutionContext:
     allowed_tools: frozenset[str] | None = None
     coordinator_node: str | None = None
     coordinator_owner: str | None = None
+    lifecycle_owner: str | None = None
 
 
 _context: ContextVar[ExecutionContext] = ContextVar("execution_context", default=ExecutionContext())

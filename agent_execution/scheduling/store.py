@@ -92,7 +92,7 @@ class SchedulerStore:
     def add_job(self,name,cron_expression,job_type,job_payload,description='',timezone='Asia/Taipei',timeout=60,max_runs=1000):
         serialized,due=validate_job(name,cron_expression,job_type,job_payload,timezone,timeout,max_runs,description)
         context=current_context();key=uuid.uuid4().hex
-        scope={k:getattr(context,k) for k in ('source','identity','project','session','conversation')};scope['workspace']=str(resolve_path('.'))
+        scope={k:getattr(context,k) for k in ('source','identity','project','session','conversation','lifecycle_owner')};scope['workspace']=str(resolve_path('.'))
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT count(*) FROM scheduled_jobs').fetchone()[0]>=1000:raise ValueError('Schedule capacity reached')

@@ -125,19 +125,24 @@ def list_files(path: str | Path = ".") -> list[str]:
 
 def write_file(path: str | Path, content: str) -> None:
     target = resolve_workspace_path(path)
-    from agent_execution.workspace_lifecycle import prepare_write
-    prepare_write(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    from agent_execution.workspace_lifecycle import prepare_write,program_build,LifecycleStore
+    from contextlib import nullcontext
+    key=prepare_write(target)
+    with program_build(LifecycleStore(),key) if key else nullcontext():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
 
 def edit_file(path: str | Path, old_str: str, new_str: str) -> dict[str, str]:
     target = resolve_workspace_path(path)
-    from agent_execution.workspace_lifecycle import prepare_write
-    prepare_write(target)
+    from agent_execution.workspace_lifecycle import prepare_write,program_build,LifecycleStore
+    if not target.exists() and old_str!='':return {"path":str(target),"action":"file not found"}
+    key=prepare_write(target)
     if not target.exists():
         if old_str == "":
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(new_str, encoding="utf-8")
+            from contextlib import nullcontext
+            with program_build(LifecycleStore(),key) if key else nullcontext():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(new_str, encoding="utf-8")
             return {"path": str(target), "action": "created_file"}
         else:
             return {"path": str(target), "action": "file not found"}
@@ -231,7 +236,15 @@ def run_command(
     env_file: str | Path | None = None,
     trusted_asset_roots: list[str | Path] | None = None,
     artifacts_directory: str | Path | None = None,
+    program_directory: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if program_directory is not None:
+        if cwd not in (None,'.'):raise ValueError('Use program_directory as the command cwd')
+        from agent_execution.workspace_lifecycle import program_directory as managed_program
+        with managed_program(program_directory) as outcome:
+            result=run_command(command,None,env_file,trusted_asset_roots,artifacts_directory)
+            outcome['success']=result.returncode==0
+            return result
     try:
         resolved_cwd = resolve_command_cwd(cwd, trusted_asset_roots)
         resolved_env_file = (
@@ -314,7 +327,13 @@ def resolve_command_executable(
 
 
 @policy_tool("run_skill")
-def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None) -> dict:
+def run_skill(name: str, inputs: dict | None = None, memory=None, episode_id: int | None = None, program_directory: str | None = None) -> dict:
+    if program_directory is not None:
+        from agent_execution.workspace_lifecycle import program_directory as managed_program
+        with managed_program(program_directory) as outcome:
+            result=run_skill(name,inputs,memory,episode_id)
+            outcome['success']=result.get('success') is True
+            return result
     skill = SkillRegistry().get(name)
     result = SkillExecutor(TOOLS, memory=memory, episode_id=episode_id).execute(skill, inputs or {})
     return result.to_dict()
@@ -530,7 +549,8 @@ TOOLS_SCHEMAS = [
                         "artifacts_directory": {
                             "type": "string",
                             "description": "In container mode, export regular files from /artifacts into this workspace directory without overwriting existing files."
-                        }
+                        },
+                        "program_directory": {"type":"string","description":"For creating or updating a program, use its dedicated workspace directory. Registers new output before execution, tracks build success/failure, and reuses managed directories. Existing unmanaged directories require human adoption. Omit cwd with this option."}
                     },
                     "required": ["command"]
                 }
@@ -551,7 +571,8 @@ TOOLS_SCHEMAS = [
                         "inputs": {
                             "type": "object",
                             "description": "Skill inputs matching the Skill input schema"
-                        }
+                        },
+                        "program_directory": {"type":"string","description":"Dedicated managed program/output directory. Reuse the same directory for the same program; existing unknown directories are not adopted automatically."}
                     },
                     "required": ["name"]
                 }

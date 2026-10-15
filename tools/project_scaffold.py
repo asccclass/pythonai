@@ -24,11 +24,13 @@ def project_scaffold(project_name: str, framework: str) -> str:
         
         if framework not in scaffold_map:
             return f"Error: Unknown framework '{framework}'."
-        from agent_execution.workspace_lifecycle import LifecycleStore, inferred_purpose
-        LifecycleStore().create(str(project_dir.relative_to(workspace_root())), inferred_purpose())
+        from agent_execution.workspace_lifecycle import LifecycleStore, inferred_purpose, program_build
+        store=LifecycleStore()
+        key=store.create(str(project_dir.relative_to(workspace_root())), inferred_purpose())
             
         # Execute specific scaffolder
-        files_created = scaffold_map[framework](project_dir, project_name)
+        with program_build(store,key):
+            files_created = scaffold_map[framework](project_dir, project_name)
         
         return f"Successfully scaffolded {framework} project '{project_name}' at {project_dir}.\n\nCreated files:\n- " + "\n- ".join(files_created)
         

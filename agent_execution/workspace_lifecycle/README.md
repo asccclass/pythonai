@@ -6,6 +6,10 @@
 
 已封存目錄也可改為 retained；原 session 刪除後保留其 registry／封存內容。同一使用者可在新對話 `/workspace attach <directory-id>`，再預覽／確認 restore，還原後仍為 retained。保留或共用內容不允許被暫存封存／刪除流程清理。
 
+Skill／host 命令產生程式時指定 `program_directory`；例如 `run_skill(name=..., program_directory="my_program")` 或 `run_command(command=..., program_directory="my_program")`，命令不再另傳 cwd。新目錄先登記，同程式沿用同一路徑；Skill 步驟的相對路徑與命令 cwd 都在該目錄。現有未知目錄拒絕自動接管。只有原任務明確要求暫存才標 temporary，其他保留。任意受信任 host 程式仍能在其權限內做外部副作用，這些不自動猜測歸屬。
+
+建立記錄提供 `build_state=building|ready|failed`；非零命令、Skill 失敗與部分 scaffold／write 失敗不刪現有內容。building 時阻擋清理；程序中斷後，使用者確認程序已停止，再 `/workspace recover-build <directory-id>` 標記失敗，保留原檔案後才能重新執行。live task／worker 尚在時拒絕恢復。Git worktree 的 dispatch 登記為保留資源，預覽以 resources 列出；刪 session 僅解除引用，Git 封存／還原仍由既有 `/worktree` 管理。
+
 清理從預覽開始，綁定 directory ID、generation、檔案身份與內容摘要。共用、retained、未知和正在執行任務的目錄不能直接清理。封存沒有時間到期；僅使用者刪除最後相關 session 才永久清理 temporary 內容。
 
 Windows 操作使用原生 pinned handle，移動透過 `NtSetInformationFile` 的已鎖定目的目錄 handle，不依字串路徑推測資料位置。子檔案鎖在原子 rename 前關閉，來源物件／父鏈仍保持鎖定，移動後重新鎖定全部內容並驗證同一 manifest；不一致停在 blocked。永久刪除只操作已 pin 的物件；partial purge 只接受原批准 manifest 的剩餘子集，新增檔案保留。連結、reparse、hard link、檔案占用、跨 volume 及不支援平台拒絕破壞操作。

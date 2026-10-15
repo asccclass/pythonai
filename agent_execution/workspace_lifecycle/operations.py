@@ -76,6 +76,7 @@ def check_items(store,plan,conn):
         row=store.get(item['id'],conn)
         if row['generation']!=item['generation'] or row['state']!=item['state'] or (row['purpose']!='temporary' and plan['action']!='restore'):
             raise ValueError('Directory registration changed; preview again')
+        if row['build_state']=='building':raise ValueError('Program creation is still in progress')
         refs=[r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],))]
         if refs!=[session_key()]:raise ValueError('Directory references changed; preview again')
         if snapshot(store.locate(row))['digest']!=item['digest']:raise ValueError('Directory contents changed; preview again')
@@ -188,6 +189,7 @@ def resume(store,key):
                 for item in plan['payload']['kept']:
                     conn.execute('UPDATE wl_directories SET generation=generation+1 WHERE id=?',(item['id'],))
                 conn.execute('DELETE FROM wl_refs WHERE session=?',(plan['session'],))
+                conn.execute('DELETE FROM wl_resource_refs WHERE session=?',(plan['session'],))
                 # Transport-specific erasure is an outbox consumer; only mark
                 # fully deleted after it acknowledges persistent data removal.
                 conn.execute("UPDATE wl_outbox SET state='ready' WHERE session=?",(plan['session'],))

@@ -37,6 +37,9 @@ def human_command(text,runtime=None):
             return json.dumps(dict(row) if row else {'state':'preview'},ensure_ascii=False)
         raise ValueError('Usage: /session-delete preview | confirm|status|resume <plan-id>')
     if parts[1:]==['list']:return json.dumps(store.inventory(),ensure_ascii=False)
+    if len(parts)==3 and parts[1]=='recover-build':
+        store.recover_build(parts[2])
+        return 'Interrupted build marked failed; existing files retained.'
     if len(parts)==4 and parts[1]=='preview':return json.dumps(store.preview(parts[3],parts[2]),ensure_ascii=False)
     if len(parts)==3 and parts[1]=='request':return json.dumps(store.request(parts[2]),ensure_ascii=False)
     if len(parts)==3 and parts[1]=='confirm':return json.dumps(store.confirm(parts[2]),ensure_ascii=False)

@@ -50,6 +50,8 @@ def execute_node(store,node,runner=None,evaluator_factory=None):
                 allowed_tools=TOOLS_BY_ROLE[node['persona']],coordinator_node=node['id'],coordinator_owner=node['owner'],check_cancelled=cancelled),set_current_role(role),auto_approve_command_runs():
             worktrees=WorktreeStore(payload['repository'],payload['storage'])
             workspace=worktrees.create(owner,key,base=payload['snapshot'])
+            from .workspace_lifecycle import LifecycleStore
+            LifecycleStore().register_worktree(workspace)
             old=store.child_task(node)
             if old is None and not payload.get('prepared'):
                 if payload.get('preparation_started') and not payload.get('prepared'):raise RecoveryRequired('Dependency preparation may have effects; human review required')

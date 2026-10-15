@@ -53,6 +53,18 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(self.store.create('owner','task-a'),a)
         with self.assertRaises(KeyError):self.store.get('another owner','task-a')
 
+    def test_dispatch_registers_retained_worktree_resource(self):
+        from agent_execution.worktrees import task_workspace
+        from agent_execution.workspace_lifecycle import LifecycleStore
+        with execution_scope(workspace=self.repo,task_id='registered'),patch.dict(os.environ,{'AGENT_TASK_WORKTREE':'1'}):
+            owner=task_owner(current_context())
+            with task_workspace(owner,'registered'):
+                inventory=LifecycleStore().inventory()
+                self.assertEqual(inventory['resources'][0]['kind'],'worktree')
+            preview=LifecycleStore().preview('delete_session')
+            self.assertEqual(len(preview['resources']),1)
+            self.assertEqual(preview['items'],[])
+
     def test_commit_uses_only_selection_and_preserves_other_staging(self):
         (self.repo/'same.txt').write_text('chosen')
         (self.repo/'other.txt').write_text('user staged')

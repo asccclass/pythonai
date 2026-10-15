@@ -15,12 +15,14 @@ from .paths import directory, identity, snapshot
 
 def session_key(context=None):
     context = context or current_context()
-    if context.coordinator_owner:
+    root_owner=context.coordinator_owner or context.lifecycle_owner
+    if root_owner:
         root=Path(os.environ.get('LOCALAPPDATA') or Path.home()/'.local'/'share')/'PythonAI'
         path=Path(os.environ.get('AGENT_TASK_DB') or root/'tasks.db')
         with closing(sqlite3.connect(path)) as conn:
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='wl_sessions'").fetchone():
-                row=conn.execute('SELECT session FROM wl_session_owners WHERE task_owner=?',(context.coordinator_owner,)).fetchone()
+                context_parts(context)
+                row=conn.execute('SELECT session FROM wl_session_owners WHERE task_owner=?',(root_owner,)).fetchone()
                 if row:return row[0]
     parts=context_parts(context)
     value = [*parts[:3],context.conversation or parts[3]]
@@ -33,8 +35,9 @@ def principal(context=None):
 
 
 def context_parts(context):
-    if context.coordinator_owner:
-        value=json.loads(context.coordinator_owner)
+    root_owner=context.coordinator_owner or context.lifecycle_owner
+    if root_owner:
+        value=json.loads(root_owner)
         if len(value)!=4 or value[1]!=context.identity or value[2]!=context.project:
             raise PermissionError('Invalid delegated workspace owner')
         return value
@@ -80,6 +83,11 @@ class LifecycleStore:
             conn.execute("INSERT OR IGNORE INTO wl_metadata VALUES('instance',?)",(uuid.uuid4().hex,))
             columns={r['name'] for r in conn.execute('PRAGMA table_info(wl_directories)')}
             if 'original_relative' not in columns:conn.execute('ALTER TABLE wl_directories ADD COLUMN original_relative TEXT')
+            if 'build_state' not in columns:conn.execute("ALTER TABLE wl_directories ADD COLUMN build_state TEXT NOT NULL DEFAULT 'ready'")
+            conn.executescript('''CREATE TABLE IF NOT EXISTS wl_resources (
+                id TEXT PRIMARY KEY,principal TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,task TEXT);
+                CREATE TABLE IF NOT EXISTS wl_resource_refs (
+                resource TEXT NOT NULL,session TEXT NOT NULL,PRIMARY KEY(resource,session));''')
 
     def connect(self):
         return self.tasks.connect()
@@ -114,9 +122,9 @@ class LifecycleStore:
             root, path = self.root(conn)
             target = directory(path, relative)
             normalized = str(target.relative_to(path))
-            for row in conn.execute("SELECT relative FROM wl_directories WHERE root=? AND state!='purged'", (root,)):
-                other = Path(row['relative'])
-                if Path(normalized) == other or Path(normalized).is_relative_to(other) or other.is_relative_to(normalized):
+            for row in conn.execute("SELECT d.relative,r.path FROM wl_directories d JOIN wl_roots r ON r.id=d.root WHERE d.state!='purged'"):
+                other = (Path(row['path'])/row['relative']).resolve()
+                if target.resolve() == other or target.resolve().is_relative_to(other) or other.is_relative_to(target.resolve()):
                     raise ValueError('Directory overlaps an existing registry entry')
             if conn.execute('SELECT COUNT(*) FROM wl_directories').fetchone()[0]>=1000:
                 raise ValueError('Managed directory capacity reached')
@@ -157,10 +165,56 @@ class LifecycleStore:
         with closing(self.connect()) as conn, conn:
             self.ensure_session(conn)
             root, path = self.root(conn)
-            rows = [dict(r) for r in conn.execute("SELECT id,relative,purpose,state,generation FROM wl_directories WHERE root=? AND principal=? AND state!='purged'", (root, principal()))]
+            rows = [dict(r) for r in conn.execute("SELECT id,relative,purpose,state,generation,build_state FROM wl_directories WHERE root=? AND principal=? AND state!='purged'", (root, principal()))]
             known = {Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?', (root,))}
             unmanaged = [item.name for item in path.iterdir() if item.is_dir() and item.name not in known and item.name != '.git']
-            return {'managed': rows, 'unmanaged': sorted(unmanaged), 'retention': 'until_session_deleted'}
+            return {'managed': rows, 'unmanaged': sorted(unmanaged), 'resources':self.resources(conn), 'retention': 'until_session_deleted'}
+
+    def resources(self,conn):
+        return [dict(r) for r in conn.execute('SELECT r.id,r.kind,r.path,r.task FROM wl_resources r JOIN wl_resource_refs f ON f.resource=r.id WHERE f.session=? AND r.principal=?',(session_key(),principal()))]
+
+    def register_worktree(self,path):
+        """Record Git-managed resources as retained; never route them through native purge."""
+        path=Path(path).resolve(strict=True)
+        identity(path)
+        if not (path/'.git').is_file():raise ValueError('Expected a Git worktree')
+        key=hashlib.sha256(json.dumps([principal(),str(path)]).encode()).hexdigest()
+        with closing(self.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
+            session=self.ensure_session(conn)
+            conn.execute('INSERT OR IGNORE INTO wl_resources VALUES(?,?,?,?,?)',(key,principal(),'worktree',str(path),current_context().task_id))
+            conn.execute('INSERT OR IGNORE INTO wl_resource_refs VALUES(?,?)',(key,session))
+        return key
+
+    def build_status(self,key,state):
+        if state not in {'building','ready','failed'}:raise ValueError('Invalid build state')
+        with closing(self.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
+            self.ensure_session(conn)
+            row=self.get(key,conn)
+            if row['state']!='active':raise ValueError('Directory operation in progress')
+            if state=='building' and row['build_state']=='building':raise ValueError('Program build needs completion or explicit recovery')
+            conn.execute('UPDATE wl_directories SET build_state=?,generation=generation+1 WHERE id=?',(state,key))
+
+    def containing_directory(self,target):
+        with closing(self.connect()) as conn:
+            for row in conn.execute("SELECT d.id,d.relative,r.path FROM wl_directories d JOIN wl_roots r ON r.id=d.root WHERE d.principal=? AND d.state='active'",(principal(),)):
+                location=(Path(row['path'])/row['relative']).resolve()
+                if Path(target).resolve().is_relative_to(location):return row['id']
+        return None
+
+    def recover_build(self,key):
+        with closing(self.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
+            self.ensure_session(conn)
+            row=self.get(key,conn)
+            if row['state']!='active' or row['build_state']!='building':raise ValueError('No interrupted build to recover')
+            owners=[r[0] for r in conn.execute('SELECT o.task_owner FROM wl_session_owners o JOIN wl_refs f ON f.session=o.session WHERE f.directory=?',(key,))]
+            for owner in owners:
+                if conn.execute("SELECT 1 FROM tasks WHERE owner=? AND (state NOT IN ('completed','failed','cancelled') OR COALESCE(lease_until,0)>?)",(owner,time.time())).fetchone():raise ValueError('A task still needs termination')
+            from .erasure import external_blockers
+            if external_blockers(owners):raise ValueError('A worker is still active')
+            conn.execute("UPDATE wl_directories SET build_state='failed',generation=generation+1 WHERE id=?",(key,))
 
     def assert_writable(self, target):
         self.assert_access(target,True)
@@ -226,6 +280,7 @@ class LifecycleStore:
                 expected = 'archived' if action=='restore' else 'active'
                 if (action=='delete_session' and row['state'] not in {'active','archived'}) or (action!='delete_session' and row['state']!=expected):
                     raise ValueError('Directory is busy or needs recovery')
+                if row['build_state']=='building':raise ValueError('Program creation is still in progress')
                 location = self.locate(row)
                 manifest = snapshot(location)
                 if action=='restore' and directory(Path(row['root_path']),row['relative']).exists():raise FileExistsError('Restore destination exists')
@@ -246,6 +301,7 @@ class LifecycleStore:
             known={Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?',(root,))}
             unmanaged_count=sum(p.is_dir() and p.name not in known and p.name!='.git' for p in path.iterdir())
             payload = {'session':session,'action':action,'items':items,'kept':kept,'blocking_tasks':blocking,'unmanaged_count':unmanaged_count,
+                'resources':self.resources(conn),
                 'schedules':schedules(owners) if action=='delete_session' else []}
             plan = uuid.uuid4().hex
             conn.execute('INSERT INTO wl_plans(id,session,principal,action,payload,expires) VALUES(?,?,?,?,?,?)',

@@ -190,7 +190,11 @@ class SkillExecutor:
                 self._print_status(f"Skill {skill.name} step {index}: {tool_name}")
                 self._log("skill_step", metadata={"skill": skill.name, "index": index, "tool": tool_name, "args": args})
                 from agent_execution import execute_tool, execution_scope
+                from agent_execution.policy import current_context
+                from agent_execution.tasks import task_owner
+                parent=current_context()
                 with execution_scope(source="skill", memory=self.memory,
+                                     lifecycle_owner=parent.lifecycle_owner or parent.coordinator_owner or task_owner(parent),
                                      episode_id=self.episode_id,
                                      trusted_assets=(skill.path.resolve(),)):
                     output = execute_tool(tool_name, args, self.tools[tool_name])

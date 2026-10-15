@@ -32,6 +32,8 @@ def task_workspace(owner,task):
         binding=active[0].bind_workspace(owner,task,active[3],store.repository,store.storage)
         store=WorktreeStore(binding['repository'],binding['storage'])
     path=store.create(owner,task)
+    from .workspace_lifecycle import LifecycleStore
+    LifecycleStore().register_worktree(path)
     with execution_scope(workspace=path,repository_workspace=Path(repository).resolve()):yield
 
 
