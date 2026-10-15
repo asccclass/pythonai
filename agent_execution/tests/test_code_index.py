@@ -43,6 +43,19 @@ class IndexTests(unittest.TestCase):
         (self.root/'sample.py').unlink();self.assertEqual(index.refresh()['deleted'],1)
         self.assertEqual(index.search('world')['results'],[])
 
+    def test_registered_private_directory_and_cache_are_owner_isolated(self):
+        from agent_execution.workspace_lifecycle import LifecycleStore
+        with execution_scope(source='websocket',identity='websocket:alice',conversation='one',session='device:one'):
+            LifecycleStore().create('private','temporary')
+            self.write('private/secret.py','def alice_only(): pass\n')
+            alice=CodeIndex()
+            self.assertTrue(alice.search('alice_only',mode='symbol')['results'])
+        with execution_scope(source='websocket',identity='websocket:bob',conversation='one',session='device:one'):
+            bob=CodeIndex()
+            self.assertNotEqual(alice.path,bob.path)
+            self.assertEqual(bob.search('alice_only',mode='symbol')['results'],[])
+            with self.assertRaises(PermissionError):alice.connect()
+
     def test_removed_declaration_and_duplicate_scoped_names(self):
         shutil.copyfile(FIXTURES/'python_sample.py',self.root/'sample.py')
         value=json.loads(code_symbols());names=[row['qualified'] for row in value['results']]

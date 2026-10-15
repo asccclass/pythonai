@@ -112,6 +112,8 @@ def should_skip_laya_for_user_request(user_input: str) -> bool:
 
 @budgeted_turn
 def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any] | tuple[Any, ...] | None = None) -> AgentTurnResult:
+    from agent_execution.workspace_lifecycle import LifecycleStore
+    LifecycleStore().ensure_session()
     turn_budget = foreground_memory_budget()
     episode_id = safe_memory_call(runtime.memory.start_episode) if runtime.memory is not None else None
     log_episode_event(runtime.memory, episode_id, "message", role="user", content=user_input)

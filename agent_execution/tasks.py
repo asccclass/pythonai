@@ -17,6 +17,12 @@ class RecoveryRequired(RuntimeError):
     pass
 
 
+def assert_owner_active(conn,owner):
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='wl_sessions'").fetchone():
+        if conn.execute("SELECT 1 FROM wl_session_owners o JOIN wl_sessions s ON s.id=o.session WHERE o.task_owner=? AND s.state!='active'",(owner,)).fetchone():
+            raise PermissionError('Conversation is deleting or deleted; execution refused')
+
+
 def task_owner(context):
     return json.dumps([context.source, context.identity, context.project, context.session], separators=(',', ':'))
 
@@ -98,6 +104,7 @@ class TaskStore:
         token = uuid.uuid4().hex
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            assert_owner_active(conn,owner)
             row = conn.execute('SELECT * FROM tasks WHERE owner=? AND id=?', (owner,key)).fetchone()
             if row is None:
                 from .delivery import positive_limit, CapacityError
@@ -139,6 +146,7 @@ class TaskStore:
             raise ValueError('Task checkpoint exceeds 64 MiB')
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            assert_owner_active(conn,owner)
             current = conn.execute('SELECT length(CAST(checkpoint AS BLOB)) FROM tasks WHERE owner=? AND id=?', (owner,key)).fetchone()
             self.capacity(conn,len(serialized.encode())-(current[0] if current else 0)+len(json.dumps(step).encode()) if step else len(serialized.encode())-(current[0] if current else 0))
             updated = conn.execute('UPDATE tasks SET phase=?,checkpoint=?,updated=? WHERE owner=? AND id=? AND lease_owner=? AND state=\'running\' AND lease_until>?',
@@ -152,6 +160,7 @@ class TaskStore:
     def finish(self, owner, key, token, state, reply=None):
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            assert_owner_active(conn,owner)
             old = conn.execute('SELECT length(CAST(COALESCE(reply,\'\') AS BLOB)) FROM tasks WHERE owner=? AND id=?',(owner,key)).fetchone()
             self.capacity(conn,len((reply or '').encode())-(old[0] if old else 0))
             row=conn.execute('SELECT checkpoint,criteria FROM tasks WHERE owner=? AND id=?',(owner,key)).fetchone()
@@ -350,7 +359,7 @@ def dispatch_task_input(text, runtime, attachments=None):
         raise ValueError('Attachments cannot accompany transport control commands')
     if command in {'/workspace','/session-delete'}:
         from .workspace_lifecycle.commands import human_command
-        try:return AgentTurnResult(human_command(text),None)
+        try:return AgentTurnResult(human_command(text,runtime),None)
         except (ValueError,PermissionError,OSError) as error:return AgentTurnResult(f'Error: {error}',None)
     if command in {'/clear','/reset'}:
         store.cancel_session(owner)

@@ -110,3 +110,10 @@ class EventStore:
     def finish_input(self, owner, key, status):
         with closing(self.connect()) as conn, conn:
             conn.execute('UPDATE ws_inputs SET status=? WHERE owner=? AND id=?', (status,owner,key))
+
+    def erase_owner(self,owner):
+        with closing(self.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute('DELETE FROM ws_events WHERE owner=?',(owner,))
+            conn.execute("UPDATE ws_inputs SET digest='',status='deleted' WHERE owner=?",(owner,))
+            conn.execute('UPDATE ws_sessions SET floor=seq WHERE owner=?',(owner,))

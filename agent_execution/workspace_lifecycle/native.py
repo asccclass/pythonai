@@ -13,6 +13,8 @@ class PinnedTree:
     def __init__(self, path):
         if os.name != 'nt':raise PermissionError('Destructive cleanup currently requires Windows native handles')
         self.path=Path(path).resolve(strict=True)
+        if self.path.drive.startswith('\\\\') and (not str(self.path).startswith('\\\\?\\') or str(self.path).upper().startswith('\\\\?\\UNC\\')):
+            raise PermissionError('Network workspaces do not have supported native cleanup guarantees')
         self.handles={}
         self.parents=[]
         self.kernel=C.WinDLL('kernel32',use_last_error=True)
@@ -22,6 +24,7 @@ class PinnedTree:
         self.kernel.SetFileInformationByHandle.argtypes=[W.HANDLE,C.c_int,C.c_void_p,W.DWORD]
         self.kernel.ReadFile.argtypes=[W.HANDLE,C.c_void_p,W.DWORD,C.POINTER(W.DWORD),C.c_void_p]
         self.kernel.SetFilePointerEx.argtypes=[W.HANDLE,C.c_longlong,C.POINTER(C.c_longlong),W.DWORD]
+        self.kernel.GetFileInformationByHandleEx.argtypes=[W.HANDLE,C.c_int,C.c_void_p,W.DWORD]
         self.nt=C.WinDLL('ntdll')
         self.nt.NtSetInformationFile.argtypes=[W.HANDLE,C.c_void_p,C.c_void_p,W.ULONG,C.c_int]
         self.nt.NtSetInformationFile.restype=C.c_long
@@ -29,12 +32,26 @@ class PinnedTree:
         self.nt.RtlNtStatusToDosError.restype=W.ULONG
 
     def open(self,path,is_directory,mutable=True):
-        identity(path)
+        expected=identity(path)
         access=0x80 | (0x10000 if mutable else 0) | (0 if is_directory else 0x80000000)
         name=str(Path(path).resolve(strict=True))
         if not name.startswith('\\\\?\\'):name='\\\\?\\'+name
         handle=self.kernel.CreateFileW(name,access,3 if is_directory else 1,None,3,0x02200000,None)
         if handle==C.c_void_p(-1).value:raise OSError(C.get_last_error(),'File is occupied or cannot be pinned')
+        try:
+            class FileId(C.Structure):
+                _fields_=[('volume',C.c_ulonglong),('identifier',C.c_ubyte*16)]
+            class Basic(C.Structure):
+                _fields_=[('times',C.c_longlong*4),('attributes',W.DWORD)]
+            identifier=FileId();basic=Basic()
+            if not self.kernel.GetFileInformationByHandleEx(handle,18,C.byref(identifier),C.sizeof(identifier)) or not self.kernel.GetFileInformationByHandleEx(handle,0,C.byref(basic),C.sizeof(basic)):
+                raise OSError(C.get_last_error(),'Cannot verify pinned file identity')
+            actual=[identifier.volume,int.from_bytes(bytes(identifier.identifier),'little')]
+            if actual!=expected or basic.attributes & 0x400:
+                raise PermissionError('Object was replaced or became a reparse point while opening')
+        except BaseException:
+            self.kernel.CloseHandle(handle)
+            raise
         return handle
 
     def __enter__(self):
@@ -105,7 +122,7 @@ class PinnedTree:
 
     def purge(self):
         # Every deleted object is the same pinned object inspected above.
-        for relative in sorted(self.handles,key=lambda value:(value.count('/'),len(value)),reverse=True):
+        for relative in sorted(self.handles,key=lambda value:(0 if value=='.' else len(Path(value).parts),len(value)),reverse=True):
             handle=self.handles[relative]
             flag=C.c_ubyte(1)
             if not self.kernel.SetFileInformationByHandle(handle,4,C.byref(flag),C.sizeof(flag)):

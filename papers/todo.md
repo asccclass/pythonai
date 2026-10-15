@@ -20,7 +20,7 @@
 - [x] **W04 — 實作路徑／file identity 與 manifest 保護**（W02）
   - Windows／POSIX 對應安全列舉、連結拒絕、根與重疊檢查、容量／時間上限，鎖定服務管理封存根。
   - 驗收：workspace 根、祖先、其他使用者、junction、symlink、hard link、置換及跨 volume 不發生越界副作用；失敗原目錄保留。
-- [ ] **W05 — 列出、接管與刪除預覽**（W03、W04）
+- [x] **W05 — 列出、接管與刪除預覽**（W03、W04）
   - 只讀清冊、清理清單與衝突說明；既有目錄 inventory＋人工接管，不自動刪除。
   - 驗收：`go_hello_world`／`hello_world` 等既有未知目錄預設 unmanaged；預覽不改檔、不顯示憑證內容。
 
@@ -46,17 +46,17 @@ M2 實作：原生 handle、same-volume rename、ACL 保護、extended/virtualiz
 
 ## M3 — 刪除 session 與永久清理
 
-- [ ] **W09 — session 刪除協調器與操作權限**（W06、W08）
+- [x] **W09 — session 刪除協調器與操作權限**（W06、W08）
   - 人類來源的 preview／confirm／status；同一批准涵蓋對話及精確 temporary 項目。
   - 持久化 tombstone／outbox，阻擋新指令與新引用；retained 轉使用者所有、shared 解除引用；舊或不確定目錄不刪。
   - 驗收：跨 owner、模型偽造人類確認、重播及最後一個引用刪除競態測試通過。
-- [ ] **W10 — 任務、程序、排程與待送資料停止流程**（W09）
+- [x] **W10 — 任務、程序、排程與待送資料停止流程**（W09）
   - 先處理明確取消批准，再等待 task／lease／coordinator／子程序／排程停止，撤銷待批准和待送事件。
   - 驗收：不強殺未登記外部程序；占用／停止不確定時 blocked；遲到結果與離線舊請求不能重新建立已刪 session 資料。
-- [ ] **W11 — 隔離後永久清理與逐項恢復**（W10）
+- [x] **W11 — 隔離後永久清理與逐項恢復**（W10）
   - 僅處理已批准 frozen 清單；active 先隔離、archived 經核對後 purge；設容量、併發、掃描時間與重試上限。
   - 驗收：部分成功不誤報全部成功；剩餘檔案可定位與重試；永久刪除不可還原的事實呈現在 UI；無自動時間淘汰。
-- [ ] **W12 — MyAI 對話刪除入口與可靠協定**（W09–W11）
+- [x] **W12 — MyAI 對話刪除入口與可靠協定**（W09–W11）
   - 在既有 desktop_assistant 加「刪除對話」、保留程式選項、preview／確認／刪除中／blocked／完成與狀態查詢。
   - 能力協商未通過時停用新功能；不把本機刪訊息當後端刪 session；確保重連補送不復活對話。
   - 驗收：真實 localhost WS fixture、兩個裝置、重複點擊、斷線／重連與後端版本不支援案例通過；MyAI repo 獨立 commit。
@@ -68,7 +68,7 @@ M3 交付門檻：以獨立可丟棄 session／目錄完成首次永久清理，
 
 ## M4 — 上線與操作維護
 
-- [ ] **W14 — Migration dry-run、分段啟用與 rollback 手冊**（W13）
+- [x] **W14 — Migration dry-run、分段啟用與 rollback 手冊**（W13）
   - 預設既有資料 unmanaged；先清冊預覽，再封存還原，最後 session purge；feature flag 可停用新破壞操作而保留進度查詢／恢復。
   - 驗收：停機／重啟不重複刪除；資料 schema rollback 方案清楚；容量滿不擅自清理；使用者可在刪 session 前保留／匯出程式。
 - [ ] **W15 — 完整測試、原生驗證與正式流程驗收**（W14）
@@ -76,3 +76,15 @@ M3 交付門檻：以獨立可丟棄 session／目錄完成首次永久清理，
   - 驗收：相關與完整必要測試、`git diff --check` 全部通過；Windows 原生與本機 WS 分開報告；真正 MyAI 點擊與外部通道只按已實測範圍標示通過。每個完成變更建立 commit。
 
 總體完成標準：使用者刪除 session 的批准可追溯至實際清理項目；只有自身獨占 temporary 資料消失，其他資料保留；失敗可檢視與安全續跑；session 存在時沒有時間到期刪除。
+
+## 2026-10-15 實作與驗收範圍
+
+M3 的 MyAI／WebSocket 與 CLI 主流程已接入：canonical session 跨裝置歸屬、own-session 窄範圍人工確認、exact-list／generation／manifest 批准、原生隔離與永久清理、outbox 資料清除、持久化 tombstone、防止遲到 task／memory 寫入、共用與 retained 保留。MyAI 保存不確定操作，重連查詢原 plan；UI 提供逐項保留、取消、確認與 blocked 續跑。不同 token 分區用後端 instance／canonical session 清除本機歷史。
+
+W03 保留未勾：project_scaffold、write/edit 及共用工具路徑政策、排程／委派 owner 已接入；既有 worktree 使用其原流程，未知 host／Skill 外部副作用不自動納管，部分建立內容失敗的獨立狀態仍待擴充。W13 保留未勾：CLI／WS 有資料清除 consumer；Telegram／communication 尚無傳輸原始資料 consumer，session-delete 明確拒絕，不能誤報全通道完成。W10 的停止流程採先明確中斷並等待 task／lease／worker 結束；清理本身不強殺外部程序。
+
+W14 手冊位於模組 README。W15 本機驗證完成後記錄結果；外部 provider、正式 Telegram、乾淨 Windows／實際發布 exe 及正式使用者手動流程不計入 fixture 通過。現有 `workspace/go_hello_world`／`hello_world` 持續 unmanaged，未刪除、未納入提交。
+
+最終本機驗證（2026-10-15，原始碼固定後）：`python -m pytest tests agent_execution/tests -q`：718 passed、7 skipped、95 subtests passed，613.44 秒；skipped 沿用各測試的外部／環境條件，不計為通過。生命週期專項 24 passed，涵蓋單字元巢狀目錄、保留封存跨新 session 還原、late memory／checkpoint 拒絕、排程變更／live lease、同名重建、跨 owner 根範圍、崩潰與 partial purge。語法與 `git diff --check` 通過。
+
+MyAI：全套 unittest 97 tests OK（86.923 秒）；已重建 `dist/MyAI/MyAI.exe`，另行驗證封裝版 health／WS 認證／正常退出（1 test OK），檢查實際畫面包含刪除對話按鈕。桌面 commit `619629a`。未重啟正式後端、未刪正式 session；W15 的正式／乾淨機驗收仍未勾選。

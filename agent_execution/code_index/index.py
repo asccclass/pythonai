@@ -80,6 +80,12 @@ class CodeIndex:
         self.root=resolve_path('.');self.embeddings=Embeddings()
         directory=os.environ.get('AGENT_CODE_INDEX_DIR')
         context=current_context()
+        from ..workspace_lifecycle.store import principal
+        self.principal=principal()
+        private_scope=self.principal!=json.dumps(['local','local','default'],ensure_ascii=False)
+        if not directory and private_scope:
+            from ..tasks import TaskStore
+            directory=str(TaskStore().path.parent/'code_index')
         if not directory and context.repository_workspace and Path(context.repository_workspace).resolve()!=self.root:
             from ..tasks import TaskStore
             directory=str(TaskStore().path.parent/'code_index')
@@ -89,11 +95,13 @@ class CodeIndex:
             storage=storage.resolve()
             if storage==self.root or self.root in storage.parents:raise ValueError('External code index storage must be outside workspace')
             storage.mkdir(parents=True,exist_ok=True)
-            self.path=storage/(fingerprint(os.path.normcase(str(self.root)))+'.db')
+            self.path=storage/(fingerprint([os.path.normcase(str(self.root)),self.principal])+'.db')
         else:self.path=resolve_path('codebase_index.db')
         self.stats={}
 
     def connect(self):
+        from ..workspace_lifecycle.store import principal
+        if principal()!=self.principal:raise PermissionError('Code index belongs to a different owner')
         if self.path.exists() and self.path.stat().st_size>256*1024*1024:raise ValueError('Code index exceeds 256 MiB')
         conn=sqlite3.connect(self.path,timeout=10);conn.row_factory=sqlite3.Row
         conn.execute('PRAGMA foreign_keys=ON')
@@ -101,6 +109,8 @@ class CodeIndex:
 
     def inventory(self):
         from pathspec import GitIgnoreSpec
+        from ..workspace_lifecycle import LifecycleStore
+        blocked=LifecycleStore().inaccessible_paths()
         files={};total=0;visited=0;stack=[(self.root,[])]
         while stack:
             folder,rules=stack.pop();check()
@@ -112,6 +122,7 @@ class CodeIndex:
                 visited+=1
                 if visited>20000:raise ValueError('Index inventory exceeds 20000 paths')
                 name=item.relative_to(self.root).as_posix()
+                if any(item.resolve()==p or item.resolve().is_relative_to(p) for p in blocked):continue
                 if hard_excluded(name) or item.is_symlink() or (hasattr(item,'is_junction') and item.is_junction()):continue
                 ignored=False
                 for base,spec in rules:

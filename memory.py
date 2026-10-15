@@ -217,7 +217,7 @@ class MemoryStore:
                 """
                 UPDATE episodes
                 SET ended_at = CURRENT_TIMESTAMP, status = ?, summary = ?
-                WHERE id = ?
+                WHERE id = ? AND status != 'deleted'
                 """,
                 (status, summary, episode_id),
             )
@@ -236,6 +236,9 @@ class MemoryStore:
             content=redact(content);metadata=redact(_jsonable(metadata or {}))
         metadata_json = json.dumps(_jsonable(metadata or {}), ensure_ascii=False)
         with closing(self.connect()) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row=connection.execute('SELECT status FROM episodes WHERE id=?',(episode_id,)).fetchone()
+            if row and row[0]=='deleted':raise PermissionError('Deleted conversation episode cannot receive new content')
             cursor = connection.execute(
                 """
                 INSERT INTO episode_events (episode_id, event_type, role, content, metadata)
@@ -305,6 +308,9 @@ class MemoryStore:
     ) -> int:
         embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
         with closing(self.connect()) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row=connection.execute('SELECT e.status FROM episode_events v JOIN episodes e ON e.id=v.episode_id WHERE v.id=?',(source_event_id,)).fetchone()
+            if row and row[0]=='deleted':raise PermissionError('Deleted conversation cannot produce new memories')
             if subject_entity_id is None:
                 subject_entity_id = self._get_or_create_entity(connection, subject, infer_entity_type(subject, memory_type), source_event_id)
             if object_entity_id is None and should_link_object_entity(object_value, memory_type):

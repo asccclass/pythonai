@@ -61,7 +61,7 @@ class TaskEvaluatorTests(unittest.TestCase):
         from permissions import set_current_role
         from agent_execution.policy import execution_scope
         for role, allowed, expected in [
-            ('viewer', None, {'read_file', 'ask_user', 'desktop_tool'}),
+            ('viewer', None, {'read_file', 'ask_user', 'desktop_tool', 'workspace_info'}),
             ('operator', frozenset({'read_file', 'run_skill', 'write_file'}), {'read_file', 'run_skill'}),
             ('admin', frozenset({'write_file'}), {'write_file'}),
         ]:

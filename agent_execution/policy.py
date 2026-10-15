@@ -72,7 +72,7 @@ def git_workspace() -> Path:
     return resolve_path(result.stdout.strip())
 
 
-def _validate_paths(arguments: dict[str, Any], trusted_assets: tuple[Path, ...]) -> None:
+def _validate_paths(arguments: dict[str, Any], trusted_assets: tuple[Path, ...], writable=False) -> None:
     from base import resolve_workspace_or_trusted_path, validate_command_paths
     for key, value in arguments.items():
         if key in {"memory", "episode_id"}:
@@ -84,15 +84,19 @@ def _validate_paths(arguments: dict[str, Any], trusted_assets: tuple[Path, ...])
         elif key in PATH_KEYS or key.endswith(("_path", "_dir", "_directory")):
             if value not in (None, ""):
                 # Only run_command may read/use trusted executable assets outside workspace.
-                resolve_workspace_or_trusted_path(value, list(trusted_assets))
+                candidate=resolve_workspace_or_trusted_path(value, list(trusted_assets))
+                from base import workspace_root
+                if candidate.is_relative_to(workspace_root()):
+                    from .workspace_lifecycle import LifecycleStore
+                    LifecycleStore().assert_access(candidate,writable)
         elif key == "command" and isinstance(value, list):
             validate_command_paths(value, list(trusted_assets))
         elif isinstance(value, dict):
-            _validate_paths(value, ())
+            _validate_paths(value, (), writable)
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
-                    _validate_paths(item, ())
+                    _validate_paths(item, (), writable)
 
 
 def _audit_denial(name: str, reason: str) -> None:
@@ -110,6 +114,8 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
     from .approvals import ApprovalStore, ApprovalRequired, canonical
     from .budgets import active_budget, BudgetExhausted
     budget=active_budget()
+    from .workspace_lifecycle import LifecycleStore
+    LifecycleStore().ensure_session()
     values = dict(arguments)
     approval_id = values.pop("approval_id", None)
     authorization = None
@@ -135,7 +141,7 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
         if current_context().allowed_tools is not None and name not in current_context().allowed_tools:
             raise PolicyDenied(f'Tool is outside this agent role: {name}')
         assets = _context.get().trusted_assets if name == "run_command" else ()
-        _validate_paths(arguments, assets)
+        _validate_paths(arguments, assets, name in {'write_file','edit_file','ast_edit','patch','delete_file','run_command','run_test_suite','apply_project_patch','env_manager','git_rollback','git_commit'})
         if name in {'write_file','edit_file','ast_edit','patch','delete_file'}:
             from .workspace_lifecycle import LifecycleStore
             for field in ('path','file_path'):

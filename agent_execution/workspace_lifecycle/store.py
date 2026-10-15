@@ -2,6 +2,8 @@
 from contextlib import closing
 import hashlib
 import json
+import os
+import sqlite3
 from pathlib import Path
 import time
 import uuid
@@ -13,13 +15,30 @@ from .paths import directory, identity, snapshot
 
 def session_key(context=None):
     context = context or current_context()
-    value = [context.source, context.identity, context.project, context.conversation or context.session]
+    if context.coordinator_owner:
+        root=Path(os.environ.get('LOCALAPPDATA') or Path.home()/'.local'/'share')/'PythonAI'
+        path=Path(os.environ.get('AGENT_TASK_DB') or root/'tasks.db')
+        with closing(sqlite3.connect(path)) as conn:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='wl_sessions'").fetchone():
+                row=conn.execute('SELECT session FROM wl_session_owners WHERE task_owner=?',(context.coordinator_owner,)).fetchone()
+                if row:return row[0]
+    parts=context_parts(context)
+    value = [*parts[:3],context.conversation or parts[3]]
     return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
 
 
 def principal(context=None):
     context = context or current_context()
-    return json.dumps([context.source, context.identity, context.project], ensure_ascii=False)
+    return json.dumps(context_parts(context)[:3],ensure_ascii=False)
+
+
+def context_parts(context):
+    if context.coordinator_owner:
+        value=json.loads(context.coordinator_owner)
+        if len(value)!=4 or value[1]!=context.identity or value[2]!=context.project:
+            raise PermissionError('Invalid delegated workspace owner')
+        return value
+    return [context.source,context.identity,context.project,context.session]
 
 
 class LifecycleStore:
@@ -30,6 +49,7 @@ class LifecycleStore:
             conn.executescript('''
                 CREATE TABLE IF NOT EXISTS wl_version (version INTEGER PRIMARY KEY);
                 INSERT OR IGNORE INTO wl_version VALUES(1);
+                CREATE TABLE IF NOT EXISTS wl_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS wl_sessions (
                     id TEXT PRIMARY KEY, principal TEXT NOT NULL, state TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS wl_session_owners (
@@ -57,6 +77,9 @@ class LifecycleStore:
             ''')
             if conn.execute('SELECT MAX(version) FROM wl_version').fetchone()[0] != 1:
                 raise ValueError('Unsupported workspace lifecycle schema')
+            conn.execute("INSERT OR IGNORE INTO wl_metadata VALUES('instance',?)",(uuid.uuid4().hex,))
+            columns={r['name'] for r in conn.execute('PRAGMA table_info(wl_directories)')}
+            if 'original_relative' not in columns:conn.execute('ALTER TABLE wl_directories ADD COLUMN original_relative TEXT')
 
     def connect(self):
         return self.tasks.connect()
@@ -91,10 +114,12 @@ class LifecycleStore:
             root, path = self.root(conn)
             target = directory(path, relative)
             normalized = str(target.relative_to(path))
-            for row in conn.execute('SELECT relative FROM wl_directories WHERE root=?', (root,)):
+            for row in conn.execute("SELECT relative FROM wl_directories WHERE root=? AND state!='purged'", (root,)):
                 other = Path(row['relative'])
                 if Path(normalized) == other or Path(normalized).is_relative_to(other) or other.is_relative_to(normalized):
                     raise ValueError('Directory overlaps an existing registry entry')
+            if conn.execute('SELECT COUNT(*) FROM wl_directories').fetchone()[0]>=1000:
+                raise ValueError('Managed directory capacity reached')
             if target.exists() and not adopt:raise FileExistsError('Existing directory remains unmanaged; explicit adoption required')
             if adopt:
                 from permissions import current_role
@@ -132,21 +157,33 @@ class LifecycleStore:
         with closing(self.connect()) as conn, conn:
             self.ensure_session(conn)
             root, path = self.root(conn)
-            rows = [dict(r) for r in conn.execute('SELECT id,relative,purpose,state,generation FROM wl_directories WHERE root=? AND principal=?', (root, principal()))]
+            rows = [dict(r) for r in conn.execute("SELECT id,relative,purpose,state,generation FROM wl_directories WHERE root=? AND principal=? AND state!='purged'", (root, principal()))]
             known = {Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?', (root,))}
             unmanaged = [item.name for item in path.iterdir() if item.is_dir() and item.name not in known and item.name != '.git']
             return {'managed': rows, 'unmanaged': sorted(unmanaged), 'retention': 'until_session_deleted'}
 
     def assert_writable(self, target):
+        self.assert_access(target,True)
+
+    def inaccessible_paths(self):
+        with closing(self.connect()) as conn:
+            return [(Path(row['path'])/row['relative']).resolve() for row in conn.execute(
+                "SELECT d.relative,d.principal,d.state,r.path FROM wl_directories d JOIN wl_roots r ON r.id=d.root WHERE d.state!='purged'")
+                if row['principal']!=principal() or row['state']!='active']
+
+    def assert_access(self,target,write=False):
         with closing(self.connect()) as conn, conn:
             session = self.ensure_session(conn)
             root, path = self.root(conn)
-            for row in conn.execute('SELECT * FROM wl_directories WHERE root=?', (root,)):
-                location = path / row['relative']
+            target=Path(target).resolve()
+            for row in conn.execute("SELECT d.*,r.path AS root_path,r.identity AS root_identity FROM wl_directories d JOIN wl_roots r ON r.id=d.root WHERE d.state!='purged'"):
+                location = (Path(row['root_path']) / row['relative']).resolve()
                 if target == location or target.is_relative_to(location):
                     if row['principal'] != principal() or row['state'] != 'active':
-                        raise PermissionError('Managed directory is not writable by this session')
-                    if not conn.execute('SELECT 1 FROM wl_refs WHERE directory=? AND session=?', (row['id'],session)).fetchone():
+                        raise PermissionError('Managed directory is not accessible by this session')
+                    if json.dumps(identity(Path(row['root_path'])))!=row['root_identity']:
+                        raise PermissionError('Registered workspace was replaced')
+                    if write and not conn.execute('SELECT 1 FROM wl_refs WHERE directory=? AND session=?', (row['id'],session)).fetchone():
                         raise PermissionError('Attach this directory to the conversation before writing')
 
     def attach(self, key):
@@ -154,15 +191,20 @@ class LifecycleStore:
             conn.execute('BEGIN IMMEDIATE')
             session = self.ensure_session(conn)
             row = self.get(key, conn)
-            if row['state'] != 'active':raise ValueError('Only active directories may be shared')
+            if row['state'] not in {'active','archived'}:raise ValueError('Directory operation in progress')
+            if conn.execute("SELECT 1 FROM wl_refs r JOIN wl_sessions s ON s.id=r.session WHERE r.directory=? AND s.state!='active'",(key,)).fetchone():
+                raise ValueError('A referencing conversation is being deleted')
             conn.execute('INSERT OR IGNORE INTO wl_refs VALUES(?,?)', (key,session))
             conn.execute('UPDATE wl_directories SET generation=generation+1 WHERE id=?', (key,))
 
     def retain(self, key):
         with closing(self.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
             self.ensure_session(conn)
             row = self.get(key,conn)
             if row['state'] not in {'active','archived'}:raise ValueError('Directory operation in progress')
+            if conn.execute("SELECT 1 FROM wl_refs r JOIN wl_sessions s ON s.id=r.session WHERE r.directory=? AND s.state!='active'",(key,)).fetchone():
+                raise ValueError('A referencing conversation is being deleted')
             conn.execute("UPDATE wl_directories SET purpose='retained',generation=generation+1 WHERE id=?", (key,))
 
     def preview(self, action, key=None):
@@ -170,13 +212,15 @@ class LifecycleStore:
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             session = self.ensure_session(conn)
-            self.root(conn)
+            root,path=self.root(conn)
             rows = ([self.get(key,conn)] if key else [self.get(r[0],conn) for r in conn.execute('SELECT directory FROM wl_refs WHERE session=?', (session,))])
             items, kept = [], []
             for row in rows:
                 refs = conn.execute('SELECT COUNT(*) FROM wl_refs WHERE directory=?', (row['id'],)).fetchone()[0]
-                if row['purpose'] != 'temporary' or refs != 1:
-                    kept.append({'id':row['id'],'path':row['relative'],'reason':'retained' if row['purpose']!='temporary' else 'shared'})
+                if (row['purpose'] != 'temporary' and action!='restore') or refs != 1:
+                    kept.append({'id':row['id'],'path':row['relative'],'generation':row['generation'],
+                        'references':sorted(r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],))),
+                        'reason':'retained' if row['purpose']!='temporary' else 'shared'})
                     if action != 'delete_session':raise ValueError('Retained/shared directories cannot be moved by temporary cleanup')
                     continue
                 expected = 'archived' if action=='restore' else 'active'
@@ -192,7 +236,17 @@ class LifecycleStore:
             for owner in owners:
                 for task in conn.execute('SELECT id,state,lease_until FROM tasks WHERE owner=?',(owner,)):
                     if task['state'] not in {'completed','failed','cancelled'} or (task['lease_until'] or 0)>time.time():blocking.append(task['id'])
-            payload = {'session':session,'action':action,'items':items,'kept':kept,'blocking_tasks':blocking}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='agent_nodes'").fetchone():
+                from agent_execution.coordinator import SUCCESS,STOPPED
+                for owner in owners:
+                    for node in conn.execute('SELECT id,state,expires FROM agent_nodes WHERE owner=?',(owner,)):
+                        if node['state'] not in SUCCESS|STOPPED or (node['expires'] or 0)>time.time():blocking.append('agent:'+node['id'])
+            from .erasure import external_blockers,schedules
+            blocking.extend(external_blockers(owners))
+            known={Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?',(root,))}
+            unmanaged_count=sum(p.is_dir() and p.name not in known and p.name!='.git' for p in path.iterdir())
+            payload = {'session':session,'action':action,'items':items,'kept':kept,'blocking_tasks':blocking,'unmanaged_count':unmanaged_count,
+                'schedules':schedules(owners) if action=='delete_session' else []}
             plan = uuid.uuid4().hex
             conn.execute('INSERT INTO wl_plans(id,session,principal,action,payload,expires) VALUES(?,?,?,?,?,?)',
                 (plan,session,principal(),action,json.dumps(payload),time.time()+300))
@@ -224,6 +278,10 @@ class LifecycleStore:
         """Only human transport dispatchers may call this method."""
         from agent_execution.approvals import ApprovalStore
         plan=self.plan(key)
+        with closing(self.connect()) as conn:
+            existing=conn.execute('SELECT state FROM wl_operations WHERE plan=?',(key,)).fetchone()
+        if existing:
+            return self.execute(key,plan['approval'])
         if not plan['approval']:
             self.request(key)
             plan=self.plan(key)

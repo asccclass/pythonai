@@ -5,19 +5,37 @@ from permissions import current_role
 from .store import LifecycleStore
 
 
-def human_command(text):
+def human_command(text,runtime=None):
+    if text.strip().split(maxsplit=1)[0:1] not in [['/workspace'],['/session-delete']]:return None
     parts=shlex.split(text)
     if not parts or parts[0] not in {'/workspace','/session-delete'}:return None
     store=LifecycleStore()
     if parts[0]=='/session-delete':
+        from agent_execution.policy import current_context
+        if current_context().source not in {'local','websocket'}:
+            raise PermissionError('Session deletion is available in CLI and MyAI WebSocket; this transport has no data-erasure consumer yet')
         if parts[1:]==['preview']:return json.dumps(store.preview('delete_session'),ensure_ascii=False)
-        if len(parts)==3 and parts[1]=='confirm':return json.dumps(store.confirm(parts[2]),ensure_ascii=False)
-        if len(parts)==3 and parts[1]=='status':
+        if len(parts)==3 and parts[1]=='confirm':
+            result=store.confirm(parts[2])
+            if result['state']=='completed':
+                from .erasure import finalize
+                from agent_execution.delivery import EventStore
+                result=finalize(store,parts[2],runtime,EventStore())
+            return json.dumps(result,ensure_ascii=False)
+        if len(parts)==3 and parts[1] in {'status','resume'}:
+            plan=store.plan(parts[2])
+            if plan['action']!='delete_session':raise ValueError('Not a session deletion')
+            if parts[1]=='resume':
+                from .operations import resume
+                resume(store,parts[2])
             with store.connect() as conn:
-                store.plan(parts[2],conn)
                 row=conn.execute('SELECT id,state,error FROM wl_operations WHERE id=?',(parts[2],)).fetchone()
+            if row and row['state']=='completed':
+                from .erasure import finalize
+                from agent_execution.delivery import EventStore
+                return json.dumps(finalize(store,parts[2],runtime,EventStore()),ensure_ascii=False)
             return json.dumps(dict(row) if row else {'state':'preview'},ensure_ascii=False)
-        raise ValueError('Usage: /session-delete preview | confirm|status <plan-id>')
+        raise ValueError('Usage: /session-delete preview | confirm|status|resume <plan-id>')
     if parts[1:]==['list']:return json.dumps(store.inventory(),ensure_ascii=False)
     if len(parts)==4 and parts[1]=='preview':return json.dumps(store.preview(parts[3],parts[2]),ensure_ascii=False)
     if len(parts)==3 and parts[1]=='request':return json.dumps(store.request(parts[2]),ensure_ascii=False)

@@ -18,7 +18,8 @@ class LifecycleTests(unittest.TestCase):
         self.root=self.home/'workspace'
         self.root.mkdir()
         env=patch.dict(os.environ,{'AGENT_TASK_DB':str(self.home/'tasks.db'),
-            'AGENT_APPROVAL_DB':str(self.home/'approvals.db'), 'AGENT_WORKSPACE_CLEANUP':'1'})
+            'AGENT_APPROVAL_DB':str(self.home/'approvals.db'), 'AGENT_WORKSPACE_CLEANUP':'1',
+            'SCHEDULER_DB_PATH':str(self.home/'scheduler.db'),'AGENT_TENANT_ROOT':str(self.home/'tenants')})
         env.start();self.addCleanup(env.stop)
         scope=execution_scope(source='websocket',identity='websocket:alice',project='default',
             session='default:device:one',conversation='one',workspace=self.root)
@@ -136,6 +137,17 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaises(OSError):(self.root/'example').rename(self.root/'replacement')
 
     @unittest.skipUnless(os.name=='nt','requires Windows native handles')
+    def test_purge_deletes_one_character_children_before_root(self):
+        self.create()
+        (self.root/'example/a').mkdir()
+        (self.root/'example/a/b').write_text('nested')
+        (self.root/'example/c').write_text('short name')
+        plan=self.store.preview('delete_session')
+        result=self.store.confirm(plan['plan_id'])
+        self.assertEqual(result['state'],'completed',result)
+        self.assertFalse((self.root/'example').exists())
+
+    @unittest.skipUnless(os.name=='nt','requires Windows native handles')
     def test_junction_is_rejected_without_touching_outside(self):
         import subprocess
         key=self.create()
@@ -188,3 +200,119 @@ class LifecycleTests(unittest.TestCase):
         with execution_scope(identity='websocket:bob'):
             with self.assertRaises(PermissionError):self.store.plan(plan['plan_id'])
         self.assertEqual((self.root/'example/main.txt').read_text(),'hello')
+
+    def test_human_dispatcher_leaves_ordinary_quotes_untouched(self):
+        from agent_execution.workspace_lifecycle.commands import human_command
+        self.assertIsNone(human_command("請建立 user's 程式"))
+        with execution_scope(source='communication'):
+            with self.assertRaises(PermissionError):human_command('/session-delete preview')
+
+    def test_schedule_snapshot_blocks_live_lease_and_changed_job(self):
+        from agent_execution.scheduling.store import SchedulerStore
+        from agent_execution.workspace_lifecycle.erasure import schedules,disable_schedules,external_blockers
+        from agent_execution.tasks import task_owner
+        from agent_execution.policy import current_context
+        from permissions import set_current_role
+        self.store.ensure_session()
+        owner=task_owner(current_context())
+        scheduler=SchedulerStore()
+        with set_current_role('admin'):
+            key=scheduler.add_job('temporary job','0 8 * * *','command',{'command':'echo hello'})
+        frozen=schedules([owner])
+        self.assertEqual(frozen[0]['id'],key)
+        scheduler.acquire_lock(key,'worker')
+        self.assertEqual(external_blockers([owner]),['schedule:'+key])
+        scheduler.release_lock(key,'worker')
+        self.assertEqual(external_blockers([owner]),[])
+        with closing(scheduler.connect()) as conn,conn:
+            conn.execute('UPDATE scheduled_jobs SET job_payload=? WHERE id=?',('{"command":"changed"}',key))
+        with self.assertRaises(ValueError):disable_schedules([owner],frozen)
+        self.assertTrue(scheduler.list_jobs()[0]['is_enabled'])
+        disable_schedules([owner],schedules([owner]))
+        self.assertFalse(scheduler.list_jobs()[0]['is_enabled'])
+        from agent_execution.workspace_lifecycle.erasure import erase_schedules
+        erase_schedules([owner])
+        self.assertEqual(scheduler.list_jobs()[0]['job_payload'],'{}')
+
+    def test_erased_memory_cannot_be_revived_by_late_worker(self):
+        from memory import MemoryStore
+        from agent_execution.workspace_lifecycle.erasure import erase_memory
+        memory=MemoryStore(self.home/'memory.db')
+        episode=memory.start_episode()
+        event=memory.add_event(episode,'message','user','private content',{'private':'data'})
+        memory.add_semantic_memory('user','likes','Go',event)
+        erase_memory(memory.db_path)
+        memory.finish_episode(episode,summary='late content')
+        self.assertEqual(memory.get_episode(episode)['status'],'deleted')
+        self.assertEqual(memory.get_episode(episode)['summary'],'')
+        self.assertEqual(memory.episode_events(episode)[0]['content'],'')
+        with self.assertRaises(PermissionError):memory.add_event(episode,'message','assistant','late')
+        with self.assertRaises(PermissionError):memory.add_semantic_memory('user','likes','late',event)
+        with closing(memory.connect()) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM semantic_memories').fetchone()[0],1)
+
+    @unittest.skipUnless(os.name=='nt','requires Windows native handles')
+    def test_deleted_name_can_be_reused_without_reviving_old_registration(self):
+        key=self.create()
+        plan=self.store.preview('delete_session')
+        self.assertEqual(self.store.confirm(plan['plan_id'])['state'],'completed')
+        with execution_scope(conversation='new',session='default:device:new'):
+            new=self.store.create('example','temporary')
+            self.assertNotEqual(new,key)
+            self.store.assert_writable(self.root/'example/new.txt')
+
+    def test_broader_workspace_does_not_bypass_owner_guard(self):
+        self.create()
+        with execution_scope(identity='websocket:bob',workspace=self.home):
+            with self.assertRaises(PermissionError):self.store.assert_access(self.root/'example/main.txt')
+
+    def test_service_data_cannot_be_adopted_as_temporary_program(self):
+        service=self.root/'service';service.mkdir()
+        with patch.dict(os.environ,{'AGENT_TENANT_ROOT':str(service)}):
+            with self.assertRaises(PermissionError):self.store.create('service','temporary',adopt=True)
+
+    @unittest.skipUnless(os.name=='nt','requires Windows native handles')
+    def test_retained_archive_can_be_attached_and_restored_after_old_session_deletion(self):
+        key=self.create()
+        archive=self.store.preview('archive',key)
+        self.assertEqual(self.store.confirm(archive['plan_id'])['state'],'completed')
+        self.store.retain(key)
+        deletion=self.store.preview('delete_session')
+        self.assertEqual(deletion['items'],[])
+        self.assertEqual(self.store.confirm(deletion['plan_id'])['state'],'completed')
+        with execution_scope(conversation='new',session='default:device:new'):
+            self.store.attach(key)
+            restore=self.store.preview('restore',key)
+            self.assertEqual(self.store.confirm(restore['plan_id'])['state'],'completed')
+            self.assertEqual((self.root/'example/main.txt').read_text(),'hello')
+            self.assertEqual(self.store.get(key)['purpose'],'retained')
+
+    @unittest.skipUnless(os.name=='nt','requires Windows native handles')
+    def test_session_erasure_scrubs_checkpoints_memory_and_search_cache(self):
+        from types import SimpleNamespace
+        from memory import MemoryStore
+        from agent_execution.code_index import CodeIndex
+        from agent_execution.tasks import task_owner
+        from agent_execution.policy import current_context
+        from agent_execution.workspace_lifecycle.erasure import finalize
+        self.create()
+        (self.root/'example/source.py').write_text('def private_source(): pass\n')
+        index=CodeIndex();index.refresh()
+        memory=MemoryStore(self.home/'session-memory.db')
+        episode=memory.start_episode();memory.add_event(episode,'message','user','private request')
+        owner=task_owner(current_context())
+        token=self.store.tasks.claim(owner,'done','private goal',[{'role':'user','content':'private'}],episode)
+        self.store.tasks.finish(owner,'done',token,'completed','private reply')
+        plan=self.store.preview('delete_session')
+        self.assertEqual(self.store.confirm(plan['plan_id'])['state'],'completed')
+        runtime=SimpleNamespace(memory=memory,messages=[{'role':'system','content':'system'},{'role':'user','content':'private'}])
+        self.assertEqual(finalize(self.store,plan['plan_id'],runtime)['state'],'deleted')
+        self.assertEqual(finalize(self.store,plan['plan_id'],runtime)['state'],'deleted')
+        self.assertEqual(len(runtime.messages),1)
+        self.assertEqual(memory.get_episode(episode)['status'],'deleted')
+        with closing(self.store.connect()) as conn:
+            row=conn.execute('SELECT goal,checkpoint,reply FROM tasks WHERE owner=?',(owner,)).fetchone()
+            self.assertEqual(tuple(row),('','{}',''))
+        with closing(index.connect()) as conn:self.assertEqual(conn.execute('SELECT COUNT(*) FROM ci_files').fetchone()[0],0)
+        with self.assertRaises(PermissionError):self.store.tasks.claim(owner,'late','late',[])
+        with self.assertRaises(PermissionError):self.store.tasks.checkpoint(owner,'done',token,'late',{'messages':['private late']})

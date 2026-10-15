@@ -5,6 +5,7 @@ from collections import deque
 import json
 import os
 import re
+import sqlite3
 import time
 import uuid
 import threading
@@ -18,7 +19,7 @@ from agent_execution.companion.protocol import (conversation_id, scope_device, d
 
 
 PROTOCOL_VERSION = 1
-RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error"}
+RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error", "workspace.result", "session.delete.preview", "session.delete.result"}
 DEFAULT_FEATURES = {"stt": False, "tts": False, "tts_voices": []}
 
 
@@ -427,7 +428,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "connection_id": session.state['desktop_connection_id'],
                 "server_time": now_ms(),
                 "resumed": resumable,
-                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'approval_auto_resume': True},
+                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'approval_auto_resume': True, **lifecycle_features(session)},
                 "last_seq": session.seq,
                 "history_floor": floor,
             },
@@ -481,12 +482,23 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
             ref=message_id,
         )
         return
-    if message_type == "ping":
+    if isinstance(message_type,str) and message_type.startswith(('workspace.','session.delete.')):
+        await handle_lifecycle_message(session,data)
+    elif message_type == "ping":
         await session.send("pong", {}, ref=message_id)
     elif message_type == "ack":
         session.ack(int(payload.get("seq") or 0))
     elif message_type == "chat.send":
         text = str(payload.get("text") or "")
+        from agent_execution.workspace_lifecycle import LifecycleStore
+        from agent_execution.policy import execution_scope
+        with execution_scope(source='websocket',identity='websocket:'+session.user_id,project=session.project,
+                session=session.project+':'+session.scoped_device,conversation=session.conversation_id):
+            try:LifecycleStore().ensure_session()
+            except PermissionError:
+                if not text.startswith(('/workspace resume ','/session-delete status ')):
+                    await session.send('error',{'code':'session_deleted','message':'Conversation is deleting or deleted','retryable':False},ref=message_id)
+                    return
         try:
             attachments = decode_attachments(payload.get("attachments"))
             if attachments and text.lstrip().startswith('/'):
@@ -608,6 +620,99 @@ async def handle_event(session: Session, event: dict[str, Any]) -> None:
         await hub.push_proactive("greeting", "歡迎回來！", "happy", user_id=session.user_id, project=session.project)
     elif name == "user.idle":
         session.state["idle_seconds"] = data.get("seconds")
+
+
+def lifecycle_scope(session):
+    from agent_execution.policy import execution_scope
+    from agent_execution.sessions import project_workspace
+    return execution_scope(source='websocket',identity='websocket:'+session.user_id,
+        project=session.project,session=session.project+':'+session.scoped_device,
+        conversation=session.conversation_id,workspace=project_workspace(session.project))
+
+
+def lifecycle_features(session):
+    from contextlib import closing
+    from agent_execution.workspace_lifecycle import LifecycleStore
+    from agent_execution.workspace_lifecycle.store import session_key
+    with lifecycle_scope(session):
+        store=LifecycleStore()
+        try:store.ensure_session()
+        except PermissionError:pass
+        with closing(store.connect()) as conn:
+            row=conn.execute('SELECT state FROM wl_sessions WHERE id=?',(session_key(),)).fetchone()
+            instance=conn.execute("SELECT value FROM wl_metadata WHERE key='instance'").fetchone()[0]
+            canonical=session_key()
+        state=row[0] if row else 'active'
+    session.state['lifecycle_state']=state
+    return {'workspace_lifecycle':{'version':1,'instance':instance,'session':canonical,'recovery':os.name=='nt','mutable':os.name=='nt' and os.environ.get('AGENT_WORKSPACE_CLEANUP','1').lower() in {'1','true'}},'conversation_state':state}
+
+
+def matching_conversations(session):
+    return [other for other in list(hub.sessions.values())
+        if other.user_id==session.user_id and other.project==session.project and
+        ((session.conversation_id and other.conversation_id==session.conversation_id) or
+         (not session.conversation_id and not other.conversation_id and other.device_id==session.device_id))]
+
+
+async def handle_lifecycle_message(session,data):
+    from contextlib import closing
+    from agent_execution.workspace_lifecycle import LifecycleStore
+    from agent_execution.workspace_lifecycle.erasure import finalize
+    from permissions import set_current_role,get_user_role
+    kind=data['type'];payload=data.get('payload') or {};reference=data.get('id')
+    allowed={'workspace.list','workspace.preview','workspace.request','workspace.confirm','workspace.retain',
+        'session.delete.preview','session.delete.confirm','session.delete.status','session.delete.resume'}
+    if kind not in allowed:
+        await session.send('error',{'code':'bad_lifecycle','message':'Unknown workspace operation','retryable':False},ref=reference)
+        return
+    peers=matching_conversations(session) or [session]
+    busy=[other.scoped_device for other in peers if
+        other.current_chat_task and not other.current_chat_task.done() or
+        other.audio_task and not other.audio_task.done()]
+    if busy and kind not in {'workspace.list','session.delete.status'}:
+        await session.send('error',{'code':'cleanup_busy','message':'Wait for active conversation work to finish or interrupt it first','retryable':True},ref=reference)
+        return
+    def run():
+        with lifecycle_scope(session),set_current_role(get_user_role('websocket:'+session.user_id)):
+            store=LifecycleStore()
+            if kind=='workspace.list':return store.inventory()
+            if kind=='workspace.retain':
+                store.retain(payload.get('directory_id'))
+                return {'state':'retained'}
+            if kind=='workspace.preview':return store.preview(payload.get('action'),payload.get('directory_id'))
+            if kind=='session.delete.preview':return store.preview('delete_session')
+            key=payload.get('plan_id')
+            plan=store.plan(key)
+            if kind.startswith('session.delete.') and plan['action']!='delete_session':raise ValueError('Not a session deletion plan')
+            if kind.startswith('workspace.') and plan['action']=='delete_session':raise ValueError('Use the session deletion confirmation')
+            if kind=='workspace.request':return store.request(key)
+            if kind in {'workspace.confirm','session.delete.confirm'}:result=store.confirm(key)
+            elif kind=='session.delete.resume':
+                from agent_execution.workspace_lifecycle.operations import resume
+                result=resume(store,key)
+            else:
+                with closing(store.connect()) as conn:
+                    row=conn.execute('SELECT state,error FROM wl_operations WHERE id=?',(key,)).fetchone()
+                result={'operation_id':key,**(dict(row) if row else {'state':'preview'})}
+            if plan['action']=='delete_session' and result['state']=='completed':
+                result=finalize(store,key,session.runtime,session.event_store)
+            return result
+    try:
+        result=await asyncio.to_thread(run)
+        if result.get('state')=='deleted':
+            for peer in peers:
+                peer.state['lifecycle_state']='deleted'
+                peer.outbox.clear();peer.attachments=()
+                if peer.audio_turn:peer.audio_turn.cancelled.set();peer.audio_turn=None
+                if peer.runtime is not None:peer.runtime.messages=[m for m in peer.runtime.messages if m.get('role')=='system']
+        response='session.delete.preview' if kind=='session.delete.preview' else 'session.delete.result' if kind.startswith('session.delete.') else 'workspace.result'
+        await session.send(response,result,ref=reference)
+        if result.get('state')=='deleted':
+            for peer in peers:
+                if peer is not session and peer.ws:
+                    await peer.send('session.delete.result',result)
+    except (ValueError,PermissionError,OSError,sqlite3.Error) as error:
+        await session.send('error',{'code':'cleanup_blocked','message':str(error),'retryable':False},ref=reference)
 
 
 def handle_audio_frame(session: Session, data: bytes) -> None:

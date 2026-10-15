@@ -21,9 +21,20 @@ def directory(root, relative):
         raise PermissionError('A workspace-relative child directory is required')
     if ':' in str(value) or '\x00' in str(value):
         raise PermissionError('Invalid directory name')
+    if value.is_reserved() or '.pythonai-workspace-trash' in [p.casefold() for p in value.parts]:
+        raise PermissionError('Reserved directory name')
     target = root / value
-    if target == root or not target.resolve().is_relative_to(root.resolve()):
+    if target.resolve() == root.resolve() or not target.resolve().is_relative_to(root.resolve()):
         raise PermissionError('Directory is outside the registered workspace')
+    data_root=Path(os.environ.get('LOCALAPPDATA') or Path.home()/'.local'/'share')
+    sensitive=[data_root/'PythonAI',data_root/'MyAI']
+    sensitive.extend(Path(os.environ[name]) for name in (
+        'AGENT_TASK_DB','AGENT_APPROVAL_DB','COMPANION_EVENT_DB','SCHEDULER_DB_PATH',
+        'COMMUNICATION_DB_PATH','AGENT_TENANT_ROOT','AGENT_CODE_INDEX_DIR','MYAI_DATA_DIR') if os.environ.get(name))
+    for resource in sensitive:
+        resource=resource.resolve()
+        if resource==target.resolve() or resource.is_relative_to(target.resolve()) or target.resolve().is_relative_to(resource):
+            raise PermissionError('Service data cannot be managed as temporary program content')
     from base import PROJECT_ROOT
     protected={'agent_execution','desktop_assistant','tools','tests','venv','communication','memory','papers','.git','artifacts','dist','build'}
     for application in (PROJECT_ROOT,PROJECT_ROOT.parent/'myai'):

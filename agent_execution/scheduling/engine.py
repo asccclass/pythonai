@@ -26,6 +26,8 @@ def execute_payload(job):
             if resolve_path('.')!=scope['workspace']:return 'needs_input','','Workspace configuration changed'
     payload=json.loads(job['job_payload']);kind=job['job_type']
     with set_current_role(role),execution_scope(**scope,task_id=job.get('occurrence')):
+        from ..workspace_lifecycle import LifecycleStore
+        LifecycleStore().ensure_session()
         if kind in {'agent','watch','skill'}:
             import server
             from ..coordinator import READ_TOOLS

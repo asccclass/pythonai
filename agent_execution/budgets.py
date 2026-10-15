@@ -86,6 +86,8 @@ class TaskBudget:
         return max(0,self.snapshot()['deadline']-time.time())
 
     def check(self):
+        from .tasks import assert_owner_active
+        with closing(self.connect()) as conn:assert_owner_active(conn,self.owner)
         row=self.snapshot()
         if row['deadline']<=time.time():
             raise BudgetExhausted('Task deadline exhausted')

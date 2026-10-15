@@ -1,5 +1,7 @@
 # PythonAI Agent
 
+Workspace 暫存程式依 session 登記，保留至使用者刪除對話，不按天數淘汰。MyAI 提供「刪除對話」預覽／保留程式／確認／恢復流程；舊目錄預設 unmanaged，不會自動刪除。操作、限制及 rollback 請見 [workspace lifecycle](agent_execution/workspace_lifecycle/README.md)。
+
 PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Agent，提供本機 CLI、Telegram long polling，以及整合 webhook、管理網頁、REST API、WebSocket 的 FastAPI 服務。核心包含工具呼叫、Skills、長期記憶、背景維護、排程、任務驗收及可擴充 Hooks。
 
 MyAI／WebSocket 任務若出現 `Role 'viewer' cannot execute ...`，代表連線身份沒有該工具權限。請核對實際服務使用的 `ROLES_CONFIG` 與 token 身份；無身份 token 對應 `websocket:user`，助手自動啟動的 token 對應 `websocket:desktop`。角色檔內容於新指令重新讀取，修改角色檔路徑或更新後端程式後需重新啟動服務。`viewer` 不允許 Skills；需要 Skills 的身份可配置 `operator`，管理工具依既有政策要求 `admin`。模型工具清單依角色及任務 allowlist 過濾，執行端仍檢查權限。

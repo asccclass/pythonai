@@ -56,9 +56,25 @@ def check_items(store,plan,conn):
     for owner in owners:
         if conn.execute("SELECT 1 FROM tasks WHERE owner=? AND (state NOT IN ('completed','failed','cancelled') OR COALESCE(lease_until,0)>?)",(owner,time.time())).fetchone():
             raise ValueError('Task still active; wait for confirmed termination')
+    from .erasure import external_blockers
+    if external_blockers(owners):raise ValueError('Disable schedules or wait for memory workers before cleanup')
+    from .erasure import schedules
+    if plan['action']=='delete_session' and schedules(owners)!=plan['payload'].get('schedules',[]):
+        raise ValueError('Schedules changed; preview again')
+    for kept in plan['payload']['kept']:
+        row=store.get(kept['id'],conn)
+        refs=sorted(r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],)))
+        if row['generation']!=kept.get('generation') or refs!=kept.get('references'):
+            raise ValueError('Preserved directory references changed; preview again')
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='agent_nodes'").fetchone():
+        from agent_execution.coordinator import SUCCESS,STOPPED
+        for owner in owners:
+            for node in conn.execute('SELECT state,expires FROM agent_nodes WHERE owner=?',(owner,)):
+                if node['state'] not in SUCCESS|STOPPED or (node['expires'] or 0)>time.time():
+                    raise ValueError('A delegated worker still needs termination or resolution')
     for item in plan['payload']['items']:
         row=store.get(item['id'],conn)
-        if row['generation']!=item['generation'] or row['state']!=item['state'] or row['purpose']!='temporary':
+        if row['generation']!=item['generation'] or row['state']!=item['state'] or (row['purpose']!='temporary' and plan['action']!='restore'):
             raise ValueError('Directory registration changed; preview again')
         refs=[r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],))]
         if refs!=[session_key()]:raise ValueError('Directory references changed; preview again')
@@ -104,6 +120,15 @@ def resume(store,key):
             if not conn.execute('SELECT 1 FROM wl_leases WHERE operation=? AND token=? AND expires>?',(key,lease,time.time())).fetchone():
                 raise PermissionError('Cleanup lease expired or was replaced')
     try:
+        if plan['action']=='delete_session':
+            from .erasure import disable_schedules,external_blockers,schedules
+            with closing(store.connect()) as conn:
+                owners=[r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(plan['session'],))]
+            if plan['state']!='completed':
+                current=schedules(owners)
+                if current:
+                    disable_schedules(owners,plan['payload'].get('schedules',[]))
+            if external_blockers(owners):raise ValueError('Waiting for workers to stop; files retained')
         for item in plan['payload']['items']:
             fenced()
             with closing(store.connect()) as conn,conn:
@@ -112,6 +137,8 @@ def resume(store,key):
                 action=plan['action']
                 final='active' if action=='restore' else 'archived' if action=='archive' else 'purged'
                 if row['state']==final and row['generation']>item['generation']:continue
+                if (row['purpose']!='temporary' and action!='restore') or row['generation']!=item['generation']:
+                    raise PermissionError('Directory registration changed after approval')
                 source=directory(Path(row['root_path']),row['relative'])
                 destination=(Path(row['archive']) if row['archive'] else trash(row,key))
                 moving=action=='restore' or row['state'] in {'active','archiving','quarantining'}
@@ -152,9 +179,14 @@ def resume(store,key):
                             fenced()
                             locked.purge()
                     elif row['state']!='purging':raise PermissionError('Purge destination unexpectedly missing')
-                conn.execute('UPDATE wl_directories SET state=?,generation=generation+1 WHERE id=?',(final,row['id']))
+                if final=='purged':
+                    conn.execute("UPDATE wl_directories SET original_relative=COALESCE(original_relative,relative),relative=?,state='purged',generation=generation+1 WHERE id=?",('@purged/'+row['id'],row['id']))
+                else:
+                    conn.execute('UPDATE wl_directories SET state=?,generation=generation+1 WHERE id=?',(final,row['id']))
         with closing(store.connect()) as conn,conn:
             if plan['action']=='delete_session':
+                for item in plan['payload']['kept']:
+                    conn.execute('UPDATE wl_directories SET generation=generation+1 WHERE id=?',(item['id'],))
                 conn.execute('DELETE FROM wl_refs WHERE session=?',(plan['session'],))
                 # Transport-specific erasure is an outbox consumer; only mark
                 # fully deleted after it acknowledges persistent data removal.

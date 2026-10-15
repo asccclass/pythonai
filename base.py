@@ -103,7 +103,10 @@ def looks_like_path_argument(value: str) -> bool:
 
 def read_file(path: str | Path) -> str:
     try:
-        with open(resolve_workspace_path(path), "r", encoding="utf-8") as f:
+        target=resolve_workspace_path(path)
+        from agent_execution.workspace_lifecycle import LifecycleStore
+        LifecycleStore().assert_access(target)
+        with open(target, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
         print(f"File not found: {path}")
@@ -113,7 +116,11 @@ def read_file(path: str | Path) -> str:
 
 
 def list_files(path: str | Path = ".") -> list[str]:
-    return [item.name for item in resolve_workspace_path(path).iterdir()]
+    target=resolve_workspace_path(path)
+    from agent_execution.workspace_lifecycle import LifecycleStore
+    LifecycleStore().assert_access(target)
+    blocked=LifecycleStore().inaccessible_paths()
+    return [item.name for item in target.iterdir() if not any(item.resolve()==p or item.resolve().is_relative_to(p) for p in blocked)]
 
 
 def write_file(path: str | Path, content: str) -> None:
