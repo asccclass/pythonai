@@ -59,6 +59,8 @@ class AgentRuntime:
     task_evaluator: Any | None = None
     hook_manager: HookManager | None = None
     event_callback: Callable[[str, dict], None] | None = None
+    profile_extractor: Any | None = None
+    profile_status: str = ""
 
 
 def invoke_runtime_agent(runtime, messages, episode_id, resume=False):
@@ -75,6 +77,10 @@ def invoke_runtime_agent(runtime, messages, episode_id, resume=False):
         values = {key: value for key, value in values.items() if key in signature.parameters}
     from agent_execution.tasks import durable_invoke
     def invoke(saved):
+        from agent_execution.user_profile import refresh_messages
+        refresh_messages(messages, getattr(runtime, 'profile_status', ''))
+        if saved is not None:
+            saved['messages'] = messages
         supported = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()) or 'resume_state' in signature.parameters
         if saved and not supported:
             raise TypeError('Agent runner does not support checkpoint recovery')
@@ -114,6 +120,11 @@ def should_skip_laya_for_user_request(user_input: str) -> bool:
 def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any] | tuple[Any, ...] | None = None) -> AgentTurnResult:
     from agent_execution.workspace_lifecycle import LifecycleStore
     LifecycleStore().ensure_session()
+    from agent_execution.user_profile import prepare_turn, refresh_messages
+    profile_reply, runtime.profile_status = prepare_turn(user_input, getattr(runtime, 'profile_extractor', None))
+    refresh_messages(runtime.messages, runtime.profile_status)
+    if profile_reply is not None:
+        return AgentTurnResult(profile_reply, None)
     turn_budget = foreground_memory_budget()
     episode_id = safe_memory_call(runtime.memory.start_episode) if runtime.memory is not None else None
     log_episode_event(runtime.memory, episode_id, "message", role="user", content=user_input)
@@ -539,6 +550,22 @@ def log_retrieval_stats(
 
 @budgeted_turn
 def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, episode_id: int | None = None) -> AgentTurnResult:
+    # Only an answer to ask_user is human input. Never extract ordinary tool results.
+    runtime.profile_status = ''
+    answer_index = -1
+    if messages and messages[-1].get('role') == 'user' and isinstance(messages[-1].get('content'), list):
+        parts = messages[-1]['content']
+        if parts and parts[0] == {'type': 'text', 'text': 'Attached files for this answer'} and len(messages) > 1:
+            answer_index = -2
+    if messages and messages[answer_index].get('role') == 'tool':
+        answer = messages[answer_index]
+        call_id = answer.get('tool_call_id')
+        human_answer = any(call.get('id') == call_id and call.get('function', {}).get('name') == 'ask_user'
+                           for message in messages if message.get('role') == 'assistant'
+                           for call in message.get('tool_calls', []))
+        if human_answer and isinstance(answer.get('content'), str) and not answer['content'].startswith('/profile'):
+            from agent_execution.user_profile import prepare_turn
+            _, runtime.profile_status = prepare_turn(answer['content'], getattr(runtime, 'profile_extractor', None))
     from agent_execution.policy import current_context
     from agent_execution.tasks import TaskStore, task_owner
     context = current_context()

@@ -124,13 +124,7 @@ def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Pat
     if agents_instructions:
         parts.append(f"AGENTS.md instructions:\n{agents_instructions}")
 
-    from base import workspace_root
-    profile_path = workspace_root() / "profile.md"
-    if not profile_path.exists():
-        parts.append("IMPORTANT: The file `profile.md` does not exist in the workspace yet. Please proactively ask the user a few conversational questions to learn about their background, role, and preferences. ONCE you have collected the information, you MUST use the `write_file` tool to save this information to `profile.md` (the tool path is automatically relative to the workspace).")
-    else:
-        profile_content = profile_path.read_text(encoding="utf-8").strip()
-        parts.append(f"User Profile (`profile.md`):\n{profile_content}")
+    # Identity-specific profile is refreshed at execution time, never in a shared template.
     return "\n\n".join(parts)
 
 message = [
@@ -675,6 +669,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         client=get_client(),
         model=OLLAMA_MODEL,
     )
+    from agent_execution.user_profile.extractor import ProfileExtractor
     runtime = AgentRuntime(
         messages=messages,
         guard=guard,
@@ -690,6 +685,7 @@ def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
         async_memory_review=async_memory_review,
         task_evaluator=task_evaluator,
         hook_manager=hook_manager,
+        profile_extractor=ProfileExtractor(get_client, OLLAMA_MODEL),
     )
     print("Mini agent ready. Type 'exit' to quit.")
     import uuid

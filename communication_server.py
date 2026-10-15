@@ -156,6 +156,7 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
     else:
         memory_worker = server.QueueOnlyMemoryWorker()
         print("Memory background worker already active in another process; this process will only enqueue review jobs.")
+    from agent_execution.user_profile.extractor import ProfileExtractor
     return AgentRuntime(
         messages=messages,
         guard=guard,
@@ -169,6 +170,7 @@ def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
         run_agent=server.run_agent,
         run_skill=server.run_skill,
         async_memory_review=async_memory_review,
+        profile_extractor=ProfileExtractor(server.get_client, server.OLLAMA_MODEL),
         hook_manager=hook_manager,
         task_evaluator=server.TaskEvaluator(workspace_root=workspace_root(),
             client=server.get_client(),model=server.OLLAMA_MODEL),

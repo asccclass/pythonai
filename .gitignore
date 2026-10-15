@@ -9,6 +9,8 @@ models/
 models
 memory.db
 memory.db-*
+profile.db
+profile.db-*
 memory/*.db
 memory/*.db-*
 background_worker.lock

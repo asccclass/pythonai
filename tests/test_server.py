@@ -18,6 +18,15 @@ from communication_models import InboundAttachment
 
 class ServerTests(unittest.TestCase):
     def setUp(self):
+        # Profile extraction has its own provider contract tests; CLI tests remain offline.
+        profile = patch('agent_execution.user_profile.extractor.ProfileExtractor.extract', return_value=[])
+        profile.start()
+        self.addCleanup(profile.stop)
+        profile_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(profile_temp.cleanup)
+        profile_env = patch.dict('os.environ', {'AGENT_TENANT_ROOT': profile_temp.name})
+        profile_env.start()
+        self.addCleanup(profile_env.stop)
         # CLI tests exercise memory behavior without contacting the configured provider.
         from vector_search import OpenAICompatibleEmbeddingProvider
         offline=patch.object(OpenAICompatibleEmbeddingProvider,'embed',
