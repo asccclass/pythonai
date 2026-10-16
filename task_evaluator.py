@@ -178,7 +178,8 @@ class TaskEvaluator:
                 issues.append(f"目標檔案不存在: {file_path}")
                 continue
             if path.stat().st_size == 0:
-                issues.append(f"目標檔案為空: {file_path}")
+                if path.name not in {'requirements.txt', '__init__.py', '.gitkeep'}:
+                    issues.append(f"目標檔案為空: {file_path}")
                 continue
             if path.suffix == ".py":
                 try:
@@ -373,8 +374,11 @@ Please output your decision strictly in JSON format with keys:
         if active:
             # Executor checkpoints are trusted facts; model prose is never evidence.
             steps=active[0].steps(active[1],active[2])
+            from agent_execution.turn_control.recovery import recovered_directory_failure, recovered_edit_failure
             for step in steps:
                 if step['state']!='completed':
+                    if recovered_directory_failure(step, steps, self.workspace_root) or recovered_edit_failure(step, steps, self.workspace_root):
+                        continue
                     issues.append(f"Tool step not successful: {step['id']}")
                     try:
                         result = json.loads(step.get('result') or '{}')

@@ -6,6 +6,7 @@
     "browser_vision",
     "check_subagent",
     "code_symbols",
+    "create_directory",
     "env_manager",
     "find_references",
     "get_weather_test",

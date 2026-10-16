@@ -33,7 +33,8 @@ def normalize_result(value, tool_name=''):
         stdout=str(value.stdout or '')
         stderr=str(value.stderr or '')
         return ToolResult(value.returncode==0,stdout,value.returncode,stderr if value.returncode else '',
-            evidence={'kind':'process','returncode':value.returncode})
+            side_effects=getattr(value,'side_effects',{'status':'unknown'}),
+            evidence={'kind':'process','returncode':value.returncode,**getattr(value,'evidence',{})})
     if isinstance(value,dict):
         if not isinstance(value.get('side_effects',{}),dict) or not isinstance(value.get('evidence',{}),dict):
             return ToolResult(False,error='Invalid structured tool evidence or side effects')

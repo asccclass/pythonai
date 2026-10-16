@@ -8,8 +8,10 @@ def streamed_completion(client, model, messages, tools, emit, cancelled=None):
     from openai import OpenAI
     if isinstance(client, OpenAI):
         client = client.with_options(max_retries=0)
-    stream = client.chat.completions.create(model=model, messages=messages, tools=tools,
-                                             stream=True, timeout=min(command_timeout(), 60))
+    request = dict(model=model, messages=messages, stream=True, timeout=min(command_timeout(), 60))
+    if tools:
+        request['tools'] = tools
+    stream = client.chat.completions.create(**request)
     stop = threading.Event()
     def monitor():
         while not stop.wait(.05):

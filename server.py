@@ -106,6 +106,7 @@ SYSTEM_PROMPT = """You are an autonomous AI assistant integrated into a local en
 3. **Observe & Reflect**: After tools return results, observe them. If a tool fails or returns an error, REFLECT on why it failed and TRY an alternative approach. Do NOT blindly repeat the same failed tool call.
 4. **Iterate**: Continue thinking, executing, and observing until the goal is fully achieved.
 5. **Final Output**: Once the task is complete, summarize the final results clearly to the user.
+6. **Progress**: Reuse successful reads. If a tool fails, correct the cause or change tools instead of repeating it. Batch directory creation with create_directory(paths=[...]); write_file creates parent directories. For a knowledge-base/documentation structure, create the requested directories and documents directly rather than introducing unrelated executable scaffolds. A GitHub repository fetch provides its README; fetch specific source files only when needed to support the requested explanation.
 """
 AGENTS_INSTRUCTIONS_PATH = Path("AGENTS.md")
 
@@ -169,7 +170,7 @@ def run_agent(
     episode_id: int | None = None,
     max_retries: int = 3,
     sleep: Callable[[float], None] = time.sleep,
-    max_iterations: int = 15,
+    max_iterations: int | None = None,
     check_cancelled: Callable[[], bool] | None = None,
     task_evaluator: TaskEvaluator | None = None,
     max_eval_retries: int = 2,
@@ -187,6 +188,9 @@ def run_agent(
         task_evaluator.workspace_root=workspace_root()
     if hook_manager is None:hook_manager=default_hook_manager()
     resume_state = resume_state or {}
+    from agent_execution.turn_control import TurnProgress, iteration_limit
+    max_iterations = iteration_limit(max_iterations, resume_state.get('iteration_limit'))
+    progress = TurnProgress(resume_state.get('progress'))
     evaluation_start = resume_state.get('evaluation_start')
     if evaluation_start is None:
         evaluation_start = next((index for index in range(len(messages)-1, -1, -1)
@@ -201,7 +205,7 @@ def run_agent(
     if pre_state is None and task_evaluator is not None:
         pre_state = task_evaluator.capture_state()
     def checkpoint(phase, **metadata):
-        save_checkpoint(phase,messages,iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,**metadata)
+        save_checkpoint(phase,messages,iteration=iteration,iteration_limit=max_iterations,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,progress=progress.state,**metadata)
     def pending_assistant():
         for index in range(len(messages)-1,-1,-1):
             message = messages[index]
@@ -222,6 +226,11 @@ def run_agent(
             assistant_message = ChatCompletionMessage(**next(m for m in reversed(messages) if m.get('role')=='assistant'))
         if assistant_message is None:
             iteration += 1
+            concluding = iteration >= max_iterations or progress.state['blocked'] >= 2
+            if concluding:
+                messages.append({'role':'user','content':'Execution budget / repeated-operation limit reached. Conclude now using existing evidence. Do not call tools. Explain completed work, unverified work, actual errors and next steps; never claim unfinished work is complete.'})
+            elif iteration == max_iterations - 2:
+                messages.append({'role':'user','content':'Only two execution rounds and a final answer remain. Batch independent work, run required checks, and prepare an evidence-based final response.'})
             from agent_execution.policy import current_context
             allowed=current_context().allowed_tools
             from permissions import check_tool_permission
@@ -243,6 +252,8 @@ def run_agent(
                 if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
                     if hook_result.decision==HookDecision.BLOCK:return 'Error: '+hook_result.message
                     return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+            if concluding:
+                request['tools'] = []
             checkpoint('model_pending')
             attempts = 0
             while True:
@@ -255,7 +266,10 @@ def run_agent(
                             assistant_message = streamed_completion(budget_client(get_client()), request['model'], messages,
                                                                     request['tools'], event_callback, check_cancelled)
                         else:
-                            response = budget_client(get_client()).chat.completions.create(model=request['model'], messages=messages, tools=request['tools'])
+                            request_args = {'model': request['model'], 'messages': messages}
+                            if request['tools']:
+                                request_args['tools'] = request['tools']
+                            response = budget_client(get_client()).chat.completions.create(**request_args)
                             assistant_message = response.choices[0].message
                     break
                 except BudgetExhausted as error:
@@ -315,6 +329,8 @@ def run_agent(
 
             checkpoint('model_received')
         if assistant_message.tool_calls:
+            if iteration >= max_iterations or progress.state['blocked'] >= 2:
+                return 'Error: Agent could not conclude within its execution budget. Repeated tool operations or remaining work require a new strategy. No additional tools were executed; inspect prior tool errors and saved progress before continuing.'
             suspend_request = None
             for tool_call in assistant_message.tool_calls:
                 if tool_call.id in resolved_calls:
@@ -349,8 +365,14 @@ def run_agent(
                     tool_args = hook_context.tool_arguments
                     if hook_result.decision in {HookDecision.BLOCK, HookDecision.RETURN_TOOL_ERROR}:
                         result = hook_result.tool_error or hook_result.message or f"Error: {tool_name} blocked by hook"
+                        repeated = progress.before(tool_name, tool_args)
+                        if repeated:
+                            result = str(result) + '\n' + repeated
                         tool_results[tool_call.id]=normalize_result('Error: '+str(result),tool_name).to_dict()
+                        feedback = progress.observe(tool_name, tool_args, normalize_result('Error: '+str(result), tool_name))
                         messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
+                        if feedback:
+                            messages[-1]['content'] += '\n' + feedback
                         resolved_calls.add(tool_call.id)
                         checkpoint('tool_done',step={'id':tool_call.id,'name':tool_name,'arguments':tool_args,
                             'state':'failed','result':json.dumps(tool_results[tool_call.id],ensure_ascii=False)})
@@ -397,13 +419,28 @@ def run_agent(
                 step = {'id':tool_call.id,'name':tool_name,'arguments':tool_args,
                         'dependencies':sorted(resolved_calls),'state':'running'}
                 checkpoint('tool_started',step=step)
+                source_id = tool_call.id
                 with execution_scope(check_cancelled=check_cancelled,tool_hook_managed=tool_name):
-                    result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                    result = progress.before(tool_name, tool_args)
+                    if result is None:
+                        result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                    else:
+                        from agent_execution.results import ToolResult
+                        previous_id = progress.state['calls'].get(progress.key(tool_name, tool_args), {}).get('source_id')
+                        previous = tool_results.get(previous_id, {})
+                        if tool_name in {'fetch_url', 'read_file', 'list_files'} and previous.get('success') is True:
+                            source_id = previous_id
+                            result = ToolResult(True, 'Reused earlier read; no new network/filesystem read was performed.\n' + str(previous.get('output', '')),
+                                                evidence={'kind':'reuse_prior_read','source_tool_call':source_id})
+                        else:
+                            result = ToolResult(False, error=str(result), side_effects={'status':'none'}, evidence={'kind':'repeat_prevented'})
                 raw_result=normalize_result(result,tool_name)
+                progress_feedback = progress.observe(tool_name, tool_args, raw_result)
+                progress.state['calls'][progress.key(tool_name, tool_args)]['source_id'] = source_id
                 result=raw_result
                 tool_results[tool_call.id]=raw_result.to_dict()
                 save_checkpoint('tool_done',messages+[{'role':'tool','tool_call_id':tool_call.id,'content':str(result)}],
-                    iteration=iteration,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,
+                    iteration=iteration,iteration_limit=max_iterations,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,progress=progress.state,
                     step={**step,'state':'completed' if raw_result.success else 'failed','result':json.dumps(raw_result.to_dict(),ensure_ascii=False)})
                 if hook_manager is not None:
                     hook_context = HookContext(
@@ -449,6 +486,8 @@ def run_agent(
                 )
                 record_tool_procedure_result(memory, episode_id, matched_procedure, result)
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result)})
+                if progress_feedback:
+                    messages[-1]['content'] += '\n' + progress_feedback
                 resolved_calls.add(tool_call.id)
                 checkpoint('tool_done',step={**step,'state':'completed' if structured.success else 'failed','result':json.dumps(structured.to_dict(),ensure_ascii=False)})
 
@@ -508,7 +547,7 @@ def run_agent(
                 event_callback("task.evaluation", {"success": eval_res.success, "score": eval_res.score, "feedback": eval_res.feedback,'verified':getattr(eval_res,'verified',False)})
 
             if not eval_res.success:
-                if eval_retries < max_eval_retries and getattr(eval_res,'retryable',True):
+                if eval_retries < max_eval_retries and getattr(eval_res,'retryable',True) and iteration < max_iterations and progress.state['blocked'] < 2:
                     eval_retries += 1
                     critic_feedback = (
                         f"【任務驗收未通過 (Critic Feedback - 第 {eval_retries}/{max_eval_retries} 次修正)】\n"
@@ -536,7 +575,7 @@ def run_agent(
                             "feedback": eval_res.feedback,
                         },
                     )
-                    reason = (f"已達最大修正次數 {max_eval_retries}" if eval_retries >= max_eval_retries
+                    reason = ("已用完執行輪數或重複操作額度" if iteration >= max_iterations or progress.state['blocked'] >= 2 else f"已達最大修正次數 {max_eval_retries}" if eval_retries >= max_eval_retries
                               else "此失敗無法自動修正，已停止重試")
                     return (
                         f"⛔ 任務驗收未通過 ({reason})，已轉交人工審核 (HITL)。\n"
@@ -546,7 +585,11 @@ def run_agent(
 
         return assistant_message.content or ""
         
-    return f"Error: Maximum agent iterations ({max_iterations}) reached without concluding the task. The task may be too complex, or tools repeatedly failed. Please reflect on what went wrong or ask the user for clarification."
+    from agent_execution.operations.redaction import redact
+    failed = [value for value in tool_results.values() if not value.get('success')]
+    last_error = redact(str(failed[-1].get('error') or failed[-1].get('output') or ''))[:400] if failed else 'No failing tool result was recorded; inspect remaining work and response hooks.'
+    return (f"Error: Agent execution limit ({max_iterations}) reached. Successful tool steps: {len(tool_results)-len(failed)}; failed: {len(failed)}. "
+            f"Last tool error: {last_error}. Progress is saved; correct this cause or split the remaining work before resuming.")
 
 
 def find_matching_procedure_for_tool_call(

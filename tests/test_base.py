@@ -118,7 +118,7 @@ class BaseTests(unittest.TestCase):
 
         self.assertIs(result, completed)
         run.assert_called_once_with(
-            ["curl", "--silent", "--show-error", "--location", "--max-time", "3", "https://example.test"],
+            ["curl", "--fail", "--silent", "--show-error", "--location", "--max-time", "3", "https://example.test"],
             **subprocess_text_options(),
         )
 

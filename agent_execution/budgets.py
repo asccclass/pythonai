@@ -298,6 +298,9 @@ class BudgetEndpoint:
     from .operations.tracing import traced
     @traced('model','model.request')
     def create(self,**kwargs):
+        # vLLM and some OpenAI-compatible providers reject tools=[]; omit the field.
+        if self.kind == 'chat' and kwargs.get('tools') == []:
+            kwargs.pop('tools')
         from .policy import current_context
         from .context import govern_messages, route_model, model_capabilities, message_tokens
         budget=active_budget()

@@ -97,6 +97,9 @@ def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None, im
     blocks=normalize_blocks(messages)
     schema_tokens=count_tokens(tools or [])
     protected={index for index,block in enumerate(blocks) if any(m.get('role') in {'system','developer'} for m in block) or has_approval(block)}
+    latest_tools = next((index for index in range(len(blocks)-1, -1, -1) if any(m.get('role') == 'tool' for m in blocks[index])), None)
+    if latest_tools is not None:
+        protected.add(latest_tools)
     last_user=next((index for index in range(len(blocks)-1,-1,-1) if any(m.get('role')=='user' for m in blocks[index])),None)
     if last_user is not None:
         protected.add(last_user)
@@ -116,6 +119,11 @@ def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None, im
         chosen.discard(index)
         if message_tokens(flatten(chosen),image_tokens)+schema_tokens<=max_tokens:
             return flatten(chosen)
+    from .turn_control.context import fit_latest_evidence
+    fitted = fit_latest_evidence(flatten(chosen), max_tokens-schema_tokens,
+                                 lambda values: message_tokens(values, image_tokens))
+    if fitted is not None:
+        return fitted
     raise ContextTooLarge('Protected instructions, goal, approvals or latest input exceed model context budget')
 
 
