@@ -265,10 +265,12 @@ def run_command(
             resolve_workspace_or_trusted_path(env_file, trusted_asset_roots) if env_file is not None else None
         )
         validate_command_paths(command, trusted_asset_roots)
-        if command and platform.system() == 'Windows' and command[0].lower() in {'mkdir', 'md', 'dir', 'type'}:
-            result = subprocess.CompletedProcess(command, 1, '', 'Shell builtin is not an executable. Use create_directory(paths=[...]) for directories, list_files for listing, read_file for reading. Do not retry this command with another path.')
+        from agent_execution.turn_control.environment import command_environment_error
+        environment_error = command_environment_error(command)
+        if environment_error:
+            result = subprocess.CompletedProcess(command, 1, '', environment_error)
             result.side_effects = {'status':'none'}
-            result.evidence = {'kind':'unsupported_shell_builtin'}
+            result.evidence = {'kind':'unsupported_shell_builtin' if command[0].lower() in {'mkdir','md','dir','type'} else 'environment_mismatch'}
             return result
         resolved_command = resolve_command_executable(command, resolved_cwd, trusted_asset_roots)
     except PermissionError as error:

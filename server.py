@@ -124,6 +124,8 @@ def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Pat
     parts = [base_prompt.strip()] if base_prompt.strip() else []
     if agents_instructions:
         parts.append(f"AGENTS.md instructions:\n{agents_instructions}")
+    from agent_execution.turn_control.environment import environment_context
+    parts.append(environment_context())
 
     # Identity-specific profile is refreshed at execution time, never in a shared template.
     return "\n\n".join(parts)
@@ -188,6 +190,10 @@ def run_agent(
         task_evaluator.workspace_root=workspace_root()
     if hook_manager is None:hook_manager=default_hook_manager()
     resume_state = resume_state or {}
+    from agent_execution.turn_control.environment import refresh_environment
+    inserted = refresh_environment(messages)
+    if inserted and resume_state.get('evaluation_start') is not None:
+        resume_state = {**resume_state, 'evaluation_start': resume_state['evaluation_start'] + 1}
     from agent_execution.turn_control import TurnProgress, iteration_limit
     max_iterations = iteration_limit(max_iterations, resume_state.get('iteration_limit'))
     progress = TurnProgress(resume_state.get('progress'))
@@ -680,6 +686,8 @@ def read_user_input(prompt: str = "\nYou: ") -> str:
 
 
 def main(async_memory_review: bool = True, drain_memory_on_exit: bool = False):
+    from agent_execution.turn_control.environment import host_environment
+    host_environment()
     from agent_execution.coordinator import resume_coordinator
     coordinator_service=resume_coordinator()
     hook_manager=default_hook_manager(diagnose=True)

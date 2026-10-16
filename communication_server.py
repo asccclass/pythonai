@@ -124,6 +124,8 @@ class TelegramWebhookService(MultiWebhookService):
         return super().handle_webhook(*args, **kwargs)
 
 def create_agent_runtime(async_memory_review: bool = True) -> AgentRuntime:
+    from agent_execution.turn_control.environment import host_environment
+    host_environment()
     from agent_execution.coordinator import resume_coordinator
     resume_coordinator()
     import server

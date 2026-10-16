@@ -47,6 +47,7 @@ class TaskEvaluatorTests(unittest.TestCase):
             {'role': 'tool', 'tool_call_id': 'old', 'content': 'done'},
             {'role': 'user', 'content': '列出我的待辦事項'},
         ]
+        current_goal = messages[-1]
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(
             message=ChatCompletionMessage(role='assistant', content='待辦：整理報告'))])
@@ -55,7 +56,7 @@ class TaskEvaluatorTests(unittest.TestCase):
             reply = server.run_agent(messages, task_evaluator=evaluator)
         self.assertEqual(reply, '待辦：整理報告')
         self.assertEqual(evaluate.call_args.kwargs['user_goal'], '列出我的待辦事項')
-        self.assertEqual(evaluate.call_args.kwargs['messages'][0], messages[3])
+        self.assertEqual(evaluate.call_args.kwargs['messages'][0], current_goal)
 
     def test_model_tools_respect_role_and_scoped_allowlist(self):
         from permissions import set_current_role
@@ -110,7 +111,12 @@ class TaskEvaluatorTests(unittest.TestCase):
         self.assertEqual(evaluator.evaluate.call_args.kwargs['messages'][0]['content'], '列出待辦')
         self.assertEqual(evaluator.evaluate.call_args.kwargs['user_goal'], '列出待辦')
         self.assertTrue(save.call_args_list)
-        self.assertTrue(all(call.kwargs['evaluation_start'] == 3 for call in save.call_args_list))
+        # Runtime adds a system environment message to legacy checkpoints lacking one.
+        current_goal_index = next(index for index, message in enumerate(messages)
+                                  if message.get('content') == '列出待辦')
+        self.assertEqual(current_goal_index, 4)
+        self.assertTrue(all(call.kwargs['evaluation_start'] == current_goal_index
+                            for call in save.call_args_list))
 
     def test_viewer_denial_through_real_hooks_stops_at_first_evaluation(self):
         from permissions import set_current_role

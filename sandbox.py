@@ -23,6 +23,7 @@ def is_docker_available() -> bool:
 
 class SandboxExecution:
     """Docker-only sandbox; never silently execute on the host."""
+    IMAGE = 'python:3.12-slim'
 
     EXCLUDED = {".git", "venv", ".venv", "__pycache__", "sandbox", "temp", "models",
                 ".agents", ".pytest_cache", "node_modules", "memory", "communication",
@@ -116,7 +117,7 @@ class SandboxExecution:
                 "--mount", f"type=bind,source={self.snapshot_dir},target=/workspace,readonly",
                 "--tmpfs", "/artifacts:rw,noexec,nosuid,size=32m,mode=1777",
                 "--env", "PYTHONDONTWRITEBYTECODE=1",
-                "python:3.12-slim", "sleep", "infinity",
+                self.IMAGE, "sleep", "infinity",
             ]
             # Host/provider credentials are never forwarded into the container.
             kwargs.pop("env", None)
