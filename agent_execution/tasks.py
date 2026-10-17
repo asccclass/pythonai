@@ -105,6 +105,8 @@ class TaskStore:
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             assert_owner_active(conn,owner)
+            from .temporal_backend.router import assert_claim_backend
+            assert_claim_backend(conn, owner, key)
             row = conn.execute('SELECT * FROM tasks WHERE owner=? AND id=?', (owner,key)).fetchone()
             if row is None:
                 from .delivery import positive_limit, CapacityError
@@ -178,6 +180,8 @@ class TaskStore:
             raise ValueError('Human answer exceeds 1 MiB')
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            from .temporal_backend.router import assert_claim_backend
+            assert_claim_backend(conn, owner, key)
             row = conn.execute("SELECT checkpoint FROM tasks WHERE owner=? AND id=? AND state='suspended'", (owner,key)).fetchone()
             if not row:
                 raise RecoveryRequired('No suspended task in this scope')
@@ -191,6 +195,8 @@ class TaskStore:
             raise ValueError('Human resolution exceeds 1 MiB')
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            from .temporal_backend.router import assert_claim_backend
+            assert_claim_backend(conn, owner, key)
             row = conn.execute("SELECT checkpoint FROM tasks WHERE owner=? AND id=? AND state='uncertain' AND phase='tool_started'", (owner,key)).fetchone()
             step = conn.execute("SELECT 1 FROM task_steps WHERE owner=? AND task_id=? AND id=? AND state='running'", (owner,key,call_id)).fetchone()
             if row is None or step is None:
@@ -239,6 +245,10 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
     from .policy import current_context, execution_scope
     import threading
     context = current_context()
+    from .temporal_backend.router import route
+    routed = route(messages, resume=resume, skill=skill)
+    if routed is not None:
+        return routed
     if context.task_id is None:
         result=function(None)
         return verify_skill(result) if skill and verify_skill else result

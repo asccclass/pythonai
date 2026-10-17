@@ -2,7 +2,23 @@
 
 規劃日期：2026-10-17（Asia/Taipei）。文件名稱依需求保留為 `temportal.md`，產品與程式命名使用 Temporal。
 
-狀態：**規劃文件，尚未安裝 SDK、啟動 Temporal、修改執行流程或遷移資料**。以下新模組、設定、資料表、命令及服務介面均為預定交付項目，不能視為目前已實作。現有程式盤點以本次工作目錄為準；部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，實作前須重新確認 Git 狀態與基準 commit。
+狀態：**已開始實作 M0 Windows 同機唯讀橋接；TP09–TP30 仍為後續規劃**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，不屬本次交付。
+
+### 目前導入進度（2026-10-17）
+
+| 項目 | 狀態／證據 |
+| --- | --- |
+| TP01 | 完成基準：802 passed、8 skipped、95 subtests；基準 commit、dirty work 保護與備份清單見 `temporal_backend/BASELINE.md` |
+| TP02 | Windows 部分完成：SDK 1.34.0／CLI 1.9.1／development Server 1.32.0，checksum、pip check、持久化重啟驗證通過；Linux／macOS／ARM 尚待實機驗證 |
+| TP03 | M0 ADR 完成：Python SDK、同機 loopback、reference-only History、coarse Activity max-attempts=1，原預算／權限保留 |
+| TP04–TP06 | 已實作 optional package、設定／schema v1、共用入口路由、固定 backend binding、task/submission 同庫投遞 outbox、去重及未知回覆 reconcile |
+| TP07 | 已實作顯式 Worker、受限 ThreadPool、context 重建、client loop shutdown、設定診斷與同機 queue；正式 HTTP readiness／TLS／多機尚未開放 |
+| TP08 | Windows 唯讀橋接已接通並完成真實 Service + Worker + 受控模型工具回合、重送、History replay、重啟取回結果；真實 provider 測試逾時，獨立小請求同樣逾時，保留為外部驗證未通過 |
+| TP09–TP30 | 待辦；尚未導入 step-based 工具級恢復、人工等待／審批、排程、多 Agent、正式部署及多機 |
+
+M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator、未完成任務 manual resume 會拒絕；已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，完整 artifact reference pipeline 尚待 TP09/10。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
+
+本次程式驗收：完整 pytest **831 passed、8 skipped、95 subtests passed**，558.82 秒；在後續非本次的 Whisper commit `3276657` 後補做最新 HEAD 相容性回歸 **80 passed、4 subtests passed**；最終 Temporal 模組 **30 passed**（含全套後追加的純測試 rollback case，Temporal 產品程式碼未再修改），pip check／compileall／diff check 通過。真實 provider 逾時的限制保留，不以受控模型的測試結果代替真實 LLM 成功證據。
 
 ## 1. 建議決策與導入目標
 
@@ -180,7 +196,7 @@ Workflow Task 的程式錯誤／非決定性可能使流程停住而未成為最
 | `operation_ledger` | `(owner,task_id,logical_step_id)` unique；arguments_digest、state、fence、result_ref、evidence_ref、updated | 去重、執行 fence 與 uncertain recovery |
 | `temporal_projections` | task_ref、workflow/run_id、projection_version、phase、last_reconciled | 原 UI/API 狀態相容與修復 |
 
-submission outbox 與任務 binding 必須同一 SQLite transaction 寫入。跨 `ApprovalStore` 資料庫的決定通知應將 outbox 放在 approval DB 的同一 transaction，或先做可恢復的橋接紀錄，不能假設不同 SQLite 檔案天然有原子交易。既有多個 delivery store 也遵循相同原則。
+M0 實作採兩段受理：先持久化不可變 backend reservation，再於同一 SQLite transaction 建立 task 與 submission outbox。binding-only 表示未受理，不能派工或由 legacy 取得；後續重送可補齊。任一 task/submission 寫入失敗必須一起回滾，不能留下已受理但沒有 outbox 的任務。這是將原本「binding 與 outbox 同一交易」細化為 reservation 與原子受理兩步的 ADR 調整，理由與測試見 backend README。跨 `ApprovalStore` 資料庫的決定通知應將 outbox 放在 approval DB 的同一 transaction，或先做可恢復的橋接紀錄，不能假設不同 SQLite 檔案天然有原子交易。既有多個 delivery store 也遵循相同原則。
 
 ### 5.4 Payload／History 與保密
 
@@ -409,7 +425,7 @@ Temporal History、visibility、archival、備份與 artifact 各有 retention�
 
 ## 12. 依賴順序、待辦事項與里程碑
 
-以下全部是待執行事項；每項程式變更附測試及獨立可回退 commit。工期以一名熟悉專案的工程師估算，測試／驗收已計入，外部部署等待與新需求另計；不是承諾交付日。
+以下為完整工作分解，已交付進度以上方「目前導入進度」為準；每項程式變更附測試及獨立可回退 commit。工期以一名熟悉專案的工程師估算，測試／驗收已計入，外部部署等待與新需求另計；不是承諾交付日。
 
 | ID | 工作／具體交付 | 前置 | 驗收條件 |
 | --- | --- | --- | --- |

@@ -12,7 +12,7 @@
 
 開始時已存在 api、tracing、policy、scheduling、workspace lifecycle、communication models/store/worker、web 與相關測試的未提交改動；另有未追蹤的 communication/workspace HTTP 測試與模組，以及 `workspace/communication.db` 刪除狀態。這些不屬此次提交範圍。未清空、還原或暫存它們，也未將其視為本次已交付功能。
 
-本次新 backend 集中在 `agent_execution/temporal_backend/`，必要共用接點只修改 `agent_execution/tasks.py`、`pytest.ini` 與導入規劃的進度紀錄；提交前逐一核對 paths。
+本次新 backend 集中在 `agent_execution/temporal_backend/`，必要共用接點只修改 `agent_execution/tasks.py`、`pytest.ini`、`.env.example` 與導入規劃的進度紀錄；提交前逐一核對 paths。
 
 ## 備份與遷移前置
 

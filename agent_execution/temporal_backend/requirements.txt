@@ -1,0 +1,4 @@
+# Optional backend; compatible with the baseline protobuf 7.x / Python 3.12.
+temporalio==1.34.0
+nexus-rpc==1.4.0
+types-protobuf==7.35.1.20260906
