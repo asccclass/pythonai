@@ -146,6 +146,8 @@ class Store:
             changed = conn.execute("UPDATE temporal_submissions SET state='uncertain',last_error=?,updated=? WHERE id=? AND state IN ('pending','dispatched','running')",
                                    (error_type, time.time(), key)).rowcount
             if changed:
+                from .ledger import fence_operations
+                fence_operations(conn, owner, row['task_id'])
                 conn.execute("UPDATE tasks SET state='uncertain',reply='Temporal execution ended; inspect checkpoint before recovery',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')",
                              (time.time(), owner, row['task_id']))
 
@@ -192,9 +194,11 @@ class Store:
                 raise PermissionError('Activity result fenced by cancellation or newer execution')
 
     def cancel(self, key, owner):
-        self.get(key, owner)
+        row = self.get(key, owner)
         with closing(self.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            from .ledger import fence_operations
+            fence_operations(conn, owner, row['task_id'])
             conn.execute("UPDATE temporal_submissions SET state='cancelled',updated=? WHERE id=? AND state IN ('pending','dispatched','running')", (time.time(), key))
             conn.execute("UPDATE tasks SET state='cancelled',reply='Task cancelled',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=(SELECT task_id FROM temporal_submissions WHERE id=?) AND state NOT IN ('completed','failed','cancelled')",
                          (time.time(), owner, key))

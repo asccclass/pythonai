@@ -4,6 +4,15 @@ import os
 import re
 
 
+def operation_limits():
+    from agent_execution.delivery import positive_limit
+    return {name: positive_limit(name, default) for name, default in {
+        'AGENT_TEMPORAL_ARTIFACT_MAX_BYTES': 2*1024*1024,
+        'AGENT_TEMPORAL_LEDGER_STORAGE_BYTES': 256*1024*1024,
+        'AGENT_TEMPORAL_OPERATION_LIMIT': 100000,
+    }.items()}
+
+
 def selected_backend():
     value = os.environ.get('AGENT_EXECUTION_BACKEND', 'sqlite').strip().lower()
     if value not in {'sqlite', 'temporal'}:
@@ -30,4 +39,5 @@ class Settings:
         concurrency = int(os.environ.get('AGENT_TEMPORAL_ACTIVITY_CONCURRENCY', '2'))
         if not 1 <= concurrency <= 8:
             raise ValueError('Temporal Activity concurrency must be 1..8')
+        operation_limits()
         return cls(address, namespace, concurrency)

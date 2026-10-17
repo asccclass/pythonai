@@ -14,7 +14,9 @@
 這些函式只能在一般 runner／Activity 執行，不可在 deterministic Workflow 裡執行。
 `tests/test_steps.py` 驗證失敗、取消、權限、context 還原、預算持久化與 SQLite 實際讀檔；
 Temporal real-service 測試另驗證同一組步驟經 Worker 進入、實際讀檔與驗收。
-這次抽離尚未提供 TP10 ledger 或 TP11 逐步 Workflow，因此 M0 的崩潰／重試限制維持不變。
+後續 TP10 已在 Temporal Activity scope 接上 ledger 與 JSON artifact 引用，
+每個共用步驟接受穩定 `operation_id`；legacy scope 不啟用 ledger，不改變 raw tool error 行為。
+TP11 逐步 Workflow 尚未交付，因此整個 M0 Activity 的崩潰／重試限制維持不變。
 
 ## 執行環境感知（2026-10-16）
 

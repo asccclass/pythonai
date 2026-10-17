@@ -267,7 +267,8 @@ def run_agent(
                 try:
                     assistant_message = model_step(
                         get_client(), request, messages, iteration=iteration, attempt=attempts+1,
-                        event_callback=event_callback, check_cancelled=check_cancelled)
+                        event_callback=event_callback, check_cancelled=check_cancelled,
+                        operation_id=f'model:{iteration}:attempt:{attempts+1}')
                     break
                 except BudgetExhausted as error:
                     if event_callback:
@@ -392,7 +393,8 @@ def run_agent(
                     event_callback("tool.start", {"tool_call_id": tool_call.id, "name": tool_name, "arguments": tool_args})
                 if tool_name == 'ask_user':
                     question = tool_step(tool_call, invoke=run_tool_with_context,
-                        memory=memory, episode_id=episode_id, check_cancelled=check_cancelled)
+                        memory=memory, episode_id=episode_id, check_cancelled=check_cancelled,
+                        operation_id=f'model:{iteration}:tool:{tool_call.id}')
                     context=HookContext(HookLifecycle.POST_TOOL_EXECUTE,messages=messages,tool_call=tool_call,
                         tool_name=tool_name,tool_arguments=tool_args,tool_result=question,memory=memory,episode_id=episode_id,
                         metadata={'iteration':iteration})
@@ -421,7 +423,8 @@ def run_agent(
                     result = progress.before(tool_name, tool_args)
                     if result is None:
                         result = tool_step(tool_call, invoke=run_tool_with_context,
-                            memory=memory, episode_id=episode_id, check_cancelled=check_cancelled)
+                            memory=memory, episode_id=episode_id, check_cancelled=check_cancelled,
+                            operation_id=f'model:{iteration}:tool:{tool_call.id}')
                     else:
                         from agent_execution.results import ToolResult
                         previous_id = progress.state['calls'].get(progress.key(tool_name, tool_args), {}).get('source_id')
@@ -518,6 +521,7 @@ def run_agent(
                     messages=messages, evaluation_start=evaluation_start,
                     final_reply=assistant_message.content or "",
                     pre_state=pre_state,
+                    operation_id=f'evaluation:{iteration}:{eval_retries}',
                 )
 
             from dataclasses import asdict

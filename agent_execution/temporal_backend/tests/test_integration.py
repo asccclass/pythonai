@@ -215,4 +215,17 @@ def test_common_entrypoint_real_worker_policy_and_model_tool_roundtrip(server, c
         names = {s['function']['name'] for s in schemas}
         assert 'read_file' in names and 'run_command' not in names and 'write_file' not in names
         assert TaskStore().get(task_owner(current_context()), 'integration-task')['state'] == 'completed'
+        from agent_execution.temporal_backend.ledger import Ledger
+        row = store.for_task(task_owner(current_context()), 'integration-task')
+        ledger = Ledger(store, row['id'], row['fence'])
+        tool_record = ledger.get('model:1:tool:read-one')
+        assert tool_record['state'] == 'completed'
+        result = ledger.load(json.loads(tool_record['result_ref']))
+        assert result['success'] and 'read-through-temporal' in result['output']
+        from contextlib import closing
+        with closing(store.tasks.connect()) as conn:
+            kinds = [r[0] for r in conn.execute('SELECT kind FROM operation_ledger')]
+        assert sorted(kinds) == ['evaluation', 'model', 'model', 'tool']
+        history = await client.get_workflow_handle(row['workflow_id']).fetch_history()
+        assert 'read-through-temporal' not in history.to_json()
     asyncio.run(exercise())

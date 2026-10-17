@@ -53,6 +53,9 @@ def run_submission(key, settings, *, runner=None, cancelled=None):
             from agent_execution.workspace_lifecycle import LifecycleStore
             LifecycleStore().ensure_session()
             stack.enter_context(budget_scope())
+            from .ledger import Ledger
+            from .operations import operation_scope
+            stack.enter_context(operation_scope(Ledger(store, key, row['fence'])))
             def execute(saved):
                 from agent_execution.user_profile import refresh_messages
                 refresh_messages(messages)

@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from .config import Settings, selected_backend
+from .config import Settings, selected_backend, operation_limits
 
 
 def inspect():
@@ -24,6 +24,7 @@ def inspect():
     return {'backend': selected_backend(), 'sdk_version': sdk,
             'address': settings.address, 'namespace': settings.namespace,
             'mode': 'read_only_bridge', 'connected': False,
+            'operation_limits': operation_limits(),
             'backup_inventory': {name: {'path': str(path.resolve()), 'exists': path.exists()}
                                  for name, path in paths.items()},
             'note': 'Inventory only. Back up SQLite consistently (including WAL via backup API); no backup was created.'}

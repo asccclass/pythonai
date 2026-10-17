@@ -1,6 +1,6 @@
-# Temporal 可選後端：M0 唯讀橋接
+# Temporal 可選後端：唯讀橋接與操作紀錄
 
-依 `papers/temportal.md` 的 Python SDK 路線實作。**目前僅為 M0 相容橋接，不是 TP09–TP30 的正式工具級恢復／排程／多 Agent 遷移。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
+依 `papers/temportal.md` 的 Python SDK 路線實作。**目前執行方式仍為 M0 相容橋接；TP09 共用步驟與 TP10 操作紀錄已接上，逐工具自動恢復仍待 TP11。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
 
 ## 已實作邊界
 
@@ -75,7 +75,50 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
 
-## ADR：第一階段決策
+## TP10：操作紀錄與本機結果引用
+
+`ledger.py` 使用同一 TaskStore SQLite 的 additive `temporal_operation_schema` v1、
+`operation_ledger` 與 `temporal_artifacts`。未啟用 Temporal 的 runner 不建立這些表。
+`operations.py` 以 Activity-local ContextVar 接入共用 steps；離開 Activity 後還原，
+不將 SDK、ledger 或身分 context 放入 Workflow History。
+
+已完成的待辦與驗收範圍：
+
+- [x] `(owner, task_id, step_id)` 去重，digest 包含操作種類、canonical arguments 及已綁定的輸入／context／角色快照。
+- [x] `prepared → running(fence) → completed`；已開始但結果未知為 `uncertain`，確認執行前拒絕為 `rejected_no_effect`。running／uncertain／rejected 不重新取得執行權。
+- [x] 模型以 iteration + provider attempt、工具以 iteration + tool-call ID、驗收以 iteration + eval retry 產生穩定 ID。provider 重試仍由原 runner 控制，每次真正請求沿用原預算。
+- [x] 結果與 evidence 以 JSON artifact 保存；引用只含 `schema_version/id/sha256/bytes`。兩份 artifact 與 completed 狀態同一交易提交，缺失或校驗失敗會報錯，不能藉此重新執行工具。
+- [x] 取消／Workflow 終止時，prepared 標為未執行拒絕，running 標為 uncertain；提交同時核對 operation fence、submission fence、task 狀態、owner lifecycle 及 workspace mapping。
+- [x] 沿用現有 TaskStore／lifecycle 的任務 worktree 登記；拒絕任意 workspace override，保留 opt-in worktree 路徑。
+- [x] 快取重用仍檢查目前角色與工具 allowlist；角色降權後，不使用舊的模型工具能力清單發送請求。
+- [x] 故障注入包含實際子程序在副作用後／提交後直接退出、並行搶占、DB trigger 回滾、參數變更、artifact 修改／缺失、取消／刪除及跨 owner/task 拒絕。
+
+儲存 ADR：TP10 的小型 JSON 結果先使用 SQLite BLOB，讓結果、evidence 與 operation
+完成狀態可原子提交，避免檔案 rename 與 DB commit 間留下分離狀態。引用不含絕對路徑。
+這細化了規劃原先的本機檔案 artifact store；大型附件／圖片、多機共享、retention 與
+完整刪除整合仍由 TP18／TP29 等階段完成。資料仍屬同機可信儲存，應納入原 DB 備份與存取控制。
+
+可選容量設定（不改變 root model budget）：
+
+| 設定 | 預設 | 範圍 |
+| --- | --- | --- |
+| `AGENT_TEMPORAL_ARTIFACT_MAX_BYTES` | 2097152 | 每份 JSON result／evidence 的 UTF-8 bytes |
+| `AGENT_TEMPORAL_LEDGER_STORAGE_BYTES` | 268435456 | 全部 ledger／artifact 內容及保留的欄位 metadata 空間 |
+| `AGENT_TEMPORAL_OPERATION_LIMIT` | 100000 | 全資料庫 operation 筆數 |
+
+啟動設定與 preflight 會驗證三個設定必須為正整數；preflight 顯示這些限額但不建立資料庫。
+
+完成過的操作可由同一任務 scope 的 `Ledger.run` 取回原結果，不再次呼叫 executor 或扣模型請求。
+未知結果無自動 reset／retry API。現有 M0 仍是單一 Activity，max-attempts=1，
+未開放 manual resume；本次接線會留下逐步執行紀錄，但整個 Agent 的自動崩潰恢復須待 TP11。
+整個 Activity、hooks、事件／記憶 finalize 的重送去重也未因此完成，分別見後續任務。
+
+本輪回歸另定位並修正 budget stream 關閉競態：取消監看執行緒可能仍在讀取 SQLite，
+原 `close()` 只通知停止就返回，Windows 清理可出現 WinError32。現在在 lock 外等待監看
+執行緒結束，監看執行緒自行關閉時不 join 自己，close 發生例外也會收尾；三項回歸驗證
+進行中的資料庫檢查、監看自我取消與 stream close 例外。
+
+## 共用步驟與 M0 決策
 
 TP09 共用步驟位於 `../turn_control/steps.py`，透過 `server.run_agent` 同時供
 legacy runner 與本機 Temporal 唯讀 Activity 使用。模型單次 I/O、工具 dispatcher
@@ -85,12 +128,21 @@ SQLite 真實讀檔回合及真實 Temporal Service/Worker 的同類回合均驗
 
 1. 使用 Python SDK，不改採 Go 調度器；重用既有政策、預算與 checkpoint。
 2. `execution_bindings` 是後端權威，Temporal History 是流程協調權威；TaskStore 仍為當前唯讀 bridge 的執行證據與本機租約。
-3. M0 只有一個粗粒度 Activity，故明確 max-attempts=1；TP09/10 完成共享 step 與 operation ledger 後才能做工具級恢復。
+3. M0 只有一個粗粒度 Activity，故明確 max-attempts=1；TP09/10 已完成共享 step 與 operation ledger，工具級自動恢復仍須 TP11 逐步 Workflow 接管。
 4. 可信設定／輸入存同機服務帳號的資料庫，wire payload 不能指定任意身分或路徑。遠端連線在正式 TLS、儲存與認證方案完成前拒絕。
 5. 既有 task、root budget、審批與 legacy schemas 保留。只作 additive schema v1；未知 schema 拒絕啟動，不向下覆寫。
 6. M0 先持久化不可變 backend reservation，再於同一 transaction 建立 task + submission；只有 binding 而沒有 task/submission 表示尚未受理，不可派工或回退 legacy。若建立 submission 失敗，task 也回滾，重送補齊 reservation。這是對原 TP06「全部同一交易」的具體調整，以保留錯誤／中斷時的後端排他性。
 
-## TP09 驗收紀錄（2026-10-17）
+## TP10 驗收紀錄（2026-10-17）
+
+- 完整 pytest：**902 passed、8 skipped、95 subtests passed**，764.80 秒；真實 CLI Service/Worker 測試已啟用。紀錄 `temp/temporal-tp10-full.log`（不入 Git）。既有 Starlette/AnyIO deprecation warning 一項，沒有新增執行緒例外 warning。
+- 故障／預算／共用步驟專項回歸 **81 passed**，32.45 秒，`temp/temporal-tp10-fault-pass.log`。包括程序在副作用後直接退出不重做、提交後退出取回原結果、實際 Git worktree，以及三種 stream monitor 關閉情境；最終完整套件另覆蓋最後的 workspace guard。
+- 真實 Service/Worker 模組回歸曾通過 **72 passed**，42.43 秒；後續補上的 terminal-task cache／worktree 測試也由完整套件覆蓋。實際 Worker 中留下 model、tool、model、evaluation 四筆 completed 操作，工具結果可用 artifact reference 校驗取回，History 不含讀檔內容。
+- 真實 provider 小型探測成功，使用一筆獨立請求。隨後以隔離 SQLite／tenant／workspace 及 loopback Service 完成 **真實 LLM → read_file → 最終回覆 → 驗收**，使用 **3 筆模型請求**；submission／task 均 completed，四筆操作均 completed。重取工具結果未再執行 executor，請求計數保持 3，History 不含檔案內容。紀錄 `temp/temporal-tp10-provider-check/probe.log`、`live.log` 與同目錄隔離 `live-*` 資料；服務與 Worker 已結束。
+- 先前 M0 的 provider APITimeout 沒有因此取得服務端根因；本輪證明當次小型唯讀回合成功，不代表原始長任務、寫入能力或持續可用性已驗收。
+- `pip check`、compileall、diff check 通過。budget stream 競態修正已獨立提交 `bf7bcfd`。未修改使用者 `.env`，未啟用正式後端或搬遷正式資料；TP11 逐步 Workflow、TP18 完整刪除／retention 與 TP29 多機仍待實作。
+
+## TP09 驗收紀錄（2026-10-17，前次交付）
 
 - 完整 pytest：**853 passed、8 skipped、95 subtests passed**，590.27 秒；已設定本機驗證過的 Temporal CLI，真實 Service/Worker 整合測試有執行。紀錄 `temp/temporal-tp09-full.log`（不入 Git）。既有 Starlette/AnyIO deprecation warning 一項。
 - 新增共用步驟測試 **9 passed**：單次請求不自行重試、取消不送請求、串流 callback、工具權限、失敗後 context 還原、預算跨載入仍計帳、驗收當輪證據／擷取失敗及 legacy 實際讀檔。

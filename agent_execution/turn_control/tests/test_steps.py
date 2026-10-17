@@ -92,6 +92,13 @@ def test_shared_tool_step_does_not_bypass_policy(tmp_path):
     assert 'private evidence' not in str(result)
 
 
+def test_legacy_invalid_tool_arguments_remain_a_reported_tool_error():
+    from base import run_tool_with_context
+    call = NS(function=NS(name='read_file', arguments='{invalid json'))
+    result = tool_step(call, invoke=run_tool_with_context)
+    assert str(result).startswith('Error:')
+
+
 def test_evaluation_uses_current_turn_and_captured_post_state():
     evaluator = Mock()
     evaluator.capture_state.return_value = {'files': ['actual']}
