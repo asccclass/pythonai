@@ -281,14 +281,20 @@ class BudgetStream:
             self.close()
 
     def close(self):
-        with self.lock:
-            if self.closed:return
-            self.closed=True
-            self.stopped.set()
-            try:
-                self.stream.close()
-            finally:
-                self.slot.__exit__(None,None,None)
+        try:
+            with self.lock:
+                if not self.closed:
+                    self.closed=True
+                    self.stopped.set()
+                    try:
+                        self.stream.close()
+                    finally:
+                        self.slot.__exit__(None,None,None)
+        finally:
+            # The monitor can still be checking cancellation against SQLite.
+            # Wait outside the lock: it may itself be entering close().
+            if threading.current_thread() is not self.thread:
+                self.thread.join()
 
 
 class BudgetEndpoint:

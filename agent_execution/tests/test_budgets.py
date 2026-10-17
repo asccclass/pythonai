@@ -103,6 +103,52 @@ class BudgetTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):list(stream)
             self.assertEqual(budget.snapshot()['tokens'],1000)
 
+    def test_stream_close_waits_for_inflight_cancellation_database_read(self):
+        import threading
+        from agent_execution.budgets import BudgetStream
+        entered,release,finished=threading.Event(),threading.Event(),threading.Event()
+        budget=TaskBudget(self.owner,'monitor-close')
+        def cancelled():
+            with closing(budget.connect()) as conn:
+                conn.execute('SELECT 1').fetchone()
+                entered.set()
+                release.wait(5)
+            return False
+        slot=NS(__exit__=Mock())
+        stream=BudgetStream(Mock(),budget,'unused',slot,cancelled)
+        closer=threading.Thread(target=lambda:(stream.close(),finished.set()))
+        try:
+            self.assertTrue(entered.wait(2))
+            closer.start()
+            self.assertTrue(stream.stopped.wait(2))
+            self.assertFalse(finished.wait(.1))
+        finally:
+            release.set()
+            if closer.ident is not None:closer.join(5)
+            stream.close()
+        self.assertTrue(finished.is_set())
+        self.assertFalse(stream.thread.is_alive())
+        slot.__exit__.assert_called_once()
+
+    def test_stream_monitor_can_close_itself_without_self_join(self):
+        from agent_execution.budgets import BudgetStream
+        stream=BudgetStream(Mock(),TaskBudget(self.owner,'self-close'),'unused',NS(__exit__=Mock()),lambda:True)
+        stream.thread.join(2)
+        self.assertFalse(stream.thread.is_alive())
+        self.assertTrue(stream.closed)
+        stream.close()
+
+    def test_stream_close_error_still_stops_monitor_and_releases_slot(self):
+        from agent_execution.budgets import BudgetStream
+        raw=Mock()
+        raw.close.side_effect=RuntimeError('injected close failure')
+        slot=NS(__exit__=Mock())
+        stream=BudgetStream(raw,TaskBudget(self.owner,'close-error'),'unused',slot,lambda:False)
+        with self.assertRaisesRegex(RuntimeError,'injected close failure'):
+            stream.close()
+        self.assertFalse(stream.thread.is_alive())
+        slot.__exit__.assert_called_once()
+
     def test_cost_rates_are_persisted_missing_rates_rejected_and_usage_reconciled(self):
         with patch.dict(os.environ,{'AGENT_TASK_MAX_COST_USD':'0.001','AGENT_MODEL_RATES':'{"m":{"input":1,"output":10}}'}):
             budget=TaskBudget(self.owner,'cost')
