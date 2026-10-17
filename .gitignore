@@ -1,4 +1,7 @@
 *.exe
+*.dll
+tools/whisper/bin/
+tools/whisper/*.bin
 *.swp
 __pycache__/
 *.py[cod]

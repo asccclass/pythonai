@@ -1,0 +1,37 @@
+{
+  "type": "function",
+  "function": {
+    "name": "whisper_stt",
+    "description": "使用本地 whisper-cli.exe（whisper.cpp）對音訊檔案進行語音辨識（Speech-to-Text）。支援 wav、mp3、flac、ogg 等常見格式，可選擇語言與輸出格式。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "audio_file": {
+          "type": "string",
+          "description": "要辨識的音訊檔案路徑（相對 workspace 或絕對路徑），例如 'recordings/meeting.wav' 或 'C:/audio/clip.mp3'。"
+        },
+        "language": {
+          "type": "string",
+          "description": "辨識語言代碼，例如 'zh'（中文）、'en'（英文）、'ja'（日文）。預設 'auto' 為自動偵測。",
+          "default": "auto"
+        },
+        "output_format": {
+          "type": "string",
+          "enum": ["txt", "vtt", "srt", "lrc", "csv", "json"],
+          "description": "輸出格式。txt=純文字、srt/vtt=字幕含時間戳、json=完整細節含詞語級時間戳。預設 'txt'。",
+          "default": "txt"
+        },
+        "threads": {
+          "type": "integer",
+          "description": "CPU 執行緒數，預設 4。長檔案可提高此值加速處理。",
+          "default": 4
+        },
+        "model": {
+          "type": "string",
+          "description": "自訂模型路徑（.bin 檔）。留空則使用預設的 ggml-base.bin 模型。"
+        }
+      },
+      "required": ["audio_file"]
+    }
+  }
+}
