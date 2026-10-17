@@ -179,6 +179,7 @@ def test_unknown_start_reply_stays_pending_and_deduplicates(configured):
 
 
 def test_common_entrypoint_real_worker_policy_and_model_tool_roundtrip(server, configured):
+    from agent_execution.turn_control import steps
     from openai.types.chat import ChatCompletionMessage
     from agent_execution.temporal_backend.activities import execute_readonly
     from agent_execution.tasks import durable_invoke, TaskStore
@@ -198,10 +199,15 @@ def test_common_entrypoint_real_worker_policy_and_model_tool_roundtrip(server, c
     async def exercise():
         client = await server.client()
         store = Store()
-        with ThreadPoolExecutor(max_workers=1) as executor, patch('server.get_client', return_value=raw):
+        with (ThreadPoolExecutor(max_workers=1) as executor,
+              patch('server.get_client', return_value=raw),
+              patch.object(steps, 'model_step', wraps=steps.model_step) as model,
+              patch.object(steps, 'tool_step', wraps=steps.tool_step) as tool,
+              patch.object(steps, 'evaluation_step', wraps=steps.evaluation_step) as evaluation):
             async with Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],
                               activities=[execute_readonly], activity_executor=executor):
                 result = await asyncio.wait_for(asyncio.to_thread(durable_invoke, fallback, messages, None), 40)
+        assert model.call_count == 2 and tool.call_count == 1 and evaluation.call_count == 1
         assert result == 'read-through-temporal'
         fallback.assert_not_called()
         assert any(m.get('role') == 'tool' and 'read-through-temporal' in m.get('content', '') for m in messages)

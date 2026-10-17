@@ -182,6 +182,7 @@ def run_agent(
 ):
     from agent_execution.tasks import save_checkpoint
     from agent_execution.results import normalize_result
+    from agent_execution.turn_control.steps import model_step, tool_step, evaluation_step
     from openai.types.chat import ChatCompletionMessage
     if isinstance(task_evaluator,TaskEvaluator):
         from copy import copy
@@ -264,19 +265,9 @@ def run_agent(
             attempts = 0
             while True:
                 try:
-                    from agent_execution.operations.tracing import span
-                    with span('attempt','model.attempt',{'retry':attempts>0,'attempt':attempts+1,'iteration':iteration}):
-                        if event_callback is not None:
-                            from agent_execution.streaming import streamed_completion
-                            event_callback("model.start", {"iteration": iteration, "model": request['model']})
-                            assistant_message = streamed_completion(budget_client(get_client()), request['model'], messages,
-                                                                    request['tools'], event_callback, check_cancelled)
-                        else:
-                            request_args = {'model': request['model'], 'messages': messages}
-                            if request['tools']:
-                                request_args['tools'] = request['tools']
-                            response = budget_client(get_client()).chat.completions.create(**request_args)
-                            assistant_message = response.choices[0].message
+                    assistant_message = model_step(
+                        get_client(), request, messages, iteration=iteration, attempt=attempts+1,
+                        event_callback=event_callback, check_cancelled=check_cancelled)
                     break
                 except BudgetExhausted as error:
                     if event_callback:
@@ -400,8 +391,8 @@ def run_agent(
                 if event_callback:
                     event_callback("tool.start", {"tool_call_id": tool_call.id, "name": tool_name, "arguments": tool_args})
                 if tool_name == 'ask_user':
-                    with execution_scope(tool_hook_managed=tool_name):
-                        question = run_tool_with_context(tool_call,memory=memory,episode_id=episode_id)
+                    question = tool_step(tool_call, invoke=run_tool_with_context,
+                        memory=memory, episode_id=episode_id, check_cancelled=check_cancelled)
                     context=HookContext(HookLifecycle.POST_TOOL_EXECUTE,messages=messages,tool_call=tool_call,
                         tool_name=tool_name,tool_arguments=tool_args,tool_result=question,memory=memory,episode_id=episode_id,
                         metadata={'iteration':iteration})
@@ -429,7 +420,8 @@ def run_agent(
                 with execution_scope(check_cancelled=check_cancelled,tool_hook_managed=tool_name):
                     result = progress.before(tool_name, tool_args)
                     if result is None:
-                        result = run_tool_with_context(tool_call, memory=memory, episode_id=episode_id)
+                        result = tool_step(tool_call, invoke=run_tool_with_context,
+                            memory=memory, episode_id=episode_id, check_cancelled=check_cancelled)
                     else:
                         from agent_execution.results import ToolResult
                         previous_id = progress.state['calls'].get(progress.key(tool_name, tool_args), {}).get('source_id')
@@ -521,13 +513,11 @@ def run_agent(
                 eval_res = EvaluationResult(**resume_state['evaluation'])
             else:
                 checkpoint('evaluation_pending')
-                post_state = task_evaluator.capture_state()
-                eval_res = task_evaluator.evaluate(
+                eval_res = evaluation_step(task_evaluator,
                     user_goal=user_goal,
-                    messages=messages[evaluation_start:],
+                    messages=messages, evaluation_start=evaluation_start,
                     final_reply=assistant_message.content or "",
                     pre_state=pre_state,
-                    post_state=post_state,
                 )
 
             from dataclasses import asdict

@@ -2,9 +2,11 @@
 
 規劃日期：2026-10-17（Asia/Taipei）。文件名稱依需求保留為 `temportal.md`，產品與程式命名使用 Temporal。
 
-狀態：**已開始實作 M0 Windows 同機唯讀橋接；TP09–TP30 仍為後續規劃**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，不屬本次交付。
+狀態：**M0 Windows 同機唯讀橋接已交付，TP09 共用執行步驟已實作；TP10–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，不屬本次交付。
 
 ### 目前導入進度（2026-10-17）
+
+本輪 TP09 驗收：完整 pytest **853 passed、8 skipped、95 subtests passed**，590.27 秒，包含已啟用的真實 Temporal Service/Worker 測試；共用步驟新增測試 **9 passed**。pip check／compileall／diff check 通過。真實 provider 本輪未重驗，模型回合使用受控回應；這次完成共用步驟抽離，逐工具恢復仍待 TP10–TP11。詳細紀錄見 backend README 與本機 `temp/temporal-tp09-full.log`。
 
 | 項目 | 狀態／證據 |
 | --- | --- |
@@ -14,11 +16,12 @@
 | TP04–TP06 | 已實作 optional package、設定／schema v1、共用入口路由、固定 backend binding、task/submission 同庫投遞 outbox、去重及未知回覆 reconcile |
 | TP07 | 已實作顯式 Worker、受限 ThreadPool、context 重建、client loop shutdown、設定診斷與同機 queue；正式 HTTP readiness／TLS／多機尚未開放 |
 | TP08 | Windows 唯讀橋接已接通並完成真實 Service + Worker + 受控模型工具回合、重送、History replay、重啟取回結果；真實 provider 測試逾時，獨立小請求同樣逾時，保留為外部驗證未通過 |
-| TP09–TP30 | 待辦；尚未導入 step-based 工具級恢復、人工等待／審批、排程、多 Agent、正式部署及多機 |
+| TP09 | 已抽出共用 model/tool/evaluation steps；SQLite runner 與 Temporal 唯讀 Activity 使用同一實作，保留外層 hooks／checkpoint／重試與預算；驗收紀錄見 backend README |
+| TP10–TP30 | 待辦；尚未導入 step-based 工具級恢復、人工等待／審批、排程、多 Agent、正式部署及多機 |
 
-M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator、未完成任務 manual resume 會拒絕；已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，完整 artifact reference pipeline 尚待 TP09/10。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
+M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator、未完成任務 manual resume 會拒絕；已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，完整 artifact reference pipeline 尚待 TP10。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
-本次程式驗收：完整 pytest **831 passed、8 skipped、95 subtests passed**，558.82 秒；在後續非本次的 Whisper commit `3276657` 後補做最新 HEAD 相容性回歸 **80 passed、4 subtests passed**；最終 Temporal 模組 **30 passed**（含全套後追加的純測試 rollback case，Temporal 產品程式碼未再修改），pip check／compileall／diff check 通過。真實 provider 逾時的限制保留，不以受控模型的測試結果代替真實 LLM 成功證據。
+M0 程式驗收（前次交付）：完整 pytest **831 passed、8 skipped、95 subtests passed**，558.82 秒；在後續非本次的 Whisper commit `3276657` 後補做最新 HEAD 相容性回歸 **80 passed、4 subtests passed**；最終 Temporal 模組 **30 passed**（含全套後追加的純測試 rollback case，Temporal 產品程式碼未再修改），pip check／compileall／diff check 通過。真實 provider 逾時的限制保留，不以受控模型的測試結果代替真實 LLM 成功證據。
 
 ## 1. 建議決策與導入目標
 
@@ -437,7 +440,7 @@ Temporal History、visibility、archival、備份與 artifact 各有 retention�
 | TP06 | submission outbox、StartWorkflow 去重與 reconcile | TP05 | 受理前後任意崩潰，只產生一個邏輯任務 |
 | TP07 | 同機 Worker、受控 loop/thread/context、shutdown、readiness | TP04 | 可信 context 不串用；連不上服務不回退執行 |
 | TP08 | 唯讀相容橋接 POC、checkpoint 與狀態投影 | TP06–07 | 正常完成／重送／重啟可診斷；明確維持 max-attempts=1 限制 |
-| TP09 | 抽出共用 model/tool/evaluation step，legacy runner 保持行為 | TP08 | 原 suite 通過；sqlite/Temporal 同一案例結果相容 |
+| TP09 | 已實作：抽出共用 model/tool/evaluation step，legacy runner 保持行為 | TP08 | 原 suite 通過；sqlite/Temporal 同一案例結果相容 |
 | TP10 | operation ledger、digest、fence、artifact references | TP09 | completed 不重跑；未知結果保守停住；參數變更拒絕 |
 | TP11 | Step-based `AgentTaskWorkflowV1`、工具分類與錯誤映射 | TP09–10 | History 無模型／檔案 I/O；副作用 max-attempts=1 |
 | TP12 | root budget、provider retry ownership、迭代/驗收限制傳承 | TP11 | Activity retry/Continue-As-New 不增加額度；舊預算仍有效 |

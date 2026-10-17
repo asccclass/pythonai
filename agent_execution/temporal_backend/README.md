@@ -77,6 +77,12 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 ## ADR：第一階段決策
 
+TP09 共用步驟位於 `../turn_control/steps.py`，透過 `server.run_agent` 同時供
+legacy runner 與本機 Temporal 唯讀 Activity 使用。模型單次 I/O、工具 dispatcher
+及驗收的 post-state／當輪證據切分已共用；外層 hooks、checkpoint、重試與預算政策保留。
+SQLite 真實讀檔回合及真實 Temporal Service/Worker 的同類回合均驗證三種步驟被呼叫。
+這是 TP11 前的重構，尚未將每種步驟改成獨立 Activity，M0 的恢復限制仍有效。
+
 1. 使用 Python SDK，不改採 Go 調度器；重用既有政策、預算與 checkpoint。
 2. `execution_bindings` 是後端權威，Temporal History 是流程協調權威；TaskStore 仍為當前唯讀 bridge 的執行證據與本機租約。
 3. M0 只有一個粗粒度 Activity，故明確 max-attempts=1；TP09/10 完成共享 step 與 operation ledger 後才能做工具級恢復。
@@ -84,7 +90,14 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 5. 既有 task、root budget、審批與 legacy schemas 保留。只作 additive schema v1；未知 schema 拒絕啟動，不向下覆寫。
 6. M0 先持久化不可變 backend reservation，再於同一 transaction 建立 task + submission；只有 binding 而沒有 task/submission 表示尚未受理，不可派工或回退 legacy。若建立 submission 失敗，task 也回滾，重送補齊 reservation。這是對原 TP06「全部同一交易」的具體調整，以保留錯誤／中斷時的後端排他性。
 
-## 2026-10-17 驗收紀錄
+## TP09 驗收紀錄（2026-10-17）
+
+- 完整 pytest：**853 passed、8 skipped、95 subtests passed**，590.27 秒；已設定本機驗證過的 Temporal CLI，真實 Service/Worker 整合測試有執行。紀錄 `temp/temporal-tp09-full.log`（不入 Git）。既有 Starlette/AnyIO deprecation warning 一項。
+- 新增共用步驟測試 **9 passed**：單次請求不自行重試、取消不送請求、串流 callback、工具權限、失敗後 context 還原、預算跨載入仍計帳、驗收當輪證據／擷取失敗及 legacy 實際讀檔。
+- 首輪相關回歸 **118 passed**，44.38 秒，`temp/temporal-tp09-targeted.log`；之後追加兩項純測試，由上述完整套件覆蓋。真實 Temporal Service/Worker 的受控模型回合確認三種共用步驟都被呼叫，實際讀檔、權限工具清單與任務完成投影均保留。
+- `pip check`、compileall、diff check 通過。本次未重新呼叫真實 provider；前次逾時狀態不能視為已解決。未新增逐步 Workflow、ledger、artifact references 或服務部署；目前仍是 M0 唯讀橋接。
+
+## M0 驗收紀錄（2026-10-17，前次交付）
 
 - 完整 pytest：**831 passed、8 skipped、95 subtests passed**，558.82 秒，於 10:00 完成；`temp/temporal-full-final.log`（不入 Git）。這次全套是在後續 Whisper commit 與新增一項純測試的 transaction rollback case 之前完成；Temporal 產品程式碼之後沒有再修改。既有 Starlette/AnyIO deprecation warning 不影響結果。
 - 最終 Temporal 模組：**30 passed**，31.26 秒，含真實 CLI service、重啟持久化、History replay、Activity 失敗不重試，以及共用入口 → 實際 Worker → 受控模型工具回合 → read_file → 回覆的整合測試。最後增加的 SQLite trigger 故障注入證明 task/outbox 一起回滾，binding-only reservation 保持排他，重送可補齊。

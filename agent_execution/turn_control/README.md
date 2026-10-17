@@ -1,5 +1,21 @@
 # Agent 無進展迴圈修正
 
+## 共用執行步驟（Temporal TP09，2026-10-17）
+
+`steps.py` 提供 `model_step`、`tool_step`、`evaluation_step`，由 `server.run_agent`
+呼叫；SQLite runner 與 Temporal 唯讀 Activity 都使用這條路徑，不各自維護一套工具執行。
+每次呼叫只做一次 I/O 嘗試，不在步驟內重試、重設預算或建立 Temporal Client。
+
+- 模型步驟沿用 budget wrapper、trace、串流與取消；沒有工具時不送空 tools。失敗請求的保守計帳保持有效。
+- 工具步驟透過既有 policy-aware dispatcher 執行，傳遞當前身分、workspace、取消及 hooks-managed context；不把 raw result 轉成另一種協定。
+- 驗收步驟實際擷取 post-state，只傳入 `evaluation_start` 後的當輪訊息，目標仍由 runner 的持久化 task goal 決定。
+
+呼叫方仍負責 PRE/POST hooks、checkpoint、重複操作防護、retry、驗收修正回圈與收尾。
+這些函式只能在一般 runner／Activity 執行，不可在 deterministic Workflow 裡執行。
+`tests/test_steps.py` 驗證失敗、取消、權限、context 還原、預算持久化與 SQLite 實際讀檔；
+Temporal real-service 測試另驗證同一組步驟經 Worker 進入、實際讀檔與驗收。
+這次抽離尚未提供 TP10 ledger 或 TP11 逐步 Workflow，因此 M0 的崩潰／重試限制維持不變。
+
 ## 執行環境感知（2026-10-16）
 
 問題：工具底層已有部分平台判斷，對話提示詞卻未向模型提供實際執行環境，容易生成 Unix 命令於 Windows 執行，或把後端主機與容器視為相同環境。
