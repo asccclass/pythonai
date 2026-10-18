@@ -1,0 +1,5 @@
+{
+  "id": "hello-1",
+  "prompt": "請將 Hello Probe 寫入 hello.txt，並簡短回覆結果。",
+  "domain": "general"
+}
