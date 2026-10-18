@@ -98,3 +98,11 @@ W03 後續驗證：生命週期／worktree／base／Skill／coordinator／排程
 管理網頁／HTTP 已接入同一服務，提供 preview／confirm／status／resume、切換身份使預覽失效、重載後以操作 ID 查詢，無自動批准／重播。新增 wl_audit 最小稽核、清除 trace metadata 並拒絕晚到 finish，搜尋快取清除不依賴模型 provider 初始化。操作說明已同步至模組 README。
 
 通訊 worker／HTTP／真正 Chromium 預覽、取消、確認及重載查詢共 9 項測試通過；較早通訊、session、排程、生命週期專項 87 passed、1 skipped。最終完整回歸與封裝於 W15 記錄。Telegram adapter 使用受控傳送器，不發送實際 Telegram 訊息。
+
+## 2026-10-18 W15 最終本機回歸與封裝
+
+後端固定原始碼執行 `python -m pytest tests agent_execution/tests -q`：748 passed、8 skipped、95 subtests passed，689.46 秒。另有生命週期／通訊／HTTP／排程專項 79 passed、1 skipped、5 subtests passed；啟用 Chromium 的通訊／HTTP 驗證 9 passed。語法檢查與 `git diff --check` 通過。略過項目不計為通過。
+
+MyAI 使用已提交的 `ebe4b36` 建立獨立乾淨原始碼副本，PyInstaller 封裝成功，全套 97 tests OK（94.613 秒），涵蓋封裝版 health、WebSocket 認證與正常退出；已檢視實際封裝畫面。產物位於 `C:\Users\andyl\Go\myai\dist\workspace-cleanup-ebe4b36\MyAI\MyAI.exe`，需連同整個 MyAI 目錄使用；exe SHA256 為 `758E6282E990678B1FF0026D391D9406ACCF391DE13FAA109520D15277C20E02`。未混入工作目錄中的語音功能變更。
+
+W15 保留未勾選：本機回歸及獨立封裝已完成，仍未執行既有正式服務重啟後的使用者流程、真實 Telegram／外部 provider 或乾淨 Windows 機驗收。上述測試不代表這些環境已驗證。GitHub 推送只包含已審查的工作範圍，不包含本機資料庫刪除或未完成的語音功能。
