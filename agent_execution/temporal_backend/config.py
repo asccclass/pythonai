@@ -25,6 +25,7 @@ class Settings:
     address: str
     namespace: str
     concurrency: int = 2
+    engine: str = 'bridge'
 
     @classmethod
     def load(cls):
@@ -40,4 +41,7 @@ class Settings:
         if not 1 <= concurrency <= 8:
             raise ValueError('Temporal Activity concurrency must be 1..8')
         operation_limits()
-        return cls(address, namespace, concurrency)
+        engine = os.environ.get('AGENT_TEMPORAL_ENGINE', 'bridge')
+        if engine not in {'bridge', 'steps'}:
+            raise ValueError('AGENT_TEMPORAL_ENGINE must be bridge or steps')
+        return cls(address, namespace, concurrency, engine)

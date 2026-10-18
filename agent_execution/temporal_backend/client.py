@@ -4,7 +4,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 import threading
 from datetime import timedelta
 
-from .contracts import SCHEMA_VERSION, WORKFLOW_NAME
+from .contracts import SCHEMA_VERSION
 
 
 async def connect(settings):
@@ -29,7 +29,7 @@ async def dispatch(store, row, client):
     try:
         try:
             await client.start_workflow(
-                WORKFLOW_NAME, {'schema_version': SCHEMA_VERSION, 'submission_id': row['id']},
+                store.workflow_type(row), {'schema_version': SCHEMA_VERSION, 'submission_id': row['id']},
                 id=row['workflow_id'], task_queue=row['queue'],
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
                 execution_timeout=timedelta(minutes=10))

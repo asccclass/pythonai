@@ -179,6 +179,7 @@ def run_agent(
     hook_manager: HookManager | None = None,
     event_callback: Callable[[str, dict], None] | None = None,
     resume_state: dict | None = None,
+    step_controller=None,
 ):
     from agent_execution.tasks import save_checkpoint
     from agent_execution.results import normalize_result
@@ -205,7 +206,8 @@ def run_agent(
             str(messages[index].get('content') or '').startswith('【任務驗收未通過')), 0)
     tool_results = dict(resume_state.get('tool_results',{}))
     iteration = resume_state.get('iteration', 0)
-    if resume_state.get('phase') == 'model_pending':
+    pending_request = resume_state.get('model_request') if step_controller is not None and resume_state.get('phase') == 'model_pending' else None
+    if resume_state.get('phase') == 'model_pending' and pending_request is None:
         iteration = max(0,iteration-1)
     eval_retries = resume_state.get('eval_retries', 0)
     pre_state = resume_state.get('pre_state')
@@ -213,58 +215,70 @@ def run_agent(
         pre_state = task_evaluator.capture_state()
     def checkpoint(phase, **metadata):
         save_checkpoint(phase,messages,iteration=iteration,iteration_limit=max_iterations,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,progress=progress.state,**metadata)
+    def boundary(kind):
+        if step_controller is not None:
+            step_controller.enter(kind, checkpoint)
     def pending_assistant():
-        for index in range(len(messages)-1,-1,-1):
-            message = messages[index]
-            if message.get('role') == 'assistant':
-                calls = message.get('tool_calls') or []
-                finished = {m.get('tool_call_id') for m in messages[index+1:] if m.get('role')=='tool'}
-                if any(call['id'] not in finished for call in calls):
-                    return ChatCompletionMessage(**message), finished
-                break
+        from agent_execution.turn_control.continuation import assistant_frontier
+        message, finished = assistant_frontier(messages)
+        if any(call['id'] not in finished for call in message.get('tool_calls') or []):
+            return ChatCompletionMessage(**message), finished
         return None, set()
 
-    while iteration < max_iterations:
+    while iteration < max_iterations or (step_controller is not None and bool(resume_state)):
         if check_cancelled and check_cancelled():
             return "Task was cancelled by the user."
             
         assistant_message, resolved_calls = pending_assistant() if resume_state else (None,set())
-        if resume_state.get('phase') in {'evaluation_pending','evaluation_done'} or (resume_state.get('phase')=='model_received' and not messages[-1].get('tool_calls')):
+        if step_controller is not None and resume_state.get('phase') == 'step_ready' and resume_state.get('next_kind') == 'model':
+            assistant_message, resolved_calls = None, set()
+        if (step_controller is not None and resume_state.get('phase') == 'step_ready' and resume_state.get('next_kind') == 'evaluation') or resume_state.get('phase') in {'evaluation_pending','evaluation_done'} or (resume_state.get('phase')=='model_received' and not messages[-1].get('tool_calls')):
             assistant_message = ChatCompletionMessage(**next(m for m in reversed(messages) if m.get('role')=='assistant'))
         if assistant_message is None:
-            iteration += 1
-            concluding = iteration >= max_iterations or progress.state['blocked'] >= 2
-            if concluding:
-                messages.append({'role':'user','content':'Execution budget / repeated-operation limit reached. Conclude now using existing evidence. Do not call tools. Explain completed work, unverified work, actual errors and next steps; never claim unfinished work is complete.'})
-            elif iteration == max_iterations - 2:
-                messages.append({'role':'user','content':'Only two execution rounds and a final answer remain. Batch independent work, run required checks, and prepare an evidence-based final response.'})
-            from agent_execution.policy import current_context
-            allowed=current_context().allowed_tools
-            from permissions import check_tool_permission
-            schemas=[schema for schema in TOOLS_SCHEMAS
-                     if check_tool_permission(schema.get('function',{}).get('name'))
-                     and (allowed is None or schema.get('function',{}).get('name') in allowed)]
-            request={'model':OLLAMA_MODEL,'tools':schemas}
-            if hook_manager is not None:
-                hook_context = HookContext(
-                    lifecycle=HookLifecycle.PRE_MODEL_CALL,
-                    messages=messages,
-                    model_request=request,
-                    memory=memory,
-                    episode_id=episode_id,
-                    metadata={"iteration": iteration},
-                )
-                hook_result = hook_manager.dispatch(HookLifecycle.PRE_MODEL_CALL, hook_context)
-                request=hook_context.model_request
-                if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
-                    if hook_result.decision==HookDecision.BLOCK:return 'Error: '+hook_result.message
-                    return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
-            if concluding:
-                request['tools'] = []
-            checkpoint('model_pending')
-            attempts = 0
+            if step_controller is not None and iteration >= max_iterations and pending_request is None:
+                break
+            boundary('model')
+            if pending_request is None:
+                if step_controller is not None:
+                    checkpoint('step_preparing', next_kind='model')
+                iteration += 1
+                concluding = iteration >= max_iterations or progress.state['blocked'] >= 2
+                if concluding:
+                    messages.append({'role':'user','content':'Execution budget / repeated-operation limit reached. Conclude now using existing evidence. Do not call tools. Explain completed work, unverified work, actual errors and next steps; never claim unfinished work is complete.'})
+                elif iteration == max_iterations - 2:
+                    messages.append({'role':'user','content':'Only two execution rounds and a final answer remain. Batch independent work, run required checks, and prepare an evidence-based final response.'})
+                from agent_execution.policy import current_context
+                allowed=current_context().allowed_tools
+                from permissions import check_tool_permission
+                schemas=[schema for schema in TOOLS_SCHEMAS
+                         if check_tool_permission(schema.get('function',{}).get('name'))
+                         and (allowed is None or schema.get('function',{}).get('name') in allowed)]
+                request={'model':OLLAMA_MODEL,'tools':schemas}
+                if hook_manager is not None:
+                    hook_context = HookContext(
+                        lifecycle=HookLifecycle.PRE_MODEL_CALL,
+                        messages=messages,
+                        model_request=request,
+                        memory=memory,
+                        episode_id=episode_id,
+                        metadata={"iteration": iteration},
+                    )
+                    hook_result = hook_manager.dispatch(HookLifecycle.PRE_MODEL_CALL, hook_context)
+                    request=hook_context.model_request
+                    if hook_result.decision in {HookDecision.RETURN_EARLY, HookDecision.BLOCK}:
+                        if hook_result.decision==HookDecision.BLOCK:return 'Error: '+hook_result.message
+                        return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
+                if concluding:
+                    request['tools'] = []
+            else:
+                request = pending_request
+            if step_controller is None:
+                checkpoint('model_pending')
+            attempts = resume_state.get('model_attempt', 1)-1 if pending_request is not None else 0
             while True:
                 try:
+                    if step_controller is not None:
+                        checkpoint('model_pending', model_request=request, model_attempt=attempts+1)
                     assistant_message = model_step(
                         get_client(), request, messages, iteration=iteration, attempt=attempts+1,
                         event_callback=event_callback, check_cancelled=check_cancelled,
@@ -307,6 +321,7 @@ def run_agent(
                             sleep(min(.1, max(0, end - time.monotonic())))
                     else:
                         sleep(delay)
+            pending_request = None
             messages.append(assistant_message_to_dict(assistant_message))
             if hook_manager is not None:
                 hook_context = HookContext(
@@ -322,7 +337,15 @@ def run_agent(
                     if hook_result.decision==HookDecision.BLOCK:return 'Error: '+hook_result.message
                     return str(hook_result.return_value if hook_result.return_value is not None else hook_result.message)
                 if hook_result.decision == HookDecision.APPEND_FEEDBACK:
+                    if step_controller is not None:
+                        messages.extend({'role':'tool','tool_call_id':call.id,
+                            'content':'Error: Tool call was not executed; the model response was superseded by hook feedback.'}
+                            for call in assistant_message.tool_calls or [])
                     messages.append({"role": "user", "content": hook_result.feedback})
+                    if step_controller is not None:
+                        from agent_execution.turn_control.continuation import TaskYield
+                        checkpoint('step_ready', next_kind='model')
+                        raise TaskYield('model')
                     continue
 
             checkpoint('model_received')
@@ -333,6 +356,9 @@ def run_agent(
             for tool_call in assistant_message.tool_calls:
                 if tool_call.id in resolved_calls:
                     continue
+                boundary('tool')
+                if step_controller is not None:
+                    checkpoint('step_preparing', next_kind='tool')
                 matched_procedure = find_matching_procedure_for_tool_call(memory, tool_call)
                 log_episode_event(
                     memory,
@@ -440,7 +466,8 @@ def run_agent(
                 progress.state['calls'][progress.key(tool_name, tool_args)]['source_id'] = source_id
                 result=raw_result
                 tool_results[tool_call.id]=raw_result.to_dict()
-                save_checkpoint('tool_done',messages+[{'role':'tool','tool_call_id':tool_call.id,'content':str(result)}],
+                if step_controller is None:
+                    save_checkpoint('tool_done',messages+[{'role':'tool','tool_call_id':tool_call.id,'content':str(result)}],
                     iteration=iteration,iteration_limit=max_iterations,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,progress=progress.state,
                     step={**step,'state':'completed' if raw_result.success else 'failed','result':json.dumps(raw_result.to_dict(),ensure_ascii=False)})
                 if hook_manager is not None:
@@ -515,6 +542,7 @@ def run_agent(
                 from task_evaluator import EvaluationResult
                 eval_res = EvaluationResult(**resume_state['evaluation'])
             else:
+                boundary('evaluation')
                 checkpoint('evaluation_pending')
                 eval_res = evaluation_step(task_evaluator,
                     user_goal=user_goal,

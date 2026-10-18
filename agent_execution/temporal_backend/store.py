@@ -40,6 +40,8 @@ class Store:
                     address TEXT NOT NULL, namespace TEXT NOT NULL, queue TEXT NOT NULL,
                     state TEXT NOT NULL, fence TEXT, result TEXT, attempts INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT, updated REAL NOT NULL, UNIQUE(owner,task_id));
+                CREATE TABLE IF NOT EXISTS temporal_protocols(
+                    submission_id TEXT PRIMARY KEY, workflow_type TEXT NOT NULL, version INTEGER NOT NULL);
             ''')
             versions = [r[0] for r in conn.execute('SELECT version FROM temporal_schema')]
             if versions != [1]:
@@ -48,9 +50,29 @@ class Store:
 
     @property
     def queue(self):
+        return self.queue_for('bridge')
+
+    def queue_for(self, engine):
+        if engine not in {'bridge', 'steps'}:
+            raise ValueError('Unknown Temporal engine')
         with closing(self.tasks.connect()) as conn:
             token = conn.execute('SELECT token FROM temporal_host WHERE id=1').fetchone()[0]
-        return 'pythonai-host-' + token + '-readonly-v1'
+        return 'pythonai-host-' + token + ('-readonly-v1' if engine == 'bridge' else '-steps-readonly-v1')
+
+    def workflow_type(self, row):
+        from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME
+        with closing(self.tasks.connect()) as conn:
+            protocol = conn.execute('SELECT * FROM temporal_protocols WHERE submission_id=?', (row['id'],)).fetchone()
+        if protocol is None:
+            if row['queue'] != self.queue:
+                raise ValueError('Missing execution protocol for non-legacy submission')
+            return WORKFLOW_NAME  # Existing M0 submissions keep their protocol.
+        if protocol['version'] != 1 or protocol['workflow_type'] not in {WORKFLOW_NAME, STEP_WORKFLOW_NAME}:
+            raise ValueError('Unsupported Temporal execution protocol')
+        engine = 'steps' if protocol['workflow_type'] == STEP_WORKFLOW_NAME else 'bridge'
+        if row['queue'] != self.queue_for(engine):
+            raise ValueError('Execution protocol does not match its persisted queue')
+        return protocol['workflow_type']
 
     def bind(self, owner, task, requested):
         from agent_execution.tasks import assert_owner_active
@@ -82,7 +104,7 @@ class Store:
         data, scope = canonical(messages), canonical(context)
         if len(data.encode()) > 1024 * 1024 or len(scope.encode()) > 16384:
             raise ValueError('M0 Temporal input exceeds 1 MiB local storage limit')
-        queue = self.queue
+        queue = self.queue_for(settings.engine)
         with closing(self.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             assert_owner_active(conn, owner)
@@ -116,6 +138,9 @@ class Store:
             conn.execute('INSERT INTO temporal_submissions(id,owner,task_id,workflow_id,input_digest,input,context,role,address,namespace,queue,state,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                          (key, owner, task, workflow_id, fingerprint, data, scope, role,
                           settings.address, settings.namespace, queue, 'pending', time.time()))
+            from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME
+            conn.execute('INSERT INTO temporal_protocols VALUES(?,?,1)',
+                         (key, STEP_WORKFLOW_NAME if settings.engine == 'steps' else WORKFLOW_NAME))
             return dict(conn.execute('SELECT * FROM temporal_submissions WHERE id=?', (key,)).fetchone())
 
     def get(self, key, owner=None):

@@ -2,11 +2,13 @@
 
 規劃日期：2026-10-17（Asia/Taipei）。文件名稱依需求保留為 `temportal.md`，產品與程式命名使用 Temporal。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09 共用步驟及 TP10 操作紀錄／JSON 結果引用已實作；TP11–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，不屬本次交付。
+狀態：**M0 Windows 同機唯讀橋接、TP09 共用步驟及 TP10 操作紀錄／JSON 結果引用及 TP11 opt-in 逐步唯讀流程已實作；TP11 真實 LLM 驗收及 TP12–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，不屬本次交付。
 
 ### 目前導入進度（2026-10-17）
 
-本輪 TP10 驗收：完整 pytest **902 passed、8 skipped、95 subtests passed**，764.80 秒，包含真實 Temporal Service/Worker、故障注入與 History replay。真實 LLM 也完成隔離讀檔／回覆／驗收回合，使用 **3 筆模型請求**；重取已完成工具結果未重跑或增加請求，History 不含檔案內容。另修正 stream monitor 未等待退出的 SQLite 清理競態（commit `bf7bcfd`）。pip check／compileall／diff check 通過。紀錄見 backend README、`temp/temporal-tp10-full.log` 及 `temp/temporal-tp10-provider-check/`；逐工具自動崩潰恢復仍待 TP11。
+本輪 TP11：新增 `AgentTaskWorkflowV1`、六種 Activities、版本綁定與獨立 queue、確認邊界恢復及錯誤映射。最終完整 pytest **949 passed、8 skipped、95 subtests passed**，670.92 秒；Temporal／continuation 專項 **122 passed**，前置 hook 邊界專項 **35 passed**。真實 Service/Worker 的受控模型讀檔、Worker 重啟、回覆遺失、未知效果停止與 History replay 通過；pip check、compileall、diff check 通過。真實 LLM 在第一個模型步驟逾時，90 秒後取消，三筆請求預留保留、無工具執行；獨立 15 秒探測也為 `APITimeoutError`，未取得服務端根因。此項與原始長任務仍待驗收；詳見 backend README 與 `temp/temporal-tp11-provider-check/`。未啟用正式設定。
+
+前輪 TP10 驗收：完整 pytest **902 passed、8 skipped、95 subtests passed**，764.80 秒，包含真實 Temporal Service/Worker、故障注入與 History replay。真實 LLM 也完成隔離讀檔／回覆／驗收回合，使用 **3 筆模型請求**；重取已完成工具結果未重跑或增加請求，History 不含檔案內容。另修正 stream monitor 未等待退出的 SQLite 清理競態（commit `bf7bcfd`）。pip check／compileall／diff check 通過。紀錄見 backend README、`temp/temporal-tp10-full.log` 及 `temp/temporal-tp10-provider-check/`；逐工具自動崩潰恢復仍待 TP11。
 
 前輪 TP09 驗收：完整 pytest **853 passed、8 skipped、95 subtests passed**，590.27 秒，包含已啟用的真實 Temporal Service/Worker 測試；共用步驟新增測試 **9 passed**。pip check／compileall／diff check 通過。真實 provider 本輪未重驗，模型回合使用受控回應；這次完成共用步驟抽離，逐工具自動恢復仍待 TP11。詳細紀錄見 backend README 與本機 `temp/temporal-tp09-full.log`。
 
@@ -20,7 +22,8 @@
 | TP08 | Windows 唯讀橋接已接通並完成真實 Service + Worker + 受控模型工具回合、重送、History replay、重啟取回結果；當時真實 provider 逾時紀錄保留，TP10 本輪另已通過隔離小型真實 LLM 唯讀回合 |
 | TP09 | 已抽出共用 model/tool/evaluation steps；SQLite runner 與 Temporal 唯讀 Activity 使用同一實作，保留外層 hooks／checkpoint／重試與預算；驗收紀錄見 backend README |
 | TP10 | 已實作版本化 operation ledger、canonical digest、雙層 fence、原子 result/evidence 引用與完整性檢查；接入唯讀 Activity 的 model/tool/evaluation，共用結果不重跑，未知結果保守阻擋；詳見 backend README |
-| TP11–TP30 | 待辦；尚未導入 step-based 工具級恢復、人工等待／審批、排程、多 Agent、正式部署及多機 |
+| TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過，真實 LLM 本輪逾時待驗收 |
+| TP12–TP30 | 待辦；尚未導入完整預算／取消矩陣、人工等待／審批、排程、多 Agent、正式部署及多機 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator、未完成任務 manual resume 會拒絕；已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -478,17 +481,21 @@ Temporal History、visibility、archival、備份與 artifact 各有 retention�
 
 M0–M3 合計約 **31–47 工作日（約 6–10 週）**；範圍假設既有 SQLite 與工具 API 保持相容、不 fork Temporal、不一次搬遷全部歷史。若只做 M0，不能對外宣稱已完成 Temporal 導入或所有工具都能崩潰後自動恢復。
 
-### 12.2 下一階段 TP11 的實作順序
+### 12.2 TP11 的實作順序與進度
 
-TP09–TP10 已具備共用 I/O steps 與 operation ledger。下一階段須實際拆分 Workflow，不能以重新執行整段 `run_agent` 取代逐工具恢復。初期範圍仍限同機唯讀，人工等待／審批與寫入分別留在 TP13／TP17。
+TP09–TP10 已具備共用 I/O steps 與 operation ledger。TP11 已拆分 Workflow，以可持久化邊界續行共用 runner，每次只執行一個邏輯步驟；不從頭重做整段任務。範圍限同機唯讀，人工等待／審批與寫入分別留在 TP13／TP17。
 
-- [ ] TP11.1：定義版本化 task-state／step-result DTO，以 artifact references 保存 messages、iteration、provider attempt、eval retry、progress、tool-call/result 配對與 evaluation_start；History 僅留有限控制欄位。
-- [ ] TP11.2：抽出單輪決策與狀態轉移，拆清 bootstrap、model、tool、evaluation、finalize 的輸入／輸出；既有 SQLite runner 保留原行為，避免建立第二套 hooks／policy／驗收邏輯。
-- [ ] TP11.3：新增 `AgentTaskWorkflowV1` 與獨立 Activities。Workflow 不載入資料庫、profile、環境偵測、模型或檔案工具；Activity 每次重建可信 owner、目前角色、workspace／worktree、profile／OS 與原 root budget。
-- [ ] TP11.4：將 workflow type／協定版本持久化綁定到 submission，舊 M0 任務仍由舊 Workflow 處理；新增唯讀 opt-in 路由與版本相容測試，不用環境切換偷偷遷移存量任務。
-- [ ] TP11.5：串接 TP10 穩定 step ID、結果引用與 fence，已完成結果重用；running／uncertain 不重送外部操作。明確設定 model／HTTP／工具 Activity max-attempts=1，provider 重試擁有者、次數與預算不得相乘或重置。
-- [ ] TP11.6：錯誤映射至少區分已知拒絕、預算耗盡、取消、缺 artifact／校驗失敗及未知效果；保留原 iteration／critic 上限，人工輸入需求在 TP13 完成前明確停止。
-- [ ] TP11.7：以真實 Service/Worker 做逐步中斷與重啟、結果提交後回覆遺失、未知效果停止、跨 scope、root budget 計數不增與新舊 History replay；再通過完整 pytest、compileall、pip check、diff check，建立對應 commit。真實 provider 的小型成功與原始長任務驗收分開記錄。
+- [x] TP11.1：定義版本化 task-state／step-result DTO，以 artifact references 保存 messages、iteration、provider attempt、eval retry、progress、tool-call/result 配對與 evaluation_start；History 僅留有限控制欄位。
+- [x] TP11.2：抽出單輪決策與狀態轉移，拆清 bootstrap、model、tool、evaluation、finalize 的輸入／輸出；既有 SQLite runner 保留原行為，避免建立第二套 hooks／policy／驗收邏輯。
+- [x] TP11.3：新增 `AgentTaskWorkflowV1` 與獨立 Activities。Workflow 不載入資料庫、profile、環境偵測、模型或檔案工具；Activity 每次重建可信 owner、目前角色、workspace／worktree、profile／OS 與原 root budget。
+- [x] TP11.4：將 workflow type／協定版本持久化綁定到 submission，舊 M0 任務仍由舊 Workflow 處理；新增唯讀 opt-in 路由與版本相容測試，不用環境切換偷偷遷移存量任務。
+- [x] TP11.5：串接 TP10 穩定 step ID、結果引用與 fence，已完成結果重用；running／uncertain 不重送外部操作。明確設定 model／HTTP／工具 Activity max-attempts=1，provider 重試擁有者、次數與預算不得相乘或重置。
+- [x] TP11.6：錯誤映射至少區分已知拒絕、預算耗盡、取消、缺 artifact／校驗失敗及未知效果；保留原 iteration／critic 上限，人工輸入需求在 TP13 完成前明確停止。
+- [ ] TP11.7（程式驗證已進行，外部驗收未完成）：以真實 Service/Worker 做逐步中斷與重啟、結果提交後回覆遺失、未知效果停止、跨 scope、root budget 計數不增與新舊 History replay；再通過完整 pytest、compileall、pip check、diff check，建立對應 commit。真實 provider 的小型成功與原始長任務驗收分開記錄。
+
+實作見 `temporal_backend/{contracts,context,step_store,step_activities,workflows}.py` 及 `turn_control/continuation.py`。`AGENT_TEMPORAL_ENGINE=steps` 僅影響新受理的 Temporal 任務，預設為 `bridge`；存量任務的 protocol／queue 不改派。Worker 同時服務兩個版本，並共享 host 併發上限。最多 1024 個步驟、三次經核對的 Workflow 恢復；model／tool／evaluation Activity max-attempts=1，bootstrap／recover／finalize metadata 最多三次。只有已確認完成邊界或 ledger 證明 I/O 尚未開始才恢復；`step_preparing`（前置 hooks 未確認）與 `tool_started`（包含 raw result 已提交但完成 hooks 未確認）一律 uncertain。回滾新任務旗標時仍須保留此版 Worker 服務已綁 steps 的存量工作。
+
+下一項為 TP12 的完整預算／provider retry ownership 矩陣；TP11 本輪真實 LLM 逾時驗收仍需追蹤，不因推進下一項而標為通過。
 
 ## 13. 測試矩陣、驗收與放量
 

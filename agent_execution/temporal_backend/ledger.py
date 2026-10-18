@@ -123,6 +123,8 @@ class Ledger:
         used += conn.execute('''SELECT COALESCE(SUM(length(CAST(owner AS BLOB))+
             length(CAST(task_id AS BLOB))+length(CAST(step_id AS BLOB))+length(kind)+64+512),0)
             FROM operation_ledger''').fetchone()[0]
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_step_runs'").fetchone():
+            used += conn.execute('SELECT COUNT(*)*1024 FROM temporal_step_runs').fetchone()[0]
         if used + extra > positive_limit('AGENT_TEMPORAL_LEDGER_STORAGE_BYTES', 256*1024*1024):
             raise CapacityError('Temporal operation storage capacity reached')
 

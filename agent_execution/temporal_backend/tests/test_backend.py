@@ -63,7 +63,7 @@ print('optional import passed')
     ('AGENT_TEMPORAL_ADDRESS', 'public.example:7233'), ('AGENT_TEMPORAL_ADDRESS', 'localhost:0'),
     ('AGENT_TEMPORAL_NAMESPACE', '../bad'), ('AGENT_TEMPORAL_ACTIVITY_CONCURRENCY', '0'),
     ('AGENT_TEMPORAL_ARTIFACT_MAX_BYTES', '0'), ('AGENT_TEMPORAL_LEDGER_STORAGE_BYTES', '-1'),
-    ('AGENT_TEMPORAL_OPERATION_LIMIT', 'invalid')])
+    ('AGENT_TEMPORAL_OPERATION_LIMIT', 'invalid'), ('AGENT_TEMPORAL_ENGINE', 'unknown')])
 def test_invalid_configuration_fails_closed(setting, value, monkeypatch):
     monkeypatch.setenv(setting, value)
     with pytest.raises(ValueError):

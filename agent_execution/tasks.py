@@ -335,8 +335,15 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
             store.finish(owner,key,token,state,reply)
         return result if skill or not is_skill else reply
     except Exception as error:
+        from .turn_control.continuation import TaskYield
         from exceptions import TaskSuspendedException
-        if isinstance(error,TaskSuspendedException):
+        if isinstance(error,TaskYield):
+            boundary = store.get(owner,key)
+            if boundary['phase'] != 'step_ready' or boundary['checkpoint'].get('next_kind') != error.next_kind:
+                store.finish(owner,key,token,'uncertain','Unverified continuation boundary')
+                raise RecoveryRequired('Unverified continuation boundary; inspect execution before resuming') from None
+            store.finish(owner,key,token,'pending')
+        elif isinstance(error,TaskSuspendedException):
             metadata = {key:value for key,value in store.get(owner,key)['checkpoint'].items() if key!='messages'}
             metadata['suspended_tool_call_id'] = error.tool_call_id
             save_checkpoint('waiting_user',error.messages,**metadata)

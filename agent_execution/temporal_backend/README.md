@@ -1,16 +1,16 @@
-# Temporal 可選後端：唯讀橋接與操作紀錄
+# Temporal 可選後端：唯讀橋接、逐步流程與操作紀錄
 
-依 `papers/temportal.md` 的 Python SDK 路線實作。**目前執行方式仍為 M0 相容橋接；TP09 共用步驟與 TP10 操作紀錄已接上，逐工具自動恢復仍待 TP11。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
+依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
 
 ## 已實作邊界
 
 - 預設仍為 sqlite；optional SDK lazy import。新任務固定 backend，舊任務不因環境設定而改引擎。
 - 同一 TaskStore SQLite transaction 建立 task、submission 與來源 fingerprint，outbox 可由 Worker 啟動後 reconcile。
-- Workflow History 僅放版本與 opaque submission ID，輸入／結果仍在同機可信 SQLite；沒有明文對話／絕對路徑進入 History。
-- 固定同 DB host queue；只接受 loopback Temporal 服務。Worker 重建角色、workspace、profile 與根預算，限制 READ_TOOLS，整段 Activity 最多執行一次。
+- Workflow History 僅放版本、opaque submission ID、有限控制欄位與 artifact reference，輸入／結果仍在同機可信 SQLite；沒有明文對話／絕對路徑進入 History。
+- 固定同 DB host queue；只接受 loopback Temporal 服務。Worker 重建角色、workspace、profile 與根預算，限制 READ_TOOLS。M0 整段 Activity 最多執行一次；逐步模式的 model／tool／evaluation Activity 各最多一次。
 - 直接 legacy claim 不可取得已綁 Temporal 任務；已開始 Activity 不可再次取得，取消後不能發布晚到結果。
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
-- `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；未知 Activity 結果需人工核對，M0 不開放自動／手動跨引擎恢復。
+- `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
 限制：目前不支援 Temporal skill、人工回答／approval resume、排程／coordinator 轉交、逐 token 遠端串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
 
@@ -59,7 +59,7 @@ $env:AGENT_EXECUTION_BACKEND = 'temporal'
 ## 故障處理
 
 - 連線或 StartWorkflow 結果未知：保留 outbox 與 task ID，先啟動相同 DB／namespace 的 Worker reconcile。不得換 task ID 重新執行來「修復」。
-- Worker 在 Activity 開始後中斷：Activity max-attempts=1，等待 Temporal 終止狀態並核對原 TaskStore checkpoint，不能自動重放整段。
+- Worker 在 Activity 開始後中斷：M0 等待 Temporal 終止狀態並核對原 TaskStore checkpoint；逐步模式按下節的確認邊界恢復，不能自動重放未知操作。
 - 取消：既有 TaskStore cancellation 會被 Worker 的執行檢查攔下。client wait 結束／取消也會要求遠端取消；已發出的 provider 請求無法因此保證未收費。
 - M0 不會重置 request/token/cost/deadline；現有 600 秒 wall-clock 包含排隊與等待。
 - 工作目錄／角色變更：Worker 重新核對，拒絕搬移或提升權限。不同 source 不可冒用 local 身分。
@@ -74,6 +74,45 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 ```
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
+
+## TP11：opt-in 逐步唯讀 Workflow
+
+在原入口的程序設定以下旗標，只影響新任務；Worker 仍須另外啟動：
+
+```powershell
+$env:AGENT_EXECUTION_BACKEND = 'temporal'
+$env:AGENT_TEMPORAL_ENGINE = 'steps'
+```
+
+`AGENT_TEMPORAL_ENGINE` 預設為 `bridge`。受理時將 Workflow type／協定版本與 queue
+一起持久化；已受理任務依保存的協定派送，不受後續旗標切換影響。
+舊 M0 使用原 queue 與 `ReadOnlyBridge`，新協定使用獨立的 `steps-readonly-v1` queue
+與 `AgentTaskWorkflowV1`。同一 Worker 程序同時服務兩者，共享 host execution slot 上限；
+回滾新任務到 `bridge` 或 `sqlite` 時，須保留此版 Worker 處理已綁 steps 的工作。
+
+已完成的待辦與行為：
+
+- [x] `contracts.py` 定義 v1 cursor／snapshot；cursor 僅含 submission、revision、next_kind 及有 digest／大小的引用。對話、provider attempt、iteration、progress、tool-call/result、evaluation_start 均留在本機 artifact。
+- [x] `turn_control/continuation.py` 與 runner 邊界共用原 hooks、policy 與 evaluator；每次 continuation 最多執行一個 model／tool／evaluation 邏輯步驟。model 步驟內原 provider 重試仍由既有 runner 唯一持有。
+- [x] 六種 Activity 為 bootstrap、model、tool、evaluation、recover、finalize；Workflow 只協調引用。執行 Activity 每次重建可信 scope、最新 profile／OS、角色與原 root budget，不重設迭代或驗收上限。
+- [x] model／tool／evaluation 的 `maximum_attempts=1`；只做 metadata 的 bootstrap／recover／finalize 最多三次，Workflow 額外最多三次經核對的恢復，最多 1024 個執行步驟。設定顯式 RetryPolicy 的依據見 [官方錯誤處理說明](https://docs.temporal.io/develop/python/best-practices/error-handling)。
+- [x] `step_store.py` 保存有版本的 cursor／fence 與原子 artifact 投影。完成的 cursor 重送取回原引用；checkpoint 已完成但 Activity 回覆遺失時，投影下一步，不重跑模型或工具。
+- [x] 確認邊界為 `step_ready`、`model_received`、`tool_done`、`evaluation_done`；model／evaluation pending 只有 ledger 尚未開始 I/O 時才可重新取得。PRE hooks 開始前先寫入 `step_preparing`，此階段未確認完成也停止為 uncertain。`tool_started` 即使已有 raw result，也因完成 hooks 未確認而停止為 uncertain；running／uncertain ledger 不重送。
+- [x] 已知拒絕、預算、取消、缺 artifact、格式／校驗錯誤與未知執行分別映射；SDK failure 不帶原始錯誤內容或憑證。人工等待、審批與寫入仍未開放。
+
+TP11 驗證（2026-10-18）：完整 pytest **949 passed、8 skipped、95 subtests passed**，
+670.92 秒；Temporal／continuation 專項 **122 passed**，前置 hook 邊界專項 **35 passed**。
+真實 Service/Worker 使用受控模型完成讀檔／驗收、提交後回覆遺失、
+Worker 停止再啟動、新舊 queue 同時服務與 History replay；未知工具效果僅執行一次並停止。
+紀錄 `temp/temporal-tp11-full-final.log`、`temp/temporal-tp11-final-targeted.log`、
+`temp/temporal-tp11-boundary-final.log`。pip check、compileall、diff check 通過；完整套件只有既有
+Starlette／AnyIO deprecation warning 一項。
+
+真實 LLM 本輪**未通過**：隔離 step 任務在第一個 model 步驟遭遇 APITimeout，
+90 秒期限後 cancelled，三筆請求預留保留、沒有工具執行；獨立 15 秒探測也回報
+`APITimeoutError`，使用另一筆獨立請求。紀錄 `temp/temporal-tp11-provider-check/live.log`、
+`probe.log`；服務與 Worker 已停止。尚未取得 provider 服務端根因，不能用前輪 TP10
+成功或本輪受控模型結果代替本輪真實 LLM／原始長任務驗收。預設設定維持原狀。
 
 ## TP10：操作紀錄與本機結果引用
 
@@ -110,7 +149,7 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 完成過的操作可由同一任務 scope 的 `Ledger.run` 取回原結果，不再次呼叫 executor 或扣模型請求。
 未知結果無自動 reset／retry API。現有 M0 仍是單一 Activity，max-attempts=1，
-未開放 manual resume；本次接線會留下逐步執行紀錄，但整個 Agent 的自動崩潰恢復須待 TP11。
+未開放 manual resume；M0 接線留下操作紀錄。TP11 opt-in 模式另提供上述已確認邊界的恢復。
 整個 Activity、hooks、事件／記憶 finalize 的重送去重也未因此完成，分別見後續任務。
 
 本輪回歸另定位並修正 budget stream 關閉競態：取消監看執行緒可能仍在讀取 SQLite，

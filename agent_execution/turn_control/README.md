@@ -16,7 +16,24 @@
 Temporal real-service 測試另驗證同一組步驟經 Worker 進入、實際讀檔與驗收。
 後續 TP10 已在 Temporal Activity scope 接上 ledger 與 JSON artifact 引用，
 每個共用步驟接受穩定 `operation_id`；legacy scope 不啟用 ledger，不改變 raw tool error 行為。
-TP11 逐步 Workflow 尚未交付，因此整個 M0 Activity 的崩潰／重試限制維持不變。
+TP11 新增可選逐步 Workflow；M0 Activity 的崩潰／重試限制維持不變。
+
+## 持久化步驟邊界（Temporal TP11，2026-10-17）
+
+`continuation.py` 的 `StepController` 在 model、每個 tool 與 evaluation 邊界控制暫停，
+以 `step_ready` checkpoint 保存下一步，再以內部 `TaskYield` 交回 Workflow。
+`durable_invoke` 核對實際保存的邊界後才接受暫停；每次暫停保持 pending，不增加舊有
+崩潰恢復次數。一般 SQLite runner 未啟用 controller，仍走原來的完整迴圈。
+
+恢復時只將最新 assistant 後的 tool results 視為本輪配對，保留原 iteration、provider
+attempt、驗收起點與進度。最後一輪已發出的模型結果／驗收仍可完成，但不能多開模型輪次。
+模型 PRE/POST hooks、工具 policy 與驗收共用原實作；PRE hooks 前先保存 `step_preparing`，
+未確認的準備階段停止為 uncertain；完成 hooks 確認後才保存可恢復邊界。
+POST_MODEL hook 要求改策略時，先補齊被取代的 tool-call 回覆再交回下一個模型步驟。
+
+新增測試覆蓋逐工具暫停、重複 tool-call ID、最後一輪、prepared provider request 重用、
+hook 改策略與未驗證 TaskYield 拒絕；真實 Temporal Service 的恢復與 replay 測試見
+`temporal_backend/tests/test_step_integration.py`。真實 provider 本輪探測逾時，尚未完成驗收。
 
 ## 執行環境感知（2026-10-16）
 
