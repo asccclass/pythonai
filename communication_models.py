@@ -49,6 +49,7 @@ class AgentCommand:
     source_message_id: int | None = None
     attachments: tuple[InboundAttachment, ...] = field(default_factory=tuple)
     project: str = "default"
+    session: str = ""
 
 
 @dataclass(frozen=True)

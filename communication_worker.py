@@ -18,7 +18,7 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
     sessions = RuntimeSessions(runtime)
 
     def key(command):
-        return (f"{command.platform}:{command.sender_id}", f"{command.platform}:{command.conversation_id}", command.project)
+        return (f"{command.platform}:{command.sender_id}", command.session or f"{command.platform}:{command.conversation_id}", command.project)
 
     def run(command: AgentCommand, resumed_messages: list | None = None) -> AgentTurnResult:
         from permissions import get_user_role, set_current_role
@@ -35,7 +35,13 @@ def agent_runtime_command_runner(runtime: AgentRuntime, store: CommunicationStor
             session_runtime.check_cancelled = cancelled
             with auto_approve_command_runs(), set_current_role(role), execution_scope(
                 source="communication", identity=key(command)[0], session=key(command)[1],
-                project=command.project, task_id=command.command_id, workspace=project_workspace(command.project), check_cancelled=cancelled):
+                project=command.project, task_id=command.command_id, workspace=project_workspace(command.project), check_cancelled=cancelled,
+                communication_db=store.db_path):
+                from agent_execution.workspace_lifecycle import LifecycleStore
+                from agent_execution.workspace_lifecycle.communication import cleanup_control
+                if store.lifecycle_state(command)=='active':LifecycleStore().ensure_session()
+                elif not cleanup_control(command.text):raise PermissionError('Conversation is deleting or deleted')
+                if command.text.strip()=='/new-session':return AgentTurnResult('New conversation session started.',None)
                 if resumed_messages is not None:
                     return resume_agent_turn(resumed_messages, session_runtime)
                 from agent_execution.tasks import dispatch_task_input
@@ -77,6 +83,7 @@ class CommunicationWorker:
         self._admission_lock = threading.Lock()
 
     def _send_reply(self, command: AgentCommand, text: str, is_error: bool = False) -> None:
+        if self.store.lifecycle_state(command)!='active':return
         key = self.store.queue_delivery(command, text, self.store.reply_context(command.source_message_id), is_error)
         self.deliver_pending(key)
 
@@ -108,7 +115,7 @@ class CommunicationWorker:
         if busy:
             # Control commands remain reachable while ordinary jobs wait durably.
             pending=[command for command in pending if command.text.strip().split(maxsplit=1)[0:1]
-                and command.text.strip().split(maxsplit=1)[0] in {'/status','/cancel','/clear','/reset','/approvals','/approve','/deny','/agents','/tasks','/steps','/budget','/cancel-task','/delivery'}]
+                and command.text.strip().split(maxsplit=1)[0] in {'/status','/cancel','/clear','/reset','/approvals','/approve','/deny','/agents','/tasks','/steps','/budget','/cancel-task','/delivery','/session-delete','/workspace','/new-session'}]
         if not pending:
             return None
         command = pending[0]
@@ -140,7 +147,7 @@ class CommunicationWorker:
             if getattr(self.command_runner,'task_store_enabled',False):
                 from agent_execution.tasks import TaskStore, task_owner
                 from agent_execution.policy import ExecutionContext
-                TaskStore().cancel_session(task_owner(ExecutionContext(source='communication',identity=identity,session=f'{command.platform}:{command.conversation_id}',project=command.project)))
+                TaskStore().cancel_session(task_owner(ExecutionContext(source='communication',identity=identity,session=command.session or f'{command.platform}:{command.conversation_id}',project=command.project)))
             self.store.cancel_session(command)
             if hasattr(self.command_runner, "clear_session"):
                 self.command_runner.clear_session(command)
@@ -208,6 +215,21 @@ class CommunicationWorker:
                     turn_result = self.command_runner(target_command)
                 else:
                     turn_result = self.command_runner(target_command, resumed_messages)
+                if self.store.lifecycle_state(target_command)!='active':
+                    self.store.complete_command(target_command.command_id,'')
+                    from agent_execution.workspace_lifecycle.communication import cleanup_control
+                    reply=getattr(turn_result,'reply','')
+                    if cleanup_control(target_command.text):
+                        try:
+                            try:result=json.loads(reply)
+                            except ValueError:result={'state':'blocked'}
+                            state=result.get('state','blocked')
+                            if state not in {'deleted','blocked','deleting','preview','completed'}:state='blocked'
+                            minimal=json.dumps({'operation_id':target_command.text.split()[-1],'state':state})
+                            key=self.store.queue_delivery(target_command,minimal,{},cleanup_receipt=True)
+                            self.deliver_pending(key)
+                        except (ValueError,KeyError,PermissionError):pass
+                    return
                 if self.store.is_cancel_requested(target_command.command_id):
                     self.store.complete_command(target_command.command_id, "Task cancelled")
                     self._send_reply(target_command, "Task cancelled")
@@ -231,7 +253,7 @@ class CommunicationWorker:
                 c_id = target_command.command_id if 'target_command' in locals() else command.command_id
                 cmd = target_command if 'target_command' in locals() else command
                 self.store.fail_command(c_id, str(error))
-                self._send_reply(cmd, error_text, is_error=True)
+                if self.store.lifecycle_state(cmd)=='active':self._send_reply(cmd, error_text, is_error=True)
             finally:
                 current = threading.current_thread()
                 with self._threads_lock:
@@ -255,7 +277,7 @@ class CommunicationWorker:
         import time
         tasks = TaskStore()
         for command in self.store.recoverable_commands():
-            owner = task_owner(ExecutionContext(source='communication',identity=f'{command.platform}:{command.sender_id}',session=f'{command.platform}:{command.conversation_id}',project=command.project))
+            owner = task_owner(ExecutionContext(source='communication',identity=f'{command.platform}:{command.sender_id}',session=command.session or f'{command.platform}:{command.conversation_id}',project=command.project))
             try:
                 row = tasks.get(owner,command.command_id)
             except KeyError:
@@ -325,7 +347,9 @@ def _enqueue_verified_events(store, adapter, headers, body, query=None, allowed_
         inbound = replace(inbound, project=os.environ.get("COMM_PROJECT", "default"))
         if allowed is not None and inbound.sender_key not in allowed:
             raise PermissionError(f"{inbound.platform} sender is not allowed")
-        command, inserted = store.ingest_inbound_message(inbound)
+        from agent_execution.workspace_lifecycle.communication import DeletedConversation
+        try:command, inserted = store.ingest_inbound_message(inbound)
+        except DeletedConversation:continue
         if inserted:
             commands.append(command)
     return commands

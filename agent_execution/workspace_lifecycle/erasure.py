@@ -4,6 +4,8 @@ import json
 import hashlib
 import sqlite3
 import time
+import os
+from pathlib import Path
 
 from agent_execution.sessions import tenant_memory_path
 from .paths import identity
@@ -13,7 +15,16 @@ def tables(conn):
     return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def external_blockers(owners):
+def transports(owners,task_db=None):
+    from agent_execution.tasks import TaskStore
+    path=task_db or TaskStore().path
+    with closing(sqlite3.connect(path)) as conn:
+        if 'wl_transports' not in tables(conn):return []
+        selected=set(owners)
+        return [tuple(r) for r in conn.execute('SELECT DISTINCT t.owner,t.path FROM wl_transports t JOIN wl_session_owners o ON o.session=t.session') if r[0] in selected]
+
+
+def external_blockers(owners,task_db=None):
     result=[]
     from agent_execution.scheduling.store import scheduler_db_path
     path=scheduler_db_path()
@@ -31,6 +42,8 @@ def external_blockers(owners):
             with closing(sqlite3.connect(path)) as conn:
                 if 'memory_jobs' in tables(conn) and conn.execute("SELECT 1 FROM memory_jobs WHERE status='processing'").fetchone():
                     result.append('memory-worker:'+session)
+    from communication_store import CommunicationStore
+    for owner,path in transports(owners,task_db):result.extend(CommunicationStore(path).lifecycle_blockers(owner))
     return result
 
 
@@ -108,12 +121,20 @@ def finalize(store,key,runtime=None,event_store=None):
         if outbox and outbox[0]=='completed':return {'operation_id':key,'state':'deleted'}
         owners=[r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(plan['session'],))]
         records={owner:[dict(r) for r in conn.execute('SELECT id,episode FROM tasks WHERE owner=?',(owner,))] for owner in owners}
-    if external_blockers(owners):raise ValueError('A schedule or memory worker is still active; disable/wait before erasure')
+    if external_blockers(owners,store.path):raise ValueError('A transport, schedule or memory worker is still active; cancel/wait before erasure')
+    from communication_store import CommunicationStore
+    for owner,path in transports(owners,store.path):CommunicationStore(path).erase_session(owner)
     erase_schedules(owners)
+    trace_path=Path(os.environ.get('AGENT_TRACE_DB') or Path(os.environ.get('LOCALAPPDATA',Path.home()))/'PythonAI'/'traces.db')
+    if trace_path.exists():
+        identity(trace_path)
+        with closing(sqlite3.connect(trace_path)) as conn,conn:
+            if 'spans' in tables(conn):
+                for owner in owners:conn.execute("UPDATE spans SET metadata='{}',episode=NULL,status='deleted' WHERE owner=?",(owner,))
     # Indexes are rebuildable caches. Drop cached text for this owner/workspace
     # so raw deleted source is not left available in a stale search snapshot.
     from agent_execution.code_index import CodeIndex
-    index=CodeIndex()
+    index=CodeIndex(initialize_embeddings=False)
     if index.path.exists():
         with closing(index.connect()) as conn,conn:
             if 'ci_files' in tables(conn):conn.execute('DELETE FROM ci_files')
@@ -121,6 +142,7 @@ def finalize(store,key,runtime=None,event_store=None):
         source,user,project,session=json.loads(owner)
         episodes=[row['episode'] for row in records[owner] if row['episode'] is not None]
         erase_memory(tenant_memory_path(user,project,session))
+        if source=='api':erase_memory(tenant_memory_path(user,project,''),episodes)
         if runtime is not None and getattr(runtime,'memory',None) is not None:
             erase_memory(runtime.memory.db_path,episodes)
         if source=='websocket' and event_store is not None and user.startswith('websocket:') and session.startswith(project+':'):
@@ -141,5 +163,6 @@ def finalize(store,key,runtime=None,event_store=None):
                 conn.execute("UPDATE agent_events SET data='{}' WHERE owner=?",(owner,))
         conn.execute("UPDATE wl_sessions SET state='deleted' WHERE id=?",(plan['session'],))
         conn.execute("UPDATE wl_outbox SET state='completed' WHERE session=?",(plan['session'],))
+        conn.execute('INSERT OR IGNORE INTO wl_audit VALUES(?,?,?,?,?,?,?)',(key,plan['principal'],plan['session'],'deleted',sum(r['files'] for r in plan['payload']['items']),sum(r['bytes'] for r in plan['payload']['items']),time.time()))
     if runtime is not None:runtime.messages=[m for m in runtime.messages if m.get('role')=='system']
     return {'operation_id':key,'state':'deleted'}

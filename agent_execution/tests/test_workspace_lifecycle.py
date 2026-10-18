@@ -367,7 +367,8 @@ class LifecycleTests(unittest.TestCase):
         plan=self.store.preview('delete_session')
         self.assertEqual(self.store.confirm(plan['plan_id'])['state'],'completed')
         runtime=SimpleNamespace(memory=memory,messages=[{'role':'system','content':'system'},{'role':'user','content':'private'}])
-        self.assertEqual(finalize(self.store,plan['plan_id'],runtime)['state'],'deleted')
+        with patch('agent_execution.code_index.index.Embeddings',side_effect=AssertionError('Cleanup must not initialize a model provider')):
+            self.assertEqual(finalize(self.store,plan['plan_id'],runtime)['state'],'deleted')
         self.assertEqual(finalize(self.store,plan['plan_id'],runtime)['state'],'deleted')
         self.assertEqual(len(runtime.messages),1)
         self.assertEqual(memory.get_episode(episode)['status'],'deleted')

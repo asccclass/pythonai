@@ -60,7 +60,7 @@ M2 實作：原生 handle、same-volume rename、ACL 保護、extended/virtualiz
   - 在既有 desktop_assistant 加「刪除對話」、保留程式選項、preview／確認／刪除中／blocked／完成與狀態查詢。
   - 能力協商未通過時停用新功能；不把本機刪訊息當後端刪 session；確保重連補送不復活對話。
   - 驗收：真實 localhost WS fixture、兩個裝置、重複點擊、斷線／重連與後端版本不支援案例通過；MyAI repo 獨立 commit。
-- [ ] **W13 — 其他人類通道與最小稽核**（W12）
+- [x] **W13 — 其他人類通道與最小稽核**（W12）
   - CLI／Telegram／管理 UI 共用服務接口；完成清理後清除 checkpoint、工具輸入輸出、原始 episodic 對話與檢索索引；共用記憶僅解除已刪原始內容引用，不全域刪除。記錄摘要、操作者、結果、阻擋原因，不留已刪內容全文。
   - 驗收：不同 transport 的相同政策與冪等結果；不因「清理」自動發送未授權訊息；fixture 與正式通道結果分開記錄。
 
@@ -81,7 +81,7 @@ M3 交付門檻：以獨立可丟棄 session／目錄完成首次永久清理，
 
 M3 的 MyAI／WebSocket 與 CLI 主流程已接入：canonical session 跨裝置歸屬、own-session 窄範圍人工確認、exact-list／generation／manifest 批准、原生隔離與永久清理、outbox 資料清除、持久化 tombstone、防止遲到 task／memory 寫入、共用與 retained 保留。MyAI 保存不確定操作，重連查詢原 plan；UI 提供逐項保留、取消、確認與 blocked 續跑。不同 token 分區用後端 instance／canonical session 清除本機歷史。
 
-W03 後續已完成：Skill／host 提供明確 `program_directory`，先登記、同目錄沿用、building／ready／failed 狀態與中斷後人工 recover-build；一般 write/edit／scaffold 失敗保留部分內容。Skill 切換稽核 source 時繼承原 session 歸屬，排程保存該映射；worktree／coordinator dispatch 登記保留資源，在清理預覽顯示，保留 Git 流程，沒有自行遞迴刪 Git 內容。未知外部副作用不依名稱或事後 diff 自動接管。W13 仍待通訊資料 consumer。W10 的停止流程採先明確中斷並等待 task／lease／worker 結束；清理本身不強殺外部程序。
+W03 後續已完成：Skill／host 提供明確 `program_directory`，先登記、同目錄沿用、building／ready／failed 狀態與中斷後人工 recover-build；一般 write/edit／scaffold 失敗保留部分內容。Skill 切換稽核 source 時繼承原 session 歸屬，排程保存該映射；worktree／coordinator dispatch 登記保留資源，在清理預覽顯示，保留 Git 流程，沒有自行遞迴刪 Git 內容。未知外部副作用不依名稱或事後 diff 自動接管。W13 已補通訊資料 consumer，見下方紀錄。W10 的停止流程採先明確中斷並等待 task／lease／worker 結束；清理本身不強殺外部程序。
 
 W14 手冊位於模組 README。W15 本機驗證完成後記錄結果；外部 provider、正式 Telegram、乾淨 Windows／實際發布 exe 及正式使用者手動流程不計入 fixture 通過。現有 `workspace/go_hello_world`／`hello_world` 持續 unmanaged，未刪除、未納入提交。
 
@@ -90,3 +90,11 @@ W14 手冊位於模組 README。W15 本機驗證完成後記錄結果；外部 p
 MyAI：全套 unittest 97 tests OK（86.923 秒）；已重建 `dist/MyAI/MyAI.exe`，另行驗證封裝版 health／WS 認證／正常退出（1 test OK），檢查實際畫面包含刪除對話按鈕。桌面 commit `619629a`。未重啟正式後端、未刪正式 session；W15 的正式／乾淨機驗收仍未勾選。
 
 W03 後續驗證：生命週期／worktree／base／Skill／coordinator／排程專項 128 passed、10 subtests passed；MyAI 預覽 worktree 保留說明的 4 項測試通過。全套回歸留至 W15 在最終固定版本執行。
+
+## 2026-10-18 W13 功能收尾
+
+已完成 communication session heads／states、訊息／工作／附件／delivery 的 session migration、刪除 fence、終止等待、原始資料清除、遲到結果／平台重播拒絕，以及 `/new-session`。可在同一使用者／專案／聊天室的新 session 中查詢或續跑舊操作，且不切回舊 session。刪除中或 blocked 操作回覆最小狀態；原始內容不回寫。無法證明歸屬的舊訊息保留並列出數量，不刪其他使用者或專案。
+
+管理網頁／HTTP 已接入同一服務，提供 preview／confirm／status／resume、切換身份使預覽失效、重載後以操作 ID 查詢，無自動批准／重播。新增 wl_audit 最小稽核、清除 trace metadata 並拒絕晚到 finish，搜尋快取清除不依賴模型 provider 初始化。操作說明已同步至模組 README。
+
+通訊 worker／HTTP／真正 Chromium 預覽、取消、確認及重載查詢共 9 項測試通過；較早通訊、session、排程、生命週期專項 87 passed、1 skipped。最終完整回歸與封裝於 W15 記錄。Telegram adapter 使用受控傳送器，不發送實際 Telegram 訊息。

@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from communication_models import AgentCommand, InboundAttachment, InboundMessage
+from agent_execution.workspace_lifecycle.communication import LifecycleCommunication,DeletedConversation,cleanup_control
 
 
 DEFAULT_COMMUNICATION_DB = Path(__file__).resolve().parent / "communication" / "communication.db"
@@ -20,7 +21,7 @@ def communication_db_path() -> Path:
     return Path(os.environ.get("COMMUNICATION_DB_PATH", DEFAULT_COMMUNICATION_DB))
 
 
-class CommunicationStore:
+class CommunicationStore(LifecycleCommunication):
     def __init__(self, db_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else communication_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +88,7 @@ class CommunicationStore:
                     reply_context TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
                     lease REAL, error TEXT, expires REAL NOT NULL);
             ''')
+            self.lifecycle_initialize(connection)
             connection.commit()
 
     @staticmethod
@@ -126,9 +128,13 @@ class CommunicationStore:
 
     def load_attachments(self, command_id, owner):
         with closing(self.connect()) as connection:
-            job = connection.execute('SELECT platform,sender_id,conversation_id,project FROM agent_command_jobs WHERE command_id=?', (command_id,)).fetchone()
+            job = connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?', (command_id,)).fetchone()
             if job is None or self.attachment_owner(owner) != json.dumps([job['platform'],job['sender_id'],job['conversation_id'],job['project']], separators=(',', ':')):
                 raise PermissionError('Attachment belongs to another identity/session/project')
+            if getattr(owner,'session','') and owner.session!=job['session']:raise PermissionError('Attachment belongs to a different conversation session')
+            if self.lifecycle_state(_command_from_row(job),connection)!='active':
+                if cleanup_control(job['text']):return ()
+                raise DeletedConversation('Attachments were deleted with the conversation')
             rows = connection.execute('SELECT * FROM comm_attachments WHERE command_id=? AND owner=? ORDER BY ordinal',
                                       (command_id,self.attachment_owner(owner))).fetchall()
         result = []
@@ -166,7 +172,9 @@ class CommunicationStore:
     def owner_filter(owner):
         if owner is None:
             return "1=1", ()
-        return "platform=? AND conversation_id=? AND sender_id=? AND project=?", (owner.platform, owner.conversation_id, owner.sender_id, owner.project)
+        clause="platform=? AND conversation_id=? AND sender_id=? AND project=?"
+        values=(owner.platform, owner.conversation_id, owner.sender_id, owner.project)
+        return (clause+' AND session=?',(*values,owner.session)) if getattr(owner,'session','') else (clause,values)
 
     def cancel_session(self, owner):
         clause, values = self.owner_filter(owner)
@@ -189,7 +197,14 @@ class CommunicationStore:
         return {key: payload[key] for key in ("token", "application_id", "interaction_id", "received_at") if key in payload}
 
     def record_inbound_message(self, message: InboundMessage) -> tuple[int, bool]:
+        recovery=self.recovery_session(message)
         with closing(self.connect()) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            previous=connection.execute("SELECT id,sender_id,conversation_id,project FROM comm_messages WHERE platform=? AND platform_message_id=? AND direction='inbound'",(message.platform,message.platform_message_id)).fetchone()
+            if previous:
+                if (previous['sender_id'],previous['conversation_id'],previous['project'])!=(message.sender_id,message.conversation_id,message.project):raise PermissionError('Duplicate input belongs to another owner')
+                return previous['id'],False
+            session=self.incoming_session(connection,message,recovery_session=recovery)
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO comm_messages (
@@ -219,13 +234,20 @@ class CommunicationStore:
                     (message.platform, message.platform_message_id),
                 ).fetchone()
                 message_id = int(row["id"])
+            connection.execute('UPDATE comm_messages SET project=?,session=?,owner_sender=? WHERE id=?',(message.project,session,message.sender_id,message_id))
             connection.commit()
             return message_id, inserted
 
     def enqueue_command(self, message: InboundMessage, source_message_id: int) -> AgentCommand:
         command_id = message.idempotency_key
+        recovery=self.recovery_session(message)
         with closing(self.connect()) as connection, connection:
             connection.execute('BEGIN IMMEDIATE')
+            existing=connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?',(command_id,)).fetchone()
+            if existing:
+                if self.attachment_owner(message)!=self.attachment_owner(_command_from_row(existing)):raise PermissionError('Duplicate command belongs to another owner')
+                return _command_from_row(existing)
+            session=self.incoming_session(connection,message,source_message_id,recovery)
             self.save_attachments(connection, message)
             connection.execute(
                 """
@@ -245,10 +267,12 @@ class CommunicationStore:
                     message.project,
                 ),
             )
+            connection.execute('UPDATE agent_command_jobs SET session=? WHERE command_id=? AND session=\'\'',(session,command_id))
             connection.commit()
         return self.command_by_id(command_id, include_attachments=True)
 
     def ingest_inbound_message(self, message: InboundMessage) -> tuple[AgentCommand, bool]:
+        recovery=self.recovery_session(message)
         with closing(self.connect()) as connection, connection:
             connection.execute('BEGIN IMMEDIATE')
             old = connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?', (message.idempotency_key,)).fetchone()
@@ -256,12 +280,15 @@ class CommunicationStore:
                 if self.attachment_owner(message) != self.attachment_owner(_command_from_row(old)):
                     raise PermissionError('Duplicate event belongs to another identity/session/project')
                 return _command_from_row(old), False
+            session=self.incoming_session(connection,message,recovery_session=recovery)
             self.save_attachments(connection, message)
             connection.execute("INSERT OR IGNORE INTO comm_messages(platform,platform_message_id,conversation_id,sender_id,direction,text,raw_payload) VALUES(?,?,?,?,'inbound',?,?)",
                 (message.platform,message.platform_message_id,message.conversation_id,message.sender_id,message.text,json.dumps(raw_payload_with_attachment_metadata(message),ensure_ascii=False)))
             message_id = connection.execute("SELECT id FROM comm_messages WHERE platform=? AND platform_message_id=? AND direction='inbound'", (message.platform,message.platform_message_id)).fetchone()[0]
             connection.execute('INSERT INTO agent_command_jobs(command_id,platform,conversation_id,sender_id,text,source_message_id,delivery_ready,project) VALUES(?,?,?,?,?,?,?,?)',
                 (message.idempotency_key,message.platform,message.conversation_id,message.sender_id,message.text,message_id,0 if message.platform=='discord' else 1,message.project))
+            connection.execute('UPDATE agent_command_jobs SET session=? WHERE command_id=?',(session,message.idempotency_key))
+            connection.execute('UPDATE comm_messages SET project=?,session=?,owner_sender=? WHERE id=?',(message.project,session,message.sender_id,message_id))
         return self.command_by_id(message.idempotency_key, include_attachments=True), True
 
     def pending_commands(self, limit: int = 10) -> list[AgentCommand]:
@@ -269,7 +296,7 @@ class CommunicationStore:
             rows = connection.execute(
                 """
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
-                       requires_confirmation, source_message_id, project
+                       requires_confirmation, source_message_id, project, session
                 FROM agent_command_jobs
                 WHERE status = 'pending' AND delivery_ready=1
                 ORDER BY id ASC
@@ -292,7 +319,7 @@ class CommunicationStore:
             row = connection.execute(
                 """
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
-                       requires_confirmation, source_message_id, project
+                       requires_confirmation, source_message_id, project, session
                 FROM agent_command_jobs
                 WHERE command_id = ?
                 """,
@@ -308,6 +335,9 @@ class CommunicationStore:
 
     def mark_command_running(self, command_id: str) -> bool:
         with closing(self.connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row=connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?',(command_id,)).fetchone()
+            if row and self.lifecycle_state(_command_from_row(row),connection)!='active' and not cleanup_control(row['text']) and not row['text'].startswith('/cancel '):return False
             cursor = connection.execute("UPDATE agent_command_jobs SET status='running', attempts=attempts+1, updated_at=CURRENT_TIMESTAMP WHERE command_id=? AND status IN ('pending','suspended')",
                                         (command_id,))
             return cursor.rowcount == 1
@@ -331,7 +361,7 @@ class CommunicationStore:
             rows = connection.execute(
                 f"""
                 SELECT command_id, platform, conversation_id, sender_id, text, status,
-                       requires_confirmation, source_message_id, project
+                       requires_confirmation, source_message_id, project, session
                 FROM agent_command_jobs
                 WHERE {clause}
                 ORDER BY id DESC
@@ -344,7 +374,7 @@ class CommunicationStore:
     def is_cancel_requested(self, command_id: str) -> bool:
         with closing(self.connect()) as connection:
             row = connection.execute("SELECT status FROM agent_command_jobs WHERE command_id = ?", (command_id,)).fetchone()
-            return row is not None and row["status"] in {"cancel_requested", "cancelled"}
+            return row is not None and row["status"] in {"cancel_requested", "cancelled", "deleted"}
             
     def resolve_command_id(self, prefix: str, owner=None) -> str | None:
         if not prefix:
@@ -357,6 +387,9 @@ class CommunicationStore:
 
     def suspend_command(self, command_id: str, state_json: str, tool_call_id: str) -> None:
         with closing(self.connect()) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row=connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?',(command_id,)).fetchone()
+            if row and self.lifecycle_state(_command_from_row(row),connection)!='active':return
             connection.execute(
                 "UPDATE agent_command_jobs SET status = 'suspended', state = ?, suspended_tool_call_id = ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ? AND status IN ('pending','running')",
                 (state_json, tool_call_id, command_id)
@@ -408,13 +441,18 @@ class CommunicationStore:
             connection.commit()
             return int(cursor.lastrowid)
 
-    def queue_delivery(self, command, text, reply_context, is_error=False):
+    def queue_delivery(self, command, text, reply_context, is_error=False, *, cleanup_receipt=False):
         from agent_execution.delivery import CapacityError, positive_limit
         # Include content in the key: a suspended question and its final reply are separate deliveries.
         digest = hashlib.sha256(text.encode()).hexdigest()
         key = f"{command.command_id}:{'error' if is_error else 'outbound'}:{digest}"
         with closing(self.connect()) as connection, connection:
             connection.execute('BEGIN IMMEDIATE')
+            if self.lifecycle_state(command,connection)!='active':
+                if not cleanup_receipt or not cleanup_control(command.text):raise DeletedConversation('Deleted conversation cannot queue replies')
+                result=json.loads(text)
+                if set(result)!={'operation_id','state'} or result['state'] not in {'deleted','blocked','deleting','preview','completed'} or not re.fullmatch('[0-9a-f]{32}',result['operation_id']):raise PermissionError('Only a minimal cleanup receipt is permitted')
+                reply_context={}
             if connection.execute('SELECT 1 FROM comm_deliveries WHERE id=?', (key,)).fetchone():
                 return key
             if len(text.encode()) > 2*1024*1024 or connection.execute('SELECT COUNT(*) FROM comm_deliveries').fetchone()[0] >= positive_limit('COMM_DELIVERY_LIMIT',10000):
@@ -424,6 +462,7 @@ class CommunicationStore:
                 raise CapacityError('Platform delivery storage capacity reached')
             connection.execute('INSERT INTO comm_deliveries(id,platform,conversation,sender,project,text,reply_context,expires) VALUES(?,?,?,?,?,?,?,?)',
                 (key,command.platform,command.conversation_id,command.sender_id,command.project,text,json.dumps(reply_context),time.time()+positive_limit('COMM_DELIVERY_TTL',7*86400)))
+            connection.execute('UPDATE comm_deliveries SET session=?,cleanup_receipt=? WHERE id=?',(command.session or command.platform+':'+command.conversation_id,int(cleanup_receipt),key))
         return key
 
     def pending_deliveries(self, delivery_id=None):
@@ -432,20 +471,24 @@ class CommunicationStore:
 
     def claim_delivery(self, key):
         with closing(self.connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row=connection.execute('SELECT * FROM comm_deliveries WHERE id=?',(key,)).fetchone()
+            if row and not row['cleanup_receipt'] and connection.execute("SELECT 1 FROM comm_session_states WHERE platform=? AND sender=? AND project=? AND session=? AND state!='active'",(row['platform'],row['sender'],row['project'],row['session'])).fetchone():return False
             return connection.execute("UPDATE comm_deliveries SET state='sending',lease=? WHERE id=? AND state='pending' AND expires>?", (time.time()+120,key,time.time())).rowcount == 1
 
     def finish_delivery(self, key, state, error=None):
         with closing(self.connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
             row = connection.execute("SELECT * FROM comm_deliveries WHERE id=? AND state='sending'", (key,)).fetchone()
             if row is None:
                 return
             connection.execute('UPDATE comm_deliveries SET state=?,error=?,lease=NULL WHERE id=?', (state,error,key))
             if state == 'sent':
-                connection.execute("INSERT OR IGNORE INTO comm_messages(platform,platform_message_id,conversation_id,sender_id,direction,text,status) VALUES(?,?,?,'agent','outbound',?,'sent')", (row['platform'],key,row['conversation'],row['text']))
+                connection.execute("INSERT OR IGNORE INTO comm_messages(platform,platform_message_id,conversation_id,sender_id,direction,text,status,project,session,owner_sender) VALUES(?,?,?,'agent','outbound',?,'sent',?,?,?)", (row['platform'],key,row['conversation'],row['text'],row['project'],row['session'],row['sender']))
 
     def delivery_status(self, owner):
         with closing(self.connect()) as connection:
-            return [dict(row) for row in connection.execute('SELECT id,state,error,expires FROM comm_deliveries WHERE platform=? AND conversation=? AND sender=? AND project=? ORDER BY rowid DESC LIMIT 20', (owner.platform,owner.conversation_id,owner.sender_id,owner.project))]
+            return [dict(row) for row in connection.execute('SELECT id,state,error,expires FROM comm_deliveries WHERE platform=? AND conversation=? AND sender=? AND project=? AND session=? ORDER BY rowid DESC LIMIT 20', (owner.platform,owner.conversation_id,owner.sender_id,owner.project,owner.session or owner.platform+':'+owner.conversation_id))]
 
     def recent_messages(self, limit: int = 20) -> list[dict[str, Any]]:
         with closing(self.connect()) as connection:
@@ -477,6 +520,13 @@ class CommunicationStore:
     ) -> None:
         attempts_sql = "attempts = attempts + 1," if increment_attempts else ""
         with closing(self.connect()) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row=connection.execute('SELECT * FROM agent_command_jobs WHERE command_id=?',(command_id,)).fetchone()
+            if row and self.lifecycle_state(_command_from_row(row),connection)!='active':
+                if self.lifecycle_state(_command_from_row(row),connection)=='deleting' and status in {'completed','failed'}:
+                    connection.execute("UPDATE agent_command_jobs SET status='cancelled',result_text='',last_error=NULL,state=NULL,suspended_tool_call_id=NULL WHERE command_id=?",(command_id,))
+                    connection.commit()
+                return
             connection.execute(
                 f"""
                 UPDATE agent_command_jobs
@@ -504,10 +554,12 @@ def _command_from_row(row: sqlite3.Row) -> AgentCommand:
         requires_confirmation=bool(row["requires_confirmation"]),
         source_message_id=int(row["source_message_id"]) if row["source_message_id"] is not None else None,
         project=str(row["project"]),
+        session=str(row['session']) if 'session' in row.keys() else '',
     )
 
 
 def raw_payload_with_attachment_metadata(message: InboundMessage) -> dict[str, Any]:
+    if cleanup_control(message.text) or message.text.strip()=='/new-session':return {}
     payload = dict(message.raw_payload or {})
     if message.attachments:
         payload["attachments"] = [

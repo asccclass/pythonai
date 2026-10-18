@@ -23,7 +23,14 @@ def execute_payload(job):
     if scope.get('workspace'):
         from ..policy import resolve_path
         with execution_scope(**{k:v for k,v in scope.items() if k!='workspace'},workspace=None):
-            if resolve_path('.')!=scope['workspace']:return 'needs_input','','Workspace configuration changed'
+            configured=resolve_path('.')
+            if configured!=scope['workspace']:
+                from ..workspace_lifecycle import LifecycleStore
+                managed=LifecycleStore()
+                if not scope['workspace'].is_relative_to(configured):return 'needs_input','','Workspace configuration changed'
+                managed.assert_writable(scope['workspace'])
+                key=managed.containing_directory(scope['workspace'])
+                if not key or managed.get(key)['build_state']!='ready':return 'needs_input','','Managed program workspace is not ready'
     payload=json.loads(job['job_payload']);kind=job['job_type']
     with set_current_role(role),execution_scope(**scope,task_id=job.get('occurrence')):
         from ..workspace_lifecycle import LifecycleStore

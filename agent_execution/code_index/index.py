@@ -76,8 +76,8 @@ def buckets(vector):
     return result
 
 class CodeIndex:
-    def __init__(self):
-        self.root=resolve_path('.');self.embeddings=Embeddings()
+    def __init__(self, initialize_embeddings=True):
+        self.root=resolve_path('.');self.embeddings=Embeddings() if initialize_embeddings else None
         directory=os.environ.get('AGENT_CODE_INDEX_DIR')
         context=current_context()
         from ..workspace_lifecycle.store import principal

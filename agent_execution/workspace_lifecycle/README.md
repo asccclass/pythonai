@@ -24,7 +24,11 @@ Windows 操作使用原生 pinned handle，移動透過 `NtSetInformationFile` �
 
 MyAI 連上支援 `workspace_lifecycle.version=1` 的後端後，可使用「刪除對話」。預覽列出永久刪除目錄、檔案數／容量、保留原因、未納管目錄數及要停用的排程；勾選「保留程式」會變更登記並重新預覽。只有使用者確認目前清單才提交刪除。離線、舊後端或停用 capability 時不提供批准；斷線後查詢原 plan，不自動重送確認。
 
-CLI 使用 `/session-delete preview`，檢閱後 `/session-delete confirm <plan-id>`；`/session-delete status <plan-id>` 查詢並完成資料清除，`/session-delete resume <plan-id>` 續跑原清單。預覽 300 秒過期只使批准失效，不會刪除資料。CLI 刪除 session 後，另開新 session 請以新的 `AGENT_SESSION_ID` 啟動；不要重用已刪除 ID。Telegram／其他 communication transport 尚無完整資料清除 consumer，現在拒絕 session-delete，避免只刪程式卻留下傳輸資料而誤報完成。
+CLI／Telegram／其他 communication transport 使用 `/session-delete preview`，檢閱後 `/session-delete confirm <plan-id>`；`/session-delete status <plan-id>` 查詢並完成資料清除，`/session-delete resume <plan-id>` 續跑原清單。預覽 300 秒過期只使批准失效，不會刪除資料。CLI 刪除 session 後，另開新 session 請以新的 `AGENT_SESSION_ID` 啟動；不要重用已刪除 ID。通訊通道使用 `/new-session` 明確開始新對話；新 session 不會繼承已刪內容。即使已另開新 session，同一使用者／專案／聊天室仍能以原操作 ID 查詢及續跑舊操作，不改變目前 session。其他使用者、聊天室及專案不能使用該操作。
+
+通訊刪除會持久化 session fence，再清空可證明歸屬的原始訊息、附件 bytes／檔名／平台檔案 ID、待送內容、checkpoint 及結果。執行中／等待／暫停工作與送出中的有效 lease 阻擋清理；先 `/cancel <job-id>` 並等待程序真正停止。刪除中與完成後僅回傳操作 ID／狀態的精簡回條，拒絕遲到結果重寫；平台重播被接收確認，但不重新保存已刪內容。不會呼叫外部平台 API 刪除聊天室歷史。舊資料若缺乏可驗證的 owner／session，列為 `legacy_unmanaged_messages` 保留，不能依同聊天室推測歸屬。
+
+管理網頁提供「清理目前會話」：預覽、永久確認、狀態及原清單續跑。僅處理目前 Token／專案／會話，切換身份會使預覽失效；重載後可貼回原操作 ID 查詢，不自動重送確認。HTTP 使用 `GET /api/workspace`、`POST /api/session-delete/preview|confirm|status|resume`；後三者 body 僅接受 `{"plan_id":"..."}`，不接受 owner、路徑等覆寫。沿用 API Bearer 認證及管理角色限制。所有通道共用同一清理協調器；最小稽核 `wl_audit` 保留操作、身份、session、結果與檔案總量，不存對話全文。
 
 執行中的 task／coordinator、live schedule lease／memory worker 或 MyAI chat／audio 會阻擋；先明確中斷任務並等待實際結束，再重新預覽。清理不強殺外部程序。確認後先持久化 deleting tombstone，停止新 task、引用與工具；停用凍結清單內的排程，再隔離與 purge。所有目錄完成後，outbox 清除 checkpoint、工具內容、原始 episodic 對話、批准參數、排程內容與結果、owner 檢索快取及可靠事件。共用衍生記憶依政策保留。保留最小狀態／ID／摘要／結果供防重播及恢復；這是邏輯刪除，不承諾覆寫 SQLite 空閒頁、磁碟或備份。
 

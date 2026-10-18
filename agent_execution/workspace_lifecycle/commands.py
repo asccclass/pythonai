@@ -1,6 +1,7 @@
 """Human-only commands. Never register this dispatcher as a model tool."""
 import json
 import shlex
+from contextlib import closing
 from permissions import current_role
 from .store import LifecycleStore
 
@@ -12,10 +13,11 @@ def human_command(text,runtime=None):
     store=LifecycleStore()
     if parts[0]=='/session-delete':
         from agent_execution.policy import current_context
-        if current_context().source not in {'local','websocket'}:
-            raise PermissionError('Session deletion is available in CLI and MyAI WebSocket; this transport has no data-erasure consumer yet')
+        if current_context().source not in {'local','websocket','api','communication'} or (current_context().source=='communication' and current_context().communication_db is None):
+            raise PermissionError('Session deletion requires a registered human transport')
         if parts[1:]==['preview']:return json.dumps(store.preview('delete_session'),ensure_ascii=False)
         if len(parts)==3 and parts[1]=='confirm':
+            if store.plan(parts[2])['action']!='delete_session':raise ValueError('Not a session deletion')
             result=store.confirm(parts[2])
             if result['state']=='completed':
                 from .erasure import finalize
@@ -28,13 +30,13 @@ def human_command(text,runtime=None):
             if parts[1]=='resume':
                 from .operations import resume
                 resume(store,parts[2])
-            with store.connect() as conn:
+            with closing(store.connect()) as conn:
                 row=conn.execute('SELECT id,state,error FROM wl_operations WHERE id=?',(parts[2],)).fetchone()
             if row and row['state']=='completed':
                 from .erasure import finalize
                 from agent_execution.delivery import EventStore
                 return json.dumps(finalize(store,parts[2],runtime,EventStore()),ensure_ascii=False)
-            return json.dumps(dict(row) if row else {'state':'preview'},ensure_ascii=False)
+            return json.dumps({'operation_id':parts[2],**(dict(row) if row else {'state':'preview'})},ensure_ascii=False)
         raise ValueError('Usage: /session-delete preview | confirm|status|resume <plan-id>')
     if parts[1:]==['list']:return json.dumps(store.inventory(),ensure_ascii=False)
     if len(parts)==3 and parts[1]=='recover-build':

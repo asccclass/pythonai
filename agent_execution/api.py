@@ -43,6 +43,14 @@ def authenticated_api(path, method, body, headers):
     route = urlparse(path).path.rstrip("/")
     session = f"{project}:{session}"
     with set_current_role(role), execution_scope(source="api", identity=identity, session=session, project=project):
+        if route=='/api/workspace' or route.startswith('/api/session-delete/'):
+            from .workspace_lifecycle.http import handle
+            from .sessions import project_workspace
+            try:
+                with execution_scope(workspace=project_workspace(project)):
+                    return handle(route,method,body)
+            except PermissionError as error:return 403,{'error':'cleanup_rejected','message':str(error)}
+            except (ValueError,OSError) as error:return 409,{'error':'cleanup_blocked','message':str(error)}
         if route.startswith('/api/ops/'):
             if method!='GET' or role!='admin':return 403,{'error':'forbidden'}
             if route=='/api/ops/readiness':

@@ -374,6 +374,16 @@
         <div id="review-detail"></div>
         <div id="review-approvals"></div>
       </section>
+      <section aria-label="清理目前會話">
+        <h2>清理目前會話</h2>
+        <p>只處理上方 Token／專案／會話所屬資料。暫存程式保留到刪除會話；保留、共用及未登記目錄不刪除。</p>
+        <button id="cleanup-preview" type="button">預覽刪除</button>
+        <label>操作 ID <input id="cleanup-operation" maxlength="32" placeholder="可貼上原操作 ID 查詢／恢復"></label>
+        <button id="cleanup-confirm" type="button" disabled>確認永久刪除</button>
+        <button id="cleanup-status" type="button" disabled>查詢狀態</button>
+        <button id="cleanup-resume" type="button" disabled>續跑原清單</button>
+        <pre id="cleanup-result" style="white-space:pre-wrap"></pre>
+      </section>
   </main>
 
   <script>
@@ -411,6 +421,48 @@
       }
       return payload;
     }
+
+    let cleanupPlan = null;
+    let cleanupScope = null;
+    let cleanupBusy = false;
+    const cleanupIdentity = () => JSON.stringify([$('api-token').value,$('api-project').value,session()]);
+    function resetCleanup() {
+      cleanupPlan = null; cleanupScope = null;
+      for (const action of ['confirm','status','resume']) $('cleanup-'+action).disabled = true;
+      $('cleanup-result').textContent = '';
+      $('cleanup-operation').value='';
+    }
+    for (const field of ['api-token','api-project','api-session']) $(field).addEventListener('input',resetCleanup);
+    $('cleanup-operation').addEventListener('input',()=>{
+      cleanupPlan=$('cleanup-operation').value.trim();cleanupScope=cleanupIdentity();
+      $('cleanup-confirm').disabled=true;$('cleanup-resume').disabled=true;
+      $('cleanup-status').disabled=!/^[0-9a-f]{32}$/.test(cleanupPlan);
+    });
+    async function cleanup(action) {
+      if (cleanupBusy) return;
+      const scope = cleanupIdentity();
+      if (action !== 'preview' && (!cleanupPlan || cleanupScope !== scope)) return;
+      if (action === 'confirm' && !confirm('確認永久刪除目前預覽中的會話及暫存程式？此動作無法還原。')) return;
+      if (action === 'resume' && !confirm('續跑原先已批准的清單？已刪除部分無法還原。')) return;
+      cleanupBusy = true;
+      try {
+        const result = await api('/api/session-delete/'+action,{method:'POST',body:JSON.stringify(action==='preview'?{}:{plan_id:cleanupPlan})});
+        if (cleanupIdentity() !== scope) return;
+        $('cleanup-result').textContent = JSON.stringify(result,null,2);
+        if (action === 'preview') {
+          cleanupPlan=result.plan_id;cleanupScope=scope;
+          $('cleanup-operation').value=cleanupPlan;
+          $('cleanup-confirm').disabled=Boolean(result.blocking_tasks?.length);
+          $('cleanup-status').disabled=false;
+        } else {
+          $('cleanup-confirm').disabled=true;
+          $('cleanup-resume').disabled=result.state!=='blocked';
+        }
+        if (result.state==='deleted') { $('cleanup-status').disabled=false; $('cleanup-resume').disabled=true; }
+      } catch(error) { if (cleanupIdentity() === scope) { $('cleanup-result').textContent=error.message; $('cleanup-confirm').disabled=true; } }
+      finally { cleanupBusy=false; }
+    }
+    for (const action of ['preview','confirm','status','resume']) $('cleanup-'+action).addEventListener('click',()=>cleanup(action));
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, ch => ({

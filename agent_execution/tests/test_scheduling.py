@@ -30,6 +30,16 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(next_time('30 9 * * *','Asia/Taipei',datetime(2026,10,10,0,0,tzinfo=timezone.utc)),'2026-10-10T01:30:00+00:00')
         for text in ['tomorrow morning','每 99 分鐘','每天 25:10']:
             with self.assertRaises(ValueError):natural_cron(text)
+
+    def test_schedule_can_reenter_registered_program_directory(self):
+        from agent_execution.workspace_lifecycle import program_directory
+        from agent_execution.scheduling.engine import execute_payload
+        with execution_scope(workspace=self.root):
+            with program_directory('program'):
+                job=self.due('command',{'command':['python','-c','print("verified")']})
+            with patch('base.run_command',return_value=__import__('subprocess').CompletedProcess([],0,'verified','')) as run:
+                self.assertEqual(execute_payload(job)[0],'completed')
+                run.assert_called_once()
     def test_atomic_claim_and_stale_due_snapshot(self):
         job=self.due();results=[]
         threads=[threading.Thread(target=lambda token=str(i):results.append(self.store.claim_due(job,token))) for i in range(4)]

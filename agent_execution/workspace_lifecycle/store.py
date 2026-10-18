@@ -88,6 +88,8 @@ class LifecycleStore:
                 id TEXT PRIMARY KEY,principal TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,task TEXT);
                 CREATE TABLE IF NOT EXISTS wl_resource_refs (
                 resource TEXT NOT NULL,session TEXT NOT NULL,PRIMARY KEY(resource,session));''')
+            conn.execute('CREATE TABLE IF NOT EXISTS wl_transports (session TEXT,owner TEXT,path TEXT,PRIMARY KEY(session,owner,path))')
+            conn.execute('CREATE TABLE IF NOT EXISTS wl_audit (operation TEXT PRIMARY KEY,principal TEXT,session TEXT,result TEXT,files INTEGER,bytes INTEGER,created REAL)')
 
     def connect(self):
         return self.tasks.connect()
@@ -102,6 +104,10 @@ class LifecycleStore:
             raise PermissionError('Conversation is deleting or deleted')
         from agent_execution.tasks import task_owner
         conn.execute('INSERT OR IGNORE INTO wl_session_owners VALUES(?,?)', (key, task_owner(current_context())))
+        context=current_context()
+        if context.communication_db is not None and context_parts(context)[0]=='communication':
+            owner=json.dumps(context_parts(context),separators=(',',':'))
+            conn.execute('INSERT OR IGNORE INTO wl_transports VALUES(?,?,?)',(key,owner,str(Path(context.communication_db).resolve())))
         return key
 
     def root(self, conn):
@@ -213,7 +219,7 @@ class LifecycleStore:
             for owner in owners:
                 if conn.execute("SELECT 1 FROM tasks WHERE owner=? AND (state NOT IN ('completed','failed','cancelled') OR COALESCE(lease_until,0)>?)",(owner,time.time())).fetchone():raise ValueError('A task still needs termination')
             from .erasure import external_blockers
-            if external_blockers(owners):raise ValueError('A worker is still active')
+            if external_blockers(owners,self.path):raise ValueError('A worker is still active')
             conn.execute("UPDATE wl_directories SET build_state='failed',generation=generation+1 WHERE id=?",(key,))
 
     def assert_writable(self, target):
@@ -296,12 +302,14 @@ class LifecycleStore:
                 for owner in owners:
                     for node in conn.execute('SELECT id,state,expires FROM agent_nodes WHERE owner=?',(owner,)):
                         if node['state'] not in SUCCESS|STOPPED or (node['expires'] or 0)>time.time():blocking.append('agent:'+node['id'])
-            from .erasure import external_blockers,schedules
-            blocking.extend(external_blockers(owners))
+            from .erasure import external_blockers,schedules,transports
+            from communication_store import CommunicationStore
+            blocking.extend(external_blockers(owners,self.path))
             known={Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?',(root,))}
             unmanaged_count=sum(p.is_dir() and p.name not in known and p.name!='.git' for p in path.iterdir())
             payload = {'session':session,'action':action,'items':items,'kept':kept,'blocking_tasks':blocking,'unmanaged_count':unmanaged_count,
                 'resources':self.resources(conn),
+                'transports':[CommunicationStore(path).lifecycle_summary(owner) for owner,path in transports(owners,self.path)],
                 'schedules':schedules(owners) if action=='delete_session' else []}
             plan = uuid.uuid4().hex
             conn.execute('INSERT INTO wl_plans(id,session,principal,action,payload,expires) VALUES(?,?,?,?,?,?)',

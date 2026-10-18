@@ -280,7 +280,7 @@ class CommunicationTests(unittest.TestCase):
             "communication_worker.run_agent_turn",
             return_value=SimpleNamespace(reply="agent reply"),
         ) as run_agent_turn:
-            runner = agent_runtime_command_runner(runtime, store=SimpleNamespace(is_cancel_requested=lambda key: False))
+            runner = agent_runtime_command_runner(runtime, store=SimpleNamespace(is_cancel_requested=lambda key: False,db_path=None,lifecycle_state=lambda command:'active'))
             reply = runner(command)
 
         self.assertEqual(reply.reply, "agent reply")
@@ -304,7 +304,7 @@ class CommunicationTests(unittest.TestCase):
             return SimpleNamespace(reply=str(base._auto_approve_commands.get()))
 
         with patch("communication_worker.run_agent_turn", side_effect=run_turn):
-            runner = agent_runtime_command_runner(runtime, store=SimpleNamespace(is_cancel_requested=lambda key: False))
+            runner = agent_runtime_command_runner(runtime, store=SimpleNamespace(is_cancel_requested=lambda key: False,db_path=None,lifecycle_state=lambda command:'active'))
             reply = runner(command)
 
         self.assertEqual(reply.reply, "True")
@@ -328,7 +328,7 @@ class CommunicationTests(unittest.TestCase):
         with patch.dict("os.environ", {"ROLES_CONFIG": "", "COMM_ADMIN_SENDERS": "telegram:123"}), \
                 patch("communication_worker.run_agent_turn", side_effect=run_turn):
             runner = agent_runtime_command_runner(isolated_runtime(),
-                store=SimpleNamespace(is_cancel_requested=lambda key: False))
+                store=SimpleNamespace(is_cancel_requested=lambda key: False,db_path=None,lifecycle_state=lambda command:'active'))
             self.assertEqual(runner(command).reply, "clean")
             tool.assert_called_once_with()
             with patch.dict("os.environ", {"COMM_ADMIN_SENDERS": "telegram:other"}):

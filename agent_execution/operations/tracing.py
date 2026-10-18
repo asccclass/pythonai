@@ -46,7 +46,7 @@ class TraceStore:
         with closing(self.connect()) as conn,conn:
             data=json.dumps(redact(metadata or {}),allow_nan=False)
             if len(data.encode())>8192:data=json.dumps({'truncated':True})
-            conn.execute('UPDATE spans SET status=?,elapsed=?,metadata=? WHERE id=? AND owner=?',(status,max(0,time.time()-record['started']),data,record['id'],record['owner']))
+            conn.execute("UPDATE spans SET status=?,elapsed=?,metadata=? WHERE id=? AND owner=? AND status!='deleted'",(status,max(0,time.time()-record['started']),data,record['id'],record['owner']))
     def list(self,trace_id=None):
         from ..policy import current_context
         from ..tasks import task_owner

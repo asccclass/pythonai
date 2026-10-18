@@ -57,7 +57,7 @@ def check_items(store,plan,conn):
         if conn.execute("SELECT 1 FROM tasks WHERE owner=? AND (state NOT IN ('completed','failed','cancelled') OR COALESCE(lease_until,0)>?)",(owner,time.time())).fetchone():
             raise ValueError('Task still active; wait for confirmed termination')
     from .erasure import external_blockers
-    if external_blockers(owners):raise ValueError('Disable schedules or wait for memory workers before cleanup')
+    if external_blockers(owners,store.path):raise ValueError('Cancel/wait for transport, schedule or memory work before cleanup')
     from .erasure import schedules
     if plan['action']=='delete_session' and schedules(owners)!=plan['payload'].get('schedules',[]):
         raise ValueError('Schedules changed; preview again')
@@ -122,14 +122,16 @@ def resume(store,key):
                 raise PermissionError('Cleanup lease expired or was replaced')
     try:
         if plan['action']=='delete_session':
-            from .erasure import disable_schedules,external_blockers,schedules
+            from .erasure import disable_schedules,external_blockers,schedules,transports
             with closing(store.connect()) as conn:
                 owners=[r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(plan['session'],))]
+            from communication_store import CommunicationStore
+            for owner,path in transports(owners,store.path):CommunicationStore(path).begin_session_deletion(owner)
             if plan['state']!='completed':
                 current=schedules(owners)
                 if current:
                     disable_schedules(owners,plan['payload'].get('schedules',[]))
-            if external_blockers(owners):raise ValueError('Waiting for workers to stop; files retained')
+            if external_blockers(owners,store.path):raise ValueError('Waiting for workers to stop; files retained')
         for item in plan['payload']['items']:
             fenced()
             with closing(store.connect()) as conn,conn:
