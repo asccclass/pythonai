@@ -75,6 +75,55 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
 
+## TP12：根預算、retry ownership 與取消矩陣
+
+新受理的 Temporal submission 會把 root budget 的不透明 reference、絕對 deadline 與
+immutable limits 保存到本機 `temporal_budget_contracts`。Workflow History 不包含 owner、
+limits 或用量；實際用量仍由 `task_budgets`／`budget_calls` 管理。Activity 進入可信 scope
+前會用既有 budget row 重建並核對 contract，設定重載、Worker 重啟或 continuation 都不能
+提高已受理任務的額度。TP12 前已存在且沒有 contract 的 M0／TP11 submission 維持相容讀取。
+
+Checkpoint 同時固定 iteration、provider retry 與 evaluation retry 上限；恢復只採用保存值，
+格式錯誤或超出 `0..256` 的 retry 上限直接拒絕。Retry ownership 固定如下：
+
+| 重試層 | 擁有者／上限 | 預算規則 |
+| --- | --- | --- |
+| OpenAI SDK hidden retry | 關閉，`max_retries=0` | 不允許 SDK 隱藏額外請求 |
+| provider retry | `server.run_agent` 保存的上限 | 每次實際 request 各自先保守預留 |
+| model／tool／evaluation Activity | `maximum_attempts=1` | 不與 provider retry 相乘 |
+| bootstrap／recover／finalize Activity | 最多 3 次 | 僅處理本機 metadata／投影 |
+| Workflow verified recovery | 最多 3 次 | 先核對 cursor、artifact 與 ledger |
+
+目前唯讀範圍的 deadline／取消結果：
+
+| 邊界 | 行為與最終狀態 |
+| --- | --- |
+| dispatch 前逾期，且尚無 Activity 效果 | 不啟動新 Workflow；fence operations，`failed` |
+| Workflow 尚在 queue 時取消 | Worker reconciler 投影 `cancelled`；不呼叫模型 |
+| host slot、provider 前、retry backoff、tool 前 | cooperative check 停止；不開始下一個 I/O |
+| provider request 已送出 | 保留該次 request 預留；late result 受 fence 阻擋 |
+| tool 已標記 `tool_started`，完成效果無法證明 | `uncertain`，不自動重做 |
+| 結果已提交但 Activity 回覆遺失 | 取回已提交 cursor／artifact，不再扣 request 或重跑工具 |
+| finalize／projection 後收到舊回報 | submission fence、task 狀態與 owner lifecycle 拒絕發布 |
+| Temporal `CANCELED` | 投影 `cancelled` |
+| Temporal `FAILED`／`TIMED_OUT`／`TERMINATED` | 投影 `uncertain`，等待證據核對 |
+
+人工回答／審批等待、子 Workflow 傳播與寫入工具的子程序樹終止仍分別由 TP13、TP14、
+TP17 完成。TP12 不將正在執行的外部請求宣稱為可強制撤回；它只停止後續步驟並拒絕
+過期結果發布。
+
+TP12 驗證（2026-10-18）：完整 pytest **1016 passed、9 skipped、95 subtests passed**，
+781.06 秒；TP12 單元矩陣 **75 passed**，擴大 Temporal／server／evaluator／budget 專項
+**276 passed、6 subtests passed**，真實 Service/Worker 整合 **7 passed**。受控 provider
+先回 429 再成功時，四次實際 request 對應四筆 budget calls，但 History 仍只有兩個
+model Activities，且兩者 `maximum_attempts=1`。另一個真實服務案例在 Worker 啟動前
+取消已排隊 Workflow，reconciler 投影為 `cancelled`，provider 呼叫數為零。新舊 History
+replay、回覆遺失取回、budget contract 設定變更／竄改、dispatch 前逾期也均通過。
+紀錄 `temp/temporal-tp12-full.log`、`temp/temporal-tp12-unit.log`、
+`temp/temporal-tp12-targeted.log`、`temp/temporal-tp12-integration.log`。pip check、
+compileall 與 diff check 通過；完整套件只有既有 Starlette／AnyIO deprecation warning。
+本輪使用受控 provider 驗證 retry ownership，沒有把 TP11 逾時的真實 LLM 驗收改標為成功。
+
 ## TP11：opt-in 逐步唯讀 Workflow
 
 在原入口的程序設定以下旗標，只影響新任務；Worker 仍須另外啟動：

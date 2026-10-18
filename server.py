@@ -187,8 +187,10 @@ def run_agent(
     inserted = refresh_environment(messages) or inserted
     if inserted and resume_state.get('evaluation_start') is not None:
         resume_state = {**resume_state, 'evaluation_start': resume_state['evaluation_start'] + 1}
-    from agent_execution.turn_control import TurnProgress, iteration_limit
-    max_iterations = iteration_limit(max_iterations, resume_state.get('iteration_limit'))
+    from agent_execution.turn_control import TurnProgress
+    from agent_execution.turn_control.limits import execution_limits
+    max_iterations, max_retries, max_eval_retries = execution_limits(
+        resume_state, max_iterations, max_retries, max_eval_retries)
     progress = TurnProgress(resume_state.get('progress'))
     evaluation_start = resume_state.get('evaluation_start')
     if evaluation_start is None:
@@ -205,7 +207,10 @@ def run_agent(
     if pre_state is None and task_evaluator is not None:
         pre_state = task_evaluator.capture_state()
     def checkpoint(phase, **metadata):
-        save_checkpoint(phase,messages,iteration=iteration,iteration_limit=max_iterations,eval_retries=eval_retries,pre_state=pre_state,tool_results=tool_results,evaluation_start=evaluation_start,progress=progress.state,**metadata)
+        save_checkpoint(phase,messages,iteration=iteration,iteration_limit=max_iterations,
+            provider_retry_limit=max_retries,eval_retries=eval_retries,
+            eval_retry_limit=max_eval_retries,pre_state=pre_state,tool_results=tool_results,
+            evaluation_start=evaluation_start,progress=progress.state,**metadata)
     def boundary(kind):
         if step_controller is not None:
             step_controller.enter(kind, checkpoint)
@@ -215,10 +220,15 @@ def run_agent(
         if any(call['id'] not in finished for call in message.get('tool_calls') or []):
             return ChatCompletionMessage(**message), finished
         return None, set()
+    def stopped_reply():
+        budget = active_budget()
+        if budget is not None and budget.remaining_seconds() <= 0:
+            return 'Error: Task deadline exhausted'
+        return "Task was cancelled by the user."
 
     while iteration < max_iterations or (step_controller is not None and bool(resume_state)):
         if check_cancelled and check_cancelled():
-            return "Task was cancelled by the user."
+            return stopped_reply()
             
         assistant_message, resolved_calls = pending_assistant() if resume_state else (None,set())
         if step_controller is not None and resume_state.get('phase') == 'step_ready' and resume_state.get('next_kind') == 'model':
@@ -282,10 +292,10 @@ def run_agent(
                         event_callback('error',{'code':'budget_exhausted','message':str(error),'retryable':False})
                     return f'Error: {error}'
                 except InterruptedError:
-                    return "Task was cancelled by the user."
+                    return stopped_reply()
                 except (APIStatusError, APIConnectionError, APITimeoutError) as error:
                     if check_cancelled and check_cancelled():
-                        return "Task was cancelled by the user."
+                        return stopped_reply()
                     is_transient = True
                     status_code = getattr(error, 'status_code', None)
                     if isinstance(error, APIStatusError) and status_code not in TRANSIENT_STATUS_CODES:
@@ -310,7 +320,7 @@ def run_agent(
                         end = time.monotonic() + delay
                         while time.monotonic() < end:
                             if check_cancelled():
-                                return "Task was cancelled by the user."
+                                return stopped_reply()
                             sleep(min(.1, max(0, end - time.monotonic())))
                     else:
                         sleep(delay)
@@ -407,7 +417,7 @@ def run_agent(
 
                 from agent_execution import execution_scope
                 if check_cancelled and check_cancelled():
-                    return "Task was cancelled by the user."
+                    return stopped_reply()
                 if event_callback:
                     event_callback("tool.start", {"tool_call_id": tool_call.id, "name": tool_name, "arguments": tool_args})
                 if tool_name == 'ask_user':

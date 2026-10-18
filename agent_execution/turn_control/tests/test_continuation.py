@@ -142,3 +142,19 @@ def test_pre_hooks_begin_after_a_durable_uncertain_marker(kind):
             step_controller=StepController(kind)), messages, None)
     assert observed == [('step_preparing', kind)]
     model.assert_not_called()
+
+
+def test_checkpoint_pins_provider_and_evaluation_retry_limits():
+    import server
+    raw = NS(chat=NS(completions=NS(create=Mock(return_value=response('done')))))
+    messages = [{'role':'user','content':'inspect'}]
+    evaluator = NS(capture_state=Mock(return_value={}),
+                   evaluate=Mock(return_value=EvaluationResult(True,1,'ok')))
+    with patch('server.get_client',return_value=raw), pytest.raises(TaskYield):
+        durable_invoke(lambda saved: server.run_agent(messages, resume_state=saved,
+            max_retries=1, max_eval_retries=1, task_evaluator=evaluator,
+            step_controller=StepController('model')),
+            messages, None)
+    saved = TaskStore().get(task_owner(current_context()), 'continuation')['checkpoint']
+    assert saved['provider_retry_limit'] == 1
+    assert saved['eval_retry_limit'] == 1

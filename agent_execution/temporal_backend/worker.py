@@ -40,9 +40,11 @@ async def serve():
                         await client.get_workflow_handle(row['workflow_id']).cancel()
                         continue
                     status = (await client.get_workflow_handle(row['workflow_id']).describe()).status
-                    if status in {WorkflowExecutionStatus.FAILED, WorkflowExecutionStatus.TIMED_OUT,
-                                  WorkflowExecutionStatus.CANCELED, WorkflowExecutionStatus.TERMINATED}:
-                        store.workflow_failed(row['id'], row['owner'], status.name)
+                    if status == WorkflowExecutionStatus.CANCELED:
+                        store.workflow_closed(row['id'], row['owner'], status.name)
+                    elif status in {WorkflowExecutionStatus.FAILED, WorkflowExecutionStatus.TIMED_OUT,
+                                    WorkflowExecutionStatus.TERMINATED}:
+                        store.workflow_closed(row['id'], row['owner'], status.name)
                 except Exception as error:
                     print(json.dumps({'temporal': 'reconcile_pending', 'error_type': type(error).__name__}), flush=True)
             await asyncio.sleep(5)

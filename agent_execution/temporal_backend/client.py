@@ -2,6 +2,7 @@
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeout
 import threading
+import time
 from datetime import timedelta
 
 from .contracts import SCHEMA_VERSION
@@ -26,13 +27,21 @@ async def dispatch(store, row, client):
         if task['state'] == 'cancelled':
             store.cancel(row['id'], row['owner'])
             raise PermissionError('Task cancelled before dispatch')
+    contract = store.verify_budget_contract(row)
+    execution_seconds = 600
+    if contract is not None:
+        execution_seconds = min(600, contract['deadline'] - time.time())
+        if execution_seconds <= 0:
+            from agent_execution.budgets import BudgetExhausted
+            store.fail_budget_before_start(row['id'], row['owner'])
+            raise BudgetExhausted('Task deadline exhausted before Workflow dispatch')
     try:
         try:
             await client.start_workflow(
                 store.workflow_type(row), {'schema_version': SCHEMA_VERSION, 'submission_id': row['id']},
                 id=row['workflow_id'], task_queue=row['queue'],
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                execution_timeout=timedelta(minutes=10))
+                execution_timeout=timedelta(seconds=max(.001, execution_seconds)))
         except WorkflowAlreadyStartedError:
             # Only our persisted opaque workflow ID is used, never a caller-supplied ID.
             pass

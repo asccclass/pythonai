@@ -5,7 +5,7 @@ import time
 import uuid
 
 from agent_execution.tasks import assert_owner_active
-from .contracts import STEP_WORKFLOW_NAME, validate_cursor, validate_snapshot
+from .contracts import STEP_WORKFLOW_NAME, STEP_LIMIT, validate_cursor, validate_snapshot
 from .ledger import Ledger, OperationUncertain
 from .store import canonical
 
@@ -109,7 +109,7 @@ class StepStore:
                 result = validate_cursor(json.loads(row['output']))
                 ledger.load(result['state_ref'])
                 return None, result
-            if cursor['revision'] >= 1024:
+            if cursor['revision'] >= STEP_LIMIT:
                 raise ValueError('Continuation step limit reached before execution')
             ledger._scope(conn)
             if row['status'] != 'ready':
@@ -135,7 +135,7 @@ class StepStore:
             if task['state'] != 'pending' or next_kind(task['phase'], task['checkpoint']) != kind:
                 raise PermissionError('Continuation result does not match its saved boundary')
         revision = cursor['revision']+1
-        if revision > 1024:
+        if revision > STEP_LIMIT:
             raise ValueError('Continuation step limit reached')
         ref = self._put(conn, ledger, self.snapshot(task))
         result = self.cursor(cursor['submission_id'], revision, kind, ref)

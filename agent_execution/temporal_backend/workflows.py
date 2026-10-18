@@ -6,7 +6,9 @@ from temporalio.common import RetryPolicy
 
 from .contracts import ACTIVITY_NAME, WORKFLOW_NAME, validate_envelope
 
-from .contracts import STEP_WORKFLOW_NAME, STEP_ACTIVITIES, validate_cursor
+from .contracts import (STEP_WORKFLOW_NAME, STEP_ACTIVITIES, STEP_IO_MAX_ATTEMPTS,
+                        STEP_METADATA_MAX_ATTEMPTS, STEP_RECOVERY_LIMIT, STEP_LIMIT,
+                        validate_cursor)
 
 
 @workflow.defn(name=WORKFLOW_NAME)
@@ -36,7 +38,8 @@ class AgentTaskWorkflowV1:
                 start_to_close_timeout=timedelta(minutes=10),
                 schedule_to_close_timeout=timedelta(minutes=10),
                 heartbeat_timeout=timedelta(seconds=45),
-                retry_policy=RetryPolicy(maximum_attempts=3 if kind in {'bootstrap', 'recover', 'finalize'} else 1))
+                retry_policy=RetryPolicy(maximum_attempts=STEP_METADATA_MAX_ATTEMPTS
+                    if kind in {'bootstrap', 'recover', 'finalize'} else STEP_IO_MAX_ATTEMPTS))
 
         def checked(value):
             try:
@@ -51,20 +54,20 @@ class AgentTaskWorkflowV1:
         if cursor['revision'] != 0:
             raise ApplicationError('InvalidBootstrapRevision', non_retryable=True)
         recoveries = 0
-        for _ in range(1025):
+        for _ in range(STEP_LIMIT + 1):
             if cursor['next_kind'] == 'finalize':
                 result = await execute('finalize', cursor)
                 if result != {'submission_id': key}:
                     raise ApplicationError('InvalidFinalization', non_retryable=True)
                 return result
-            if cursor['revision'] >= 1024:
+            if cursor['revision'] >= STEP_LIMIT:
                 raise ApplicationError('StepLimitReached', non_retryable=True)
             try:
                 following = checked(await execute(cursor['next_kind'], cursor))
                 if following['revision'] != cursor['revision']+1:
                     raise ApplicationError('InvalidStepRevision', non_retryable=True)
             except ActivityError as error:
-                if (isinstance(error.cause, ApplicationError) and error.cause.non_retryable) or recoveries >= 3:
+                if (isinstance(error.cause, ApplicationError) and error.cause.non_retryable) or recoveries >= STEP_RECOVERY_LIMIT:
                     raise
                 recoveries += 1
                 following = checked(await execute('recover', cursor))

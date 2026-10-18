@@ -2,9 +2,17 @@
 
 規劃日期：2026-10-17（Asia/Taipei）。文件名稱依需求保留為 `temportal.md`，產品與程式命名使用 Temporal。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09 共用步驟及 TP10 操作紀錄／JSON 結果引用及 TP11 opt-in 逐步唯讀流程已實作；TP11 真實 LLM 驗收及 TP12–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。部分 workspace lifecycle、communication 與 scheduling 改動尚未提交，不屬本次交付。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP11 真實 LLM 驗收及 TP13–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-17）
+### 目前導入進度（2026-10-18）
+
+本輪 TP12：新 submission 固定 root budget reference、deadline 與 limits；checkpoint 固定
+iteration／provider retry／evaluation retry 上限。Provider retry 只由 runner 擁有，I/O
+Activity 不重試；排隊逾期、Workflow 取消、未知效果與 late result 採不同狀態及 fence。
+真實 Service/Worker 已驗證 429 後的四次實際 provider request 各計帳一次，但仍只有兩個
+model Activities；排隊 Workflow 取消後模型呼叫為零。完整 pytest **1016 passed、9 skipped、
+95 subtests passed**，781.06 秒；pip check、compileall、diff check 通過。本輪沒有重驗真實
+LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 
 本輪 TP11：新增 `AgentTaskWorkflowV1`、六種 Activities、版本綁定與獨立 queue、確認邊界恢復及錯誤映射。最終完整 pytest **949 passed、8 skipped、95 subtests passed**，670.92 秒；Temporal／continuation 專項 **122 passed**，前置 hook 邊界專項 **35 passed**。真實 Service/Worker 的受控模型讀檔、Worker 重啟、回覆遺失、未知效果停止與 History replay 通過；pip check、compileall、diff check 通過。真實 LLM 在第一個模型步驟逾時，90 秒後取消，三筆請求預留保留、無工具執行；獨立 15 秒探測也為 `APITimeoutError`，未取得服務端根因。此項與原始長任務仍待驗收；詳見 backend README 與 `temp/temporal-tp11-provider-check/`。未啟用正式設定。
 
@@ -23,7 +31,8 @@
 | TP09 | 已抽出共用 model/tool/evaluation steps；SQLite runner 與 Temporal 唯讀 Activity 使用同一實作，保留外層 hooks／checkpoint／重試與預算；驗收紀錄見 backend README |
 | TP10 | 已實作版本化 operation ledger、canonical digest、雙層 fence、原子 result/evidence 引用與完整性檢查；接入唯讀 Activity 的 model/tool/evaluation，共用結果不重跑，未知結果保守阻擋；詳見 backend README |
 | TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過，真實 LLM 本輪逾時待驗收 |
-| TP12–TP30 | 待辦；尚未導入完整預算／取消矩陣、人工等待／審批、排程、多 Agent、正式部署及多機 |
+| TP12 | 已實作 root budget contract、恢復限制、retry ownership、deadline 與目前唯讀範圍的取消矩陣；驗收詳見 backend README |
+| TP13–TP30 | 待辦；尚未導入人工等待／審批、完整子 Workflow／子程序取消、排程、多 Agent、正式部署及多機 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator、未完成任務 manual resume 會拒絕；已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -496,6 +505,19 @@ TP09–TP10 已具備共用 I/O steps 與 operation ledger。TP11 已拆分 Work
 實作見 `temporal_backend/{contracts,context,step_store,step_activities,workflows}.py` 及 `turn_control/continuation.py`。`AGENT_TEMPORAL_ENGINE=steps` 僅影響新受理的 Temporal 任務，預設為 `bridge`；存量任務的 protocol／queue 不改派。Worker 同時服務兩個版本，並共享 host 併發上限。最多 1024 個步驟、三次經核對的 Workflow 恢復；model／tool／evaluation Activity max-attempts=1，bootstrap／recover／finalize metadata 最多三次。只有已確認完成邊界或 ledger 證明 I/O 尚未開始才恢復；`step_preparing`（前置 hooks 未確認）與 `tool_started`（包含 raw result 已提交但完成 hooks 未確認）一律 uncertain。回滾新任務旗標時仍須保留此版 Worker 服務已綁 steps 的存量工作。
 
 下一項為 TP12 的完整預算／provider retry ownership 矩陣；TP11 本輪真實 LLM 逾時驗收仍需追蹤，不因推進下一項而標為通過。
+
+### 12.3 TP12 預算、retry ownership 與取消矩陣
+
+TP12 不提高任何既有額度，也不把 Activity retry 當作 provider retry。根預算仍以
+`task_budgets`／`budget_calls` 為權威，逐步 Workflow 只保存與核對本機 budget contract；
+History 不包含 owner、limits 或用量明文。實作及驗收順序：
+
+- [x] TP12.1：為新 Temporal submission 原子綁定 root budget reference、deadline 與 immutable limits digest；既有 submission 相容讀取，設定重載、Worker 重啟與恢復不得增加舊額度。
+- [x] TP12.2：將 iteration、provider retry、evaluation retry 上限一併寫入 checkpoint；恢復時以已保存值為準，呼叫端或環境不能放大。限制值與 snapshot schema 需 fail closed。
+- [x] TP12.3：集中定義 retry ownership：OpenAI SDK hidden retry=0、provider retry 只在 `server.run_agent`、model/tool/evaluation Activity max-attempts=1、metadata Activity 最多 3、verified recovery 最多 3；每次實際 provider request 各自保守預留一次。
+- [x] TP12.4：根 deadline 同時限制 client wait、Workflow execution timeout、model slot／stream／retry backoff 與每個新步驟；排隊逾期可證明無效果時終止為 failed，執行中逾期且效果未知時維持 uncertain。
+- [x] TP12.5：建立目前唯讀範圍的取消矩陣：dispatch 前、host slot 等待、model 前／中、tool 前／後、projection/finalize 與 late result fencing；Temporal CANCELED 投影為 cancelled。人工等待、子 Workflow 與寫入子程序樹仍分別由 TP13／TP14／TP17 擴充。
+- [x] TP12.6：以真實 Service/Worker 驗證 provider retry 不與 Activity retry 相乘、結果回覆遺失不增加 request、舊 budget contract 重啟有效、deadline／取消不發布 late result、新舊 History replay；完整 pytest **1016 passed、9 skipped、95 subtests passed**，pip check、compileall、diff check 通過。本輪使用受控 provider 驗證 retry ownership，TP11 真實 LLM 逾時驗收仍未完成。
 
 ## 13. 測試矩陣、驗收與放量
 

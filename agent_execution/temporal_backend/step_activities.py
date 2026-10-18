@@ -71,6 +71,7 @@ def advance(payload, kind):
     from agent_execution import execution_scope
     from agent_execution.policy import current_context
     from agent_execution.tasks import durable_invoke
+    from agent_execution.budgets import BudgetExhausted, active_budget
     from agent_execution.turn_control.continuation import StepController, TaskYield
     store, row, steps = authority(payload)
     if payload['next_kind'] != kind:
@@ -86,6 +87,7 @@ def advance(payload, kind):
                 from agent_execution.user_profile import refresh_messages
                 from base import workspace_root
                 import server
+                active_budget().check()
                 refresh_messages(messages)
                 if saved is not None:
                     saved['messages'] = messages
@@ -96,6 +98,8 @@ def advance(payload, kind):
                 durable_invoke(execute, messages, None, resume=True)
             except TaskYield as boundary:
                 next_kind = boundary.next_kind
+            except BudgetExhausted:
+                next_kind = 'finalize'
             else:
                 next_kind = 'finalize'
         return steps.commit(payload, fence, ledger, next_kind)

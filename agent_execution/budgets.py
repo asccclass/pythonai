@@ -3,6 +3,7 @@ from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from functools import wraps
 import json
+import hashlib
 import math
 import os
 import sqlite3
@@ -81,6 +82,15 @@ class TaskBudget:
     def snapshot(self):
         with closing(self.connect()) as conn:
             return dict(conn.execute('SELECT * FROM task_budgets WHERE owner=? AND id=?',(self.owner,self.key)).fetchone())
+
+    def contract(self):
+        """Immutable root identity, deadline and limits; usage counters remain authoritative in SQLite."""
+        row = self.snapshot()
+        value = {'schema_version': 1,
+                 'root_ref': hashlib.sha256((self.owner+'\0'+self.key).encode()).hexdigest(),
+                 'deadline': row['deadline'], 'limits': json.loads(row['limits'])}
+        from .temporal_backend.contracts import validate_budget_contract
+        return validate_budget_contract(value)
 
     def remaining_seconds(self):
         return max(0,self.snapshot()['deadline']-time.time())

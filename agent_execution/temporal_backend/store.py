@@ -42,6 +42,8 @@ class Store:
                     last_error TEXT, updated REAL NOT NULL, UNIQUE(owner,task_id));
                 CREATE TABLE IF NOT EXISTS temporal_protocols(
                     submission_id TEXT PRIMARY KEY, workflow_type TEXT NOT NULL, version INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS temporal_budget_contracts(
+                    submission_id TEXT PRIMARY KEY, contract TEXT NOT NULL);
             ''')
             versions = [r[0] for r in conn.execute('SELECT version FROM temporal_schema')]
             if versions != [1]:
@@ -97,6 +99,8 @@ class Store:
 
     def submit(self, owner, task, messages, context, role, settings):
         from agent_execution.tasks import assert_owner_active
+        from agent_execution.budgets import TaskBudget
+        budget_contract = canonical(TaskBudget(owner, task, self.path).contract())
         latest = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
         if latest is None:
             raise ValueError('Temporal task requires a user input')
@@ -115,6 +119,10 @@ class Store:
             if old:
                 if old['input_digest'] != fingerprint:
                     raise ValueError('Task ID cannot be reused with different input')
+                saved_budget = conn.execute('SELECT contract FROM temporal_budget_contracts WHERE submission_id=?',
+                                            (old['id'],)).fetchone()
+                if saved_budget is not None and saved_budget['contract'] != budget_contract:
+                    raise PermissionError('Root budget contract changed')
                 return dict(old)
             self.tasks.capacity(conn, len(data.encode()) + len(scope.encode()))
             # Bound the new store as well as the legacy checkpoint capacity.
@@ -141,7 +149,38 @@ class Store:
             from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME
             conn.execute('INSERT INTO temporal_protocols VALUES(?,?,1)',
                          (key, STEP_WORKFLOW_NAME if settings.engine == 'steps' else WORKFLOW_NAME))
+            conn.execute('INSERT INTO temporal_budget_contracts VALUES(?,?)', (key, budget_contract))
             return dict(conn.execute('SELECT * FROM temporal_submissions WHERE id=?', (key,)).fetchone())
+
+    def verify_budget_contract(self, row):
+        """Old M0/TP11 rows remain readable; all newly accepted rows are pinned."""
+        with closing(self.tasks.connect()) as conn:
+            saved = conn.execute('SELECT contract FROM temporal_budget_contracts WHERE submission_id=?',
+                                 (row['id'],)).fetchone()
+        if saved is None:
+            return None
+        from .contracts import validate_budget_contract
+        contract = validate_budget_contract(json.loads(saved['contract']))
+        from agent_execution.budgets import TaskBudget
+        current = TaskBudget(row['owner'], row['task_id'], self.path).contract()
+        if canonical(current) != canonical(contract):
+            raise PermissionError('Root budget contract changed')
+        return contract
+
+    def fail_budget_before_start(self, key, owner):
+        """A queued expiry has no Activity effects and can be finalized as a known failure."""
+        row = self.get(key, owner)
+        result = canonical({'reply': 'Error: Task deadline exhausted', 'messages': json.loads(row['input'])})
+        with closing(self.tasks.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            from .ledger import fence_operations
+            fence_operations(conn, owner, row['task_id'])
+            changed = conn.execute("UPDATE temporal_submissions SET state='failed',result=?,last_error='BudgetExhausted',updated=? WHERE id=? AND state IN ('pending','dispatched')",
+                                   (result, time.time(), key)).rowcount
+            if changed:
+                conn.execute("UPDATE tasks SET state='failed',reply='Error: Task deadline exhausted',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state='pending'",
+                             (time.time(), owner, row['task_id']))
+        return bool(changed)
 
     def get(self, key, owner=None):
         with closing(self.tasks.connect()) as conn:
@@ -175,6 +214,12 @@ class Store:
                 fence_operations(conn, owner, row['task_id'])
                 conn.execute("UPDATE tasks SET state='uncertain',reply='Temporal execution ended; inspect checkpoint before recovery',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')",
                              (time.time(), owner, row['task_id']))
+
+    def workflow_closed(self, key, owner, status):
+        if status == 'CANCELED':
+            self.cancel(key, owner)
+        else:
+            self.workflow_failed(key, owner, status)
 
     def dispatched(self, key, error=None):
         with closing(self.tasks.connect()) as conn, conn:

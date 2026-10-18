@@ -212,3 +212,11 @@ def test_snapshot_counters_are_not_boolean_or_negative(task):
     for value in [True,-1]:
         bad=copy.deepcopy(snapshot);bad['checkpoint']['iteration']=value
         with pytest.raises(ValueError):validate_snapshot(bad)
+
+
+@pytest.mark.parametrize('name,value',[('provider_retry_limit',True),('provider_retry_limit',257),
+    ('eval_retry_limit',-1),('eval_retry_limit','2')])
+def test_snapshot_retry_limits_fail_closed(task,name,value):
+    snapshot=task[-2].load(task[-1]['state_ref'])
+    bad=copy.deepcopy(snapshot);bad['checkpoint'][name]=value
+    with pytest.raises(ValueError):validate_snapshot(bad)

@@ -41,6 +41,7 @@ def execution_context(store, row, cancelled=None):
     from .ledger import Ledger
     from .operations import operation_scope
     scope = json.loads(row['context'])
+    store.verify_budget_contract(row)
     role = row['role']
     if scope['identity'] == 'local':
         if scope['source'] != 'local':

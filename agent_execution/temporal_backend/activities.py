@@ -19,6 +19,8 @@ def run_submission(key, settings, *, runner=None, cancelled=None):
         from .context import execution_context
         messages = json.loads(row['input'])
         with execution_context(store, row, cancelled):
+            from agent_execution.budgets import active_budget
+            active_budget().check()
             def execute(saved):
                 from agent_execution.user_profile import refresh_messages
                 refresh_messages(messages)

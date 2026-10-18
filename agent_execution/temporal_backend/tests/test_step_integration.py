@@ -8,11 +8,13 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
 import pytest
+import httpx
 pytest.importorskip('temporalio')
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 from temporalio.worker import Worker, Replayer
 from openai.types.chat import ChatCompletionMessage
+from openai import APIStatusError
 
 from agent_execution.tasks import durable_invoke, task_owner
 from agent_execution.policy import current_context
@@ -77,6 +79,12 @@ def test_step_workflow_real_io_cached_projection_and_replay(server,configured,mo
                if e.HasField('activity_task_scheduled_event_attributes')]
         assert names.count(STEP_ACTIVITIES['recover'])==int(lose_reply)
         assert names.count(STEP_ACTIVITIES['tool'])==1
+        scheduled=[e.activity_task_scheduled_event_attributes for e in history.events
+                   if e.HasField('activity_task_scheduled_event_attributes')]
+        for item in scheduled:
+            expected=3 if item.activity_type.name in {STEP_ACTIVITIES['bootstrap'],
+                STEP_ACTIVITIES['recover'],STEP_ACTIVITIES['finalize']} else 1
+            assert item.retry_policy.maximum_attempts==expected
         await Replayer(workflows=[ReadOnlyBridge,AgentTaskWorkflowV1]).replay_workflow(history)
     asyncio.run(exercise())
 
@@ -142,6 +150,34 @@ def test_worker_restart_before_tool_preserves_progress_and_budget(server,configu
     asyncio.run(exercise())
 
 
+def test_provider_retry_stays_inside_one_activity_and_each_request_is_charged(server,configured,monkeypatch):
+    monkeypatch.setenv('AGENT_TEMPORAL_ENGINE','steps')
+    (configured/'note.txt').write_text('step-private-evidence',encoding='utf-8')
+    raw,create=provider()
+    replies=list(create.side_effect)
+    response=httpx.Response(429,headers={'retry-after':'0'},request=httpx.Request('POST','http://provider/v1'))
+    create.side_effect=[APIStatusError('capacity',response=response,body={}),*replies]
+    async def exercise():
+        client=await server.client();store=Store()
+        with ThreadPoolExecutor(max_workers=2) as executor,patch('server.get_client',return_value=raw),\
+                patch('server.random.uniform',return_value=0):
+            async with Worker(client,task_queue=store.queue_for('steps'),workflows=[AgentTaskWorkflowV1],
+                              activities=ACTIVITIES,activity_executor=executor):
+                reply,_=await invoke()
+        assert reply=='step-private-evidence' and create.call_count==4
+        row=store.for_task(task_owner(current_context()),'integration-task')
+        with closing(store.tasks.connect()) as conn:
+            assert conn.execute('SELECT requests FROM task_budgets').fetchone()[0]==4
+            assert conn.execute('SELECT COUNT(*) FROM budget_calls').fetchone()[0]==4
+        history=await client.get_workflow_handle(row['workflow_id']).fetch_history()
+        scheduled=[e.activity_task_scheduled_event_attributes for e in history.events
+                   if e.HasField('activity_task_scheduled_event_attributes')]
+        models=[item for item in scheduled if item.activity_type.name==STEP_ACTIVITIES['model']]
+        assert len(models)==2 and all(item.retry_policy.maximum_attempts==1 for item in models)
+        await Replayer(workflows=[AgentTaskWorkflowV1]).replay_workflow(history)
+    asyncio.run(exercise())
+
+
 def test_worker_entrypoint_serves_old_and_new_protocol_queues(server,configured,monkeypatch):
     from dataclasses import replace
     from datetime import timedelta
@@ -178,4 +214,35 @@ def test_worker_entrypoint_serves_old_and_new_protocol_queues(server,configured,
                 running.cancel()
                 await asyncio.gather(running,return_exceptions=True)
         assert raw.chat.completions.create.call_count==4
+    asyncio.run(exercise())
+
+
+def test_queued_workflow_cancellation_projects_without_model_execution(server,configured,monkeypatch):
+    from dataclasses import replace
+    from agent_execution import execution_scope
+    from agent_execution.temporal_backend.client import dispatch
+    from agent_execution.temporal_backend.config import Settings
+    from agent_execution.temporal_backend.tests.test_integration import prepare
+    from agent_execution.temporal_backend.worker import serve
+    monkeypatch.setenv('AGENT_TEMPORAL_ENGINE','steps')
+    raw=NS(chat=NS(completions=NS(create=Mock(side_effect=AssertionError('cancelled task called provider')))))
+    async def exercise():
+        client=await server.client()
+        with execution_scope(task_id='queued-cancel'):
+            store,row=prepare(replace(Settings.load(),engine='steps'))
+        handle=await dispatch(store,row,client)
+        await handle.cancel()
+        with patch('server.get_client',return_value=raw):
+            running=asyncio.create_task(serve())
+            try:
+                deadline=asyncio.get_running_loop().time()+12
+                while store.get(row['id'])['state']!='cancelled':
+                    if asyncio.get_running_loop().time()>=deadline:
+                        raise TimeoutError('cancelled Workflow was not projected')
+                    await asyncio.sleep(.1)
+            finally:
+                running.cancel()
+                await asyncio.gather(running,return_exceptions=True)
+        assert store.tasks.get(row['owner'],row['task_id'])['state']=='cancelled'
+        raw.chat.completions.create.assert_not_called()
     asyncio.run(exercise())
