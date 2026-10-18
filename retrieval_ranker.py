@@ -1,19 +1,11 @@
 from __future__ import annotations
+from agent_configuration import load_questions
 
 import os
 from pathlib import Path
 from typing import Any
 
 from laya_guard import DEFAULT_MODEL_DIR, prepare_laya_state
-
-
-RELEVANCE_QUESTIONS = {
-    "relevance": {
-        "type": "score",
-        "instructions": "How relevant is this memory to the current user request?",
-        "criteria": ["irrelevant", "somewhat relevant", "highly relevant"],
-    }
-}
 
 
 class LayaMemoryRanker:
@@ -46,7 +38,7 @@ class LayaMemoryRanker:
                         "query": query,
                         "memory": format_memory_for_laya(memory),
                     }),
-                    RELEVANCE_QUESTIONS,
+                    load_questions('relevance_questions.json'),
                 )
                 score = float(result.get("answers", {}).get("relevance", {}).get("score", 0.0))
                 scored.append((score, memory["confidence"], memory["id"], memory))

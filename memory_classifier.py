@@ -1,4 +1,5 @@
 from __future__ import annotations
+from agent_configuration import load_questions
 
 from dataclasses import dataclass
 import os
@@ -6,29 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from laya_guard import DEFAULT_MODEL_DIR, max_laya_state_chars, prepare_laya_state, truncate_laya_text
-
-
-MEMORY_QUESTIONS = {
-    "memory_kind": {
-        "type": "choice",
-        "instructions": "What kind of long-term memory candidate does this episode contain?",
-        "criteria": {
-            "none": "no durable memory should be extracted",
-            "semantic": "durable fact, user preference, entity, or relationship",
-            "procedure": "reusable successful workflow or task method",
-            "forgetting": "conflict, obsolete information, stale preference, or memory to archive",
-        },
-    },
-    "should_extract": {
-        "type": "noul",
-        "instructions": "Should the memory service review this episode for extraction or archival?",
-    },
-    "confidence": {
-        "type": "score",
-        "instructions": "How confident are you that this episode contains a useful memory candidate?",
-        "criteria": ["low", "medium", "high"],
-    },
-}
 
 
 @dataclass(frozen=True)
@@ -70,7 +48,7 @@ class LayaMemoryClassifier:
         try:
             result = self._agent.predict(
                 prepare_laya_state({"episode": format_episode_for_laya(events)}),
-                MEMORY_QUESTIONS,
+                load_questions('memory_questions.json'),
             )
         except Exception as error:
             return MemoryCandidateDecision(available=False, reason=f"Laya memory classifier failed: {error}")

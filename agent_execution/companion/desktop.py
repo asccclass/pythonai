@@ -1,4 +1,5 @@
 """A per-turn bridge; model tools never execute arbitrary desktop commands."""
+from agent_configuration import load_text, load_tool_text
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
@@ -6,7 +7,7 @@ import json
 _bridge = ContextVar("desktop_bridge", default=None)
 ACTIONS = {"system_info", "open_url", "open_path", "clipboard_write"}
 SCHEMA = {"type": "function", "function": {"name": "desktop_tool",
-    "description": "Use the connected desktop's allowlisted tools. Side effects require local human approval. No shell commands.",
+    "description": load_tool_text('desktop_tool/description'),
     "parameters": {"type": "object", "properties": {
         "action": {"type": "string", "enum": sorted(ACTIONS)},
         "arguments": {"type": "object", "properties": {"url": {"type": "string"},

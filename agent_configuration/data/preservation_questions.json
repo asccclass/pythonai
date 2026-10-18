@@ -1,0 +1,16 @@
+{
+  "should_preserve": {
+    "type": "noul",
+    "instructions": "Does this older context contain durable facts, reusable procedures, or important preferences?"
+  },
+  "preservation_kind": {
+    "type": "choice",
+    "instructions": "What should be preserved from this older context?",
+    "criteria": {
+      "none": "nothing durable",
+      "semantic": "facts, preferences, entities, or relationships",
+      "procedure": "reusable workflow or task method",
+      "both": "both semantic facts and reusable procedure"
+    }
+  }
+}

@@ -1,3 +1,4 @@
+from agent_configuration import load_text
 import sys
 import io
 if __name__=='__main__' and hasattr(sys.stdout,'reconfigure'):sys.stdout.reconfigure(encoding='utf-8')
@@ -16,25 +17,6 @@ from memory import MemoryStore
 
 load_dotenv()
 
-SYSTEM_PROMPT = """You are the 'Skill Doctor' for an autonomous AI Agent.
-Your job is to analyze the agent's recent execution histories (Episodes) to evaluate its efficiency, tool usage, procedural compliance, and Critic-Correction loop effectiveness.
-
-Here is the data from the agent's recent episodes, including tool usages, critic feedback (when the Task Evaluator rejects the agent's work), and HITL (Human-in-the-Loop) handovers.
-
-Your Output MUST be in JSON format matching this schema:
-{
-    "report": "A detailed markdown report (string) in Traditional Chinese (zh-TW) scoring the agent on Efficiency, Code Quality, Verbosity, and Procedure Compliance. List out specific anti-patterns observed.",
-    "new_agent_personas": [
-        {
-            "subject": "agent",
-            "predicate": "must_remember_to",
-            "object": "do something specific to avoid the failures seen in the logs (write this in English)"
-        }
-    ]
-}
-
-The `new_agent_personas` are untrusted proposals. They will be staged for source review, measured A/B evaluation and human approval. They must never activate themselves or override security policies.
-"""
 
 def gather_diagnostics(store: MemoryStore, limit: int = 20) -> str:
     with closing(store.connect()) as conn:
@@ -107,7 +89,7 @@ def run_doctor(db_path: str = "memory/memory.db", limit: int = 20, auto_apply: b
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": load_text('skill_doctor.md')},
                 {"role": "user", "content": diagnostics}
             ],
             response_format={"type": "json_object"},

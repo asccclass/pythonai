@@ -1,4 +1,5 @@
 from __future__ import annotations
+from agent_configuration import load_text
 
 from dataclasses import dataclass
 import json
@@ -60,7 +61,7 @@ class LLMProcedureSimilarityMatcher:
             response = self.client_factory().chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": PROCEDURE_SIMILARITY_PROMPT},
+                    {"role": "system", "content": load_text('procedure_similarity.md')},
                     {"role": "user", "content": json.dumps(_similarity_payload(candidate, procedures), ensure_ascii=False)},
                 ],
                 temperature=0,
@@ -96,18 +97,6 @@ class LexicalProcedureSimilarityMatcher:
         if score < threshold:
             return None
         return ProcedureMatch(int(procedure["id"]), score, "lexical_similarity")
-
-
-PROCEDURE_SIMILARITY_PROMPT = """Decide whether the new reusable workflow is semantically the same as one existing workflow.
-Return JSON only:
-{"best_id": 12, "score": 0.86, "reason": "same test command workflow"}
-
-Rules:
-- Match when the procedures solve the same kind of task with materially equivalent tool steps.
-- Ignore harmless argument differences such as filenames, paths, or wording when the workflow is reusable.
-- Do not match procedures that require different tools, different ordering, or different intent.
-- Return {"best_id": null, "score": 0.0, "reason": "no match"} when no existing procedure is similar enough.
-"""
 
 
 def parse_procedure_match(content: str) -> ProcedureMatch | None:

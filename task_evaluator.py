@@ -1,6 +1,7 @@
 """task_evaluator.py - Task Success Verification & Multi-dimensional Evaluator"""
 
 from __future__ import annotations
+from agent_configuration import load_text
 
 import ast
 from dataclasses import dataclass, field
@@ -293,29 +294,16 @@ class TaskEvaluator:
             content = str(msg.get("content") or "")[:300]
             conversation_summary.append(f"[{role}]: {content}")
 
-        judge_prompt = f"""You are an impartial and rigorous AI Task Evaluator & Judge.
-Evaluate whether the Assistant successfully achieved the User's Goal without errors or omissions.
-
-[User Goal]:
-{user_goal}
-
-[Execution Summary]:
-{chr(10).join(conversation_summary)}
-
-[Final Assistant Reply]:
-{final_reply}
-
-Please output your decision strictly in JSON format with keys:
-- "success": true if user goal is completely fulfilled, false otherwise
-- "score": float between 0.0 and 1.0
-- "feedback": concise explanation of what was achieved or what failed / was missed.
-"""
+        judge_prompt = load_text(
+            'instructions.json', 'judge_request', user_goal=user_goal,
+            execution_summary='\n'.join(conversation_summary), final_reply=final_reply,
+        )
         try:
             from agent_execution.budgets import budget_client
             response = budget_client(self.client).chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a JSON-only evaluation judge."},
+                    {"role": "system", "content": load_text('instructions.json', 'judge_system')},
                     {"role": "user", "content": judge_prompt},
                 ],
                 temperature=0.0,

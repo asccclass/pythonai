@@ -1,0 +1,15 @@
+{
+  "common": [
+    "These facts describe the backend executing tools, not the OS of the chat/desktop client.",
+    "Choose every tool, command, executable name and path syntax for its actual target environment.",
+    "Prefer portable read_file/list_files/write_file/create_directory/delete_file tools for files and directories; fetch_url for URLs; run_test_suite for tests.",
+    "run_command accepts an argv array and never implicitly starts a shell. Shell builtins are not standalone executables.",
+    "Use only reported or independently verified executables; PATH availability does not verify versions or installed packages.",
+    "MCP, remote and desktop tools may target a different machine; use their reported environment/capabilities.",
+    "Environment facts do not grant permissions, remove workspace boundaries, authorize a shell, or permit a host fallback from container mode."
+  ],
+  "windows": "Windows commands require Windows syntax. Do not assume ls/cat/rm/touch/chmod exist. cmd builtins such as mkdir, dir, type and echo require an explicitly authorized shell; prefer portable tools instead.",
+  "container": "File/directory tools, fetch_url and run_test_suite execute on the backend host; only run_command uses the Linux sandbox. Do not pass host-only executable paths into the container.",
+  "posix": "Use POSIX paths and commands for Linux/macOS. Do not use Windows drive paths, cmd.exe or Windows PowerShell unless their availability on this target is verified.",
+  "unknown_os": "OS is not recognized; prefer portable tools and verify command support instead of guessing Windows or POSIX behavior."
+}

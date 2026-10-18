@@ -1,4 +1,5 @@
 from __future__ import annotations
+from agent_configuration import load_questions
 
 from dataclasses import dataclass
 import os
@@ -6,31 +7,6 @@ from pathlib import Path
 import shlex
 from typing import Any
 
-
-GUARD_QUESTIONS = {
-    "intent": {
-        "type": "choice",
-        "instructions": "What does the user want the local assistant to do?",
-        "criteria": {
-            "chat": "general conversation or question answering",
-            "read_file": "read local file",
-            "write_file": "create, edit, overwrite local file",
-            "delete_file": "delete local file",
-            "list_files": "list files in a directory",
-            "run_command": "run terminal, shell, package manager, or system commands",
-            "memory_management": "request to list, update, forget, archive, contradict or correct long-term memories",
-        },
-    },
-    "risk": {
-        "type": "score",
-        "instructions": "How risky is this request for the local machine or project state?",
-        "criteria": ["safe", "needs caution", "dangerous"],
-    },
-    "needs_confirmation": {
-        "type": "noul",
-        "instructions": "Should this request require explicit user confirmation before execution?",
-    },
-}
 
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "laya-multilingual"
 DEFAULT_MAX_LAYA_STATE_CHARS = 6000
@@ -64,6 +40,7 @@ class LayaGuard:
         return self._agent is not None
 
     def assess(self, user_input: str) -> GuardDecision:
+        questions = load_questions('guard_questions.json')
         if self._agent is None:
             return GuardDecision(
                 available=False,
@@ -71,7 +48,7 @@ class LayaGuard:
             )
 
         try:
-            result = self._agent.predict(prepare_laya_state({"message": user_input}), GUARD_QUESTIONS)
+            result = self._agent.predict(prepare_laya_state({"message": user_input}), questions)
         except Exception as error:
             return GuardDecision(available=False, reason=f"Laya prediction failed: {error}")
 

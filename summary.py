@@ -1,3 +1,4 @@
+from agent_configuration import load_text
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -55,19 +56,21 @@ def generate_daily_summary(telegram_chat_id: str | None = None) -> tuple[str, st
         
         new_procedures = [p for p in procedures if p['created_at'] == p['updated_at']]
         
-        prompt = f'''Generate a daily summary report based on the following data from the last 24 hours. Format it nicely in Markdown. Be concise but informative. Include sections for tasks, semantic memory, and procedures.
+        prompt = load_text(
+            'instructions.json', 'summary_request',
+            completed_count=len(completed_jobs),
+            completed_snippets=json.dumps([j.get('text', '')[:50] for j in completed_jobs[:5]]),
+            failed_count=len(failed_jobs),
+            failed_snippets=json.dumps([(j.get('error_message') or j.get('last_error') or '')[:50] for j in failed_jobs[:5]]),
+            new_memory_count=len(new_memories),
+            new_memory_snippets=json.dumps([f"{m['subject']} {m['predicate']} {m['object']}" for m in new_memories[:5]]),
+            updated_memory_count=len(updated_memories),
+            low_confidence_count=len(low_confidence_memories),
+            new_procedure_count=len(new_procedures),
+            procedure_types=json.dumps([p['task_type'] for p in new_procedures[:5]]),
+        )
 
-Data:
-- Completed Tasks: {len(completed_jobs)} (Snippets: {json.dumps([j.get('text', '')[:50] for j in completed_jobs[:5]])})
-- Failed Tasks: {len(failed_jobs)} (Snippets: {json.dumps([(j.get('error_message') or j.get('last_error') or '')[:50] for j in failed_jobs[:5]])})
-- New Semantic Memories: {len(new_memories)} (Snippets: {json.dumps([f"{m['subject']} {m['predicate']} {m['object']}" for m in new_memories[:5]])})
-- Updated Semantic Memories: {len(updated_memories)}
-- Low Confidence Memories requiring review: {len(low_confidence_memories)}
-- New Procedures: {len(new_procedures)} (Task Types: {json.dumps([p['task_type'] for p in new_procedures[:5]])})
-
-Generate the markdown summary now:'''
-
-        messages = [{"role": "system", "content": "You are a helpful assistant that generates daily summaries of agent activity. Output only the markdown summary, no conversational filler."},
+        messages = [{"role": "system", "content": load_text('instructions.json', 'summary_system')},
                     {"role": "user", "content": prompt}]
         
         response = server.get_client().chat.completions.create(

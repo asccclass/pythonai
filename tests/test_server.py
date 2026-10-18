@@ -782,7 +782,9 @@ class ServerTests(unittest.TestCase):
             ):
                 server.main(async_memory_review=False)
 
-        self.assertEqual(captured_messages[0], {"role": "system", "content": "system with agents"})
+        self.assertEqual(captured_messages[0]['role'], 'system')
+        self.assertIn('system with agents', captured_messages[0]['content'])
+        self.assertIn('[PythonAI dynamic instructions]', captured_messages[0]['content'])
 
     def test_main_continues_when_memory_store_cannot_initialize(self):
         class Guard:

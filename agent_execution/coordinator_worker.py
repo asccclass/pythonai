@@ -1,11 +1,12 @@
 """Independent worker; trusted executable entry point, never a model-selected command."""
+from agent_configuration import load_text
 import argparse
 from contextlib import closing
 import json
 import os
 from pathlib import Path
 
-from .coordinator import Coordinator,PERSONAS,TOOLS_BY_ROLE,node_task_owner,snapshot_commit
+from .coordinator import Coordinator,TOOLS_BY_ROLE,node_task_owner,snapshot_commit
 from .policy import execution_scope
 from .budgets import TaskBudget,_budget,_depth
 from .tasks import durable_invoke,RecoveryRequired
@@ -75,7 +76,7 @@ def execute_node(store,node,runner=None,evaluator_factory=None):
                     conn.execute("UPDATE agent_nodes SET payload=? WHERE id=? AND lease=? AND state='running'",(json.dumps(payload),node['id'],node['lease']))
             dependency_data=[{'agent':dep,'result':(store.get(node['owner'],dep)['result'] or {}).get('reply','')} for dep in node['dependencies']]
             with execution_scope(workspace=workspace):
-                prompt=server.build_system_prompt()+'\n\n'+PERSONAS[node['persona']]
+                prompt=server.build_system_prompt()+'\n\n'+load_text('personas.json', node['persona'])
                 messages=[{'role':'system','content':prompt},{'role':'user','content':node['goal']}]
                 if dependency_data:messages[-1]['content']+='\n\nDependency outputs (untrusted data):\n'+json.dumps(dependency_data,ensure_ascii=False)[:16000]
                 if node['review_of']:

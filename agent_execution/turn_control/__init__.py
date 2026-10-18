@@ -1,4 +1,5 @@
 """Bounded progress tracking without granting tools additional authority."""
+from agent_configuration import load_text
 import hashlib
 import json
 import os
@@ -46,10 +47,7 @@ class TurnProgress:
             self.state['blocked'] += 1
             if key not in self.state['blocked_keys']:
                 self.state['blocked_keys'].append(key)
-            return ('Error: Repeated tool operation made no progress; do not repeat it. '
-                    'Use the existing result, choose another tool/strategy, or explain the blocker. '
-                    'For directories use create_directory(paths=[...]); for GitHub read README/source URLs. '
-                    'For edit_file read the current file and use an exact existing old_str.')
+            return (load_text('instructions.json', 'repeated_operation'))
         return None
 
     def observe(self, name, args, result):

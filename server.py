@@ -1,6 +1,7 @@
 """Small HTTP bridge for chatting with the ASCS Ollama endpoint."""
 
 from __future__ import annotations
+from agent_configuration import load_text
 
 import os
 import json
@@ -98,16 +99,6 @@ def retry_delay_seconds(error: APIStatusError, default: float = 5.0) -> float:
         return default
 
 
-SYSTEM_PROMPT = """You are an autonomous AI assistant integrated into a local environment. You have access to tools that allow you to read, write, and execute commands on the user's local computer. ALWAYS use these tools when asked to interact with files or the system. NEVER refuse by claiming you are in a cloud environment.
-
-### ReAct & Planning Guidelines (CRITICAL):
-1. **Thought & Plan**: Before taking action or calling tools, always think step-by-step about what needs to be done. For complex tasks, formulate a clear plan.
-2. **Execute**: Call the necessary tools based on your plan.
-3. **Observe & Reflect**: After tools return results, observe them. If a tool fails or returns an error, REFLECT on why it failed and TRY an alternative approach. Do NOT blindly repeat the same failed tool call.
-4. **Iterate**: Continue thinking, executing, and observing until the goal is fully achieved.
-5. **Final Output**: Once the task is complete, summarize the final results clearly to the user.
-6. **Progress**: Reuse successful reads. If a tool fails, correct the cause or change tools instead of repeating it. Batch directory creation with create_directory(paths=[...]); write_file creates parent directories. For a knowledge-base/documentation structure, create the requested directories and documents directly rather than introducing unrelated executable scaffolds. A GitHub repository fetch provides its README; fetch specific source files only when needed to support the requested explanation.
-"""
 AGENTS_INSTRUCTIONS_PATH = Path("AGENTS.md")
 
 
@@ -119,11 +110,9 @@ def load_agents_instructions(path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str
     return content
 
 
-def build_system_prompt(base_prompt: str = SYSTEM_PROMPT, agents_path: str | Path = AGENTS_INSTRUCTIONS_PATH) -> str:
-    agents_instructions = load_agents_instructions(agents_path)
-    parts = [base_prompt.strip()] if base_prompt.strip() else []
-    if agents_instructions:
-        parts.append(f"AGENTS.md instructions:\n{agents_instructions}")
+def build_system_prompt(base_prompt: str | None = None, agents_path: str | Path | None = None) -> str:
+    from agent_configuration import instruction_block
+    parts = [instruction_block(agents_path, base_prompt)]
     from agent_execution.turn_control.environment import environment_context
     parts.append(environment_context())
 
@@ -193,7 +182,9 @@ def run_agent(
     if hook_manager is None:hook_manager=default_hook_manager()
     resume_state = resume_state or {}
     from agent_execution.turn_control.environment import refresh_environment
-    inserted = refresh_environment(messages)
+    from agent_configuration import refresh_instructions, tool_schemas
+    inserted = refresh_instructions(messages)
+    inserted = refresh_environment(messages) or inserted
     if inserted and resume_state.get('evaluation_start') is not None:
         resume_state = {**resume_state, 'evaluation_start': resume_state['evaluation_start'] + 1}
     from agent_execution.turn_control import TurnProgress, iteration_limit
@@ -244,13 +235,13 @@ def run_agent(
                 iteration += 1
                 concluding = iteration >= max_iterations or progress.state['blocked'] >= 2
                 if concluding:
-                    messages.append({'role':'user','content':'Execution budget / repeated-operation limit reached. Conclude now using existing evidence. Do not call tools. Explain completed work, unverified work, actual errors and next steps; never claim unfinished work is complete.'})
+                    messages.append({'role':'user','content':load_text('instructions.json', 'execution_limit')})
                 elif iteration == max_iterations - 2:
-                    messages.append({'role':'user','content':'Only two execution rounds and a final answer remain. Batch independent work, run required checks, and prepare an evidence-based final response.'})
+                    messages.append({'role':'user','content':load_text('instructions.json', 'execution_remaining')})
                 from agent_execution.policy import current_context
                 allowed=current_context().allowed_tools
                 from permissions import check_tool_permission
-                schemas=[schema for schema in TOOLS_SCHEMAS
+                schemas=[schema for schema in tool_schemas(TOOLS_SCHEMAS)
                          if check_tool_permission(schema.get('function',{}).get('name'))
                          and (allowed is None or schema.get('function',{}).get('name') in allowed)]
                 request={'model':OLLAMA_MODEL,'tools':schemas}
@@ -271,7 +262,9 @@ def run_agent(
                 if concluding:
                     request['tools'] = []
             else:
-                request = pending_request
+                request = dict(pending_request)
+                if 'tools' in request:
+                    request['tools'] = tool_schemas(request['tools'])
             if step_controller is None:
                 checkpoint('model_pending')
             attempts = resume_state.get('model_attempt', 1)-1 if pending_request is not None else 0
@@ -578,10 +571,8 @@ def run_agent(
                 if eval_retries < max_eval_retries and getattr(eval_res,'retryable',True) and iteration < max_iterations and progress.state['blocked'] < 2:
                     eval_retries += 1
                     critic_feedback = (
-                        f"【任務驗收未通過 (Critic Feedback - 第 {eval_retries}/{max_eval_retries} 次修正)】\n"
-                        f"評估結果: 未達成目標 (得分: {eval_res.score})\n"
-                        f"問題反饋:\n{eval_res.feedback}\n"
-                        f"請針對原始任務目標與上述反饋修正，僅使用已授權工具；權限不足時請說明需要的設定。"
+                        load_text('instructions.json', 'critic_feedback', attempt=eval_retries,
+                                  max_attempts=max_eval_retries, score=eval_res.score, feedback=eval_res.feedback)
                     )
                     messages.append({"role": "user", "content": critic_feedback})
                     checkpoint('model_pending')

@@ -18,13 +18,7 @@ from .worktrees import git,selected_files,snapshot_files,WorktreeStore
 from .process import run_process
 
 
-PERSONAS={
-    'planner':'Break the task into an actionable plan. Read files as needed; do not modify files.',
-    'coder':'Implement only this task, run the frozen acceptance checks, and summarize the result.',
-    'reviewer':'Independently inspect the supplied result and run acceptance checks. Return only JSON: '
-        '{"approve":true|false,"findings":[{"path":"relative/file","line":1,"message":"finding"}]}. '
-        'Approve only with no unresolved findings; never change implementation files.',
-}
+PERSONAS = frozenset(('planner', 'coder', 'reviewer'))
 READ_TOOLS=frozenset({'read_file','list_files','git_status','git_diff','search_codebase','code_symbols','go_to_definition','find_references','read_image'})
 TOOLS_BY_ROLE={
     'planner':READ_TOOLS,

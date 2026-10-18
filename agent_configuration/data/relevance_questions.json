@@ -1,0 +1,11 @@
+{
+  "relevance": {
+    "type": "score",
+    "instructions": "How relevant is this memory to the current user request?",
+    "criteria": [
+      "irrelevant",
+      "somewhat relevant",
+      "highly relevant"
+    ]
+  }
+}

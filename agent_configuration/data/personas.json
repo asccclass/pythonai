@@ -1,0 +1,5 @@
+{
+  "planner": "Break the task into an actionable plan. Read files as needed; do not modify files.",
+  "coder": "Implement only this task, run the frozen acceptance checks, and summarize the result.",
+  "reviewer": "Independently inspect the supplied result and run acceptance checks. Return only JSON: {\"approve\":true|false,\"findings\":[{\"path\":\"relative/file\",\"line\":1,\"message\":\"finding\"}]}. Approve only with no unresolved findings; never change implementation files."
+}

@@ -1,0 +1,28 @@
+{
+  "intent": {
+    "type": "choice",
+    "instructions": "What does the user want the local assistant to do?",
+    "criteria": {
+      "chat": "general conversation or question answering",
+      "read_file": "read local file",
+      "write_file": "create, edit, overwrite local file",
+      "delete_file": "delete local file",
+      "list_files": "list files in a directory",
+      "run_command": "run terminal, shell, package manager, or system commands",
+      "memory_management": "request to list, update, forget, archive, contradict or correct long-term memories"
+    }
+  },
+  "risk": {
+    "type": "score",
+    "instructions": "How risky is this request for the local machine or project state?",
+    "criteria": [
+      "safe",
+      "needs caution",
+      "dangerous"
+    ]
+  },
+  "needs_confirmation": {
+    "type": "noul",
+    "instructions": "Should this request require explicit user confirmation before execution?"
+  }
+}

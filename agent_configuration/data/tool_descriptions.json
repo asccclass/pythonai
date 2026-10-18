@@ -1,0 +1,80 @@
+{
+  "ask_user": {
+    "/description": "Pause the task and ask a human for missing information. Never invent the human answer."
+  },
+  "read_file": {
+    "/description": "Read a text file inside the Agent workspace and return its contents.",
+    "/parameters/properties/path/description": "The workspace-relative path to the file to read"
+  },
+  "list_files": {
+    "/description": "List files and directories inside the Agent workspace.",
+    "/parameters/properties/path/description": "The workspace-relative directory path to list"
+  },
+  "write_file": {
+    "/description": "Write text content to a file inside the Agent workspace.",
+    "/parameters/properties/path/description": "The workspace-relative path to the file to write",
+    "/parameters/properties/content/description": "The text content to write"
+  },
+  "delete_file": {
+    "/description": "Delete a single file inside the Agent workspace using the appropriate operating system command.",
+    "/parameters/properties/path/description": "The workspace-relative path to the file to delete"
+  },
+  "fetch_url": {
+    "/description": "Read a URL as bounded readable text. GitHub repository URLs return README via GitHub API without assuming a branch; HTML pages return main article Markdown. Use the returned content to answer, do not repeatedly fetch the same URL. HTTP errors fail. raw=true preserves raw content.",
+    "/parameters/properties/url/description": "The URL to fetch",
+    "/parameters/properties/raw/description": "Return raw content instead of readable main text (default false).",
+    "/parameters/properties/max_time/description": "Maximum curl runtime in seconds",
+    "/parameters/properties/follow_redirects/description": "Whether curl should follow redirects"
+  },
+  "run_command": {
+    "/description": "Run an executable directly (no shell) inside the Agent workspace. cwd is workspace-relative; outside paths are rejected. On Windows do not use shell builtins or Unix commands such as dir, mkdir, ls, rm. Use list_files, write_file (creates parent directories), delete_file and project_scaffold instead. For test evidence use run_test_suite.",
+    "/parameters/properties/command/description": "The command and arguments to run. Path arguments must stay inside the Agent workspace.",
+    "/parameters/properties/cwd/description": "Optional workspace-relative working directory",
+    "/parameters/properties/artifacts_directory/description": "In container mode, export regular files from /artifacts into this workspace directory without overwriting existing files.",
+    "/parameters/properties/program_directory/description": "For creating or updating a program, use its dedicated workspace directory. Registers new output before execution, tracks build success/failure, and reuses managed directories. Existing unmanaged directories require human adoption. Omit cwd with this option."
+  },
+  "run_skill": {
+    "/description": "Run a local registered Skill by name with structured inputs.",
+    "/parameters/properties/name/description": "The local Skill name",
+    "/parameters/properties/inputs/description": "Skill inputs matching the Skill input schema",
+    "/parameters/properties/program_directory/description": "Dedicated managed program/output directory. Reuse the same directory for the same program; existing unknown directories are not adopted automatically."
+  },
+  "manage_memory": {
+    "/description": "Manage long-term semantic memories. Use this to correct, archive, supersede, or confirm memories when asked by the user.",
+    "/parameters/properties/action/description": "The action to perform: 'confirm', 'archive', 'contradict', or 'supersede'",
+    "/parameters/properties/memory_id/description": "The ID of the memory to modify (e.g., 123)",
+    "/parameters/properties/confirm/description": "Legacy metadata only; cannot authorize high-risk changes.",
+    "/parameters/properties/approval_id/description": "One-use approval ID granted by the human via /approve; bound to identical operation arguments and session.",
+    "/parameters/properties/reason/description": "Reason for the modification.",
+    "/parameters/properties/superseded_by/description": "ID of the new memory that supersedes this one (required for 'supersede' action)."
+  },
+  "edit_file": {
+    "/description": "Edit an existing file by replacing a specific string. Use this carefully.",
+    "/parameters/properties/path/description": "The workspace-relative path to the file",
+    "/parameters/properties/old_str/description": "The exact string to be replaced",
+    "/parameters/properties/new_str/description": "The string to replace it with"
+  },
+  "search_web": {
+    "/description": "Search the web using DuckDuckGo.",
+    "/parameters/properties/query/description": "The search query",
+    "/parameters/properties/max_results/description": "Maximum number of results to return (default: 5)"
+  },
+  "browse_webpage": {
+    "/description": "Browse a webpage and return its text content.",
+    "/parameters/properties/url/description": "The URL of the webpage to browse"
+  },
+  "analyze_image": {
+    "/description": "Analyze an image using the vision model and return a description.",
+    "/parameters/properties/image_path/description": "The workspace-relative path to the image file",
+    "/parameters/properties/prompt/description": "Optional prompt or question about the image (default: 'Describe this image in detail.')"
+  },
+  "create_dynamic_tool": {
+    "/description": "Stage an immutable Python tool proposal. It requires tests and human approval before activation; staging never executes code.",
+    "/parameters/properties/name/description": "The name of the tool (must be a valid Python identifier)",
+    "/parameters/properties/code/description": "The complete Python code for the tool.",
+    "/parameters/properties/schema_json/description": "The JSON string representation of the tool's schema, strictly adhering to the OpenAI tool calling format."
+  },
+  "desktop_tool": {
+    "/description": "Use the connected desktop's allowlisted tools. Side effects require local human approval. No shell commands."
+  }
+}

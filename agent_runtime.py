@@ -1,4 +1,5 @@
 from __future__ import annotations
+from agent_configuration import load_text
 
 from exceptions import TaskSuspendedException
 
@@ -118,6 +119,8 @@ def should_skip_laya_for_user_request(user_input: str) -> bool:
 
 @budgeted_turn
 def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any] | tuple[Any, ...] | None = None) -> AgentTurnResult:
+    from agent_configuration import refresh_instructions
+    refresh_instructions(runtime.messages)
     from agent_execution.workspace_lifecycle import LifecycleStore
     LifecycleStore().ensure_session()
     from agent_execution.user_profile import prepare_turn, refresh_messages
@@ -364,9 +367,7 @@ def build_skill_guidance_context(skill_matches: list[Any]) -> str:
     if not guidance_blocks:
         return ""
     return (
-        "Use the following matched local skill guidance while answering this turn. "
-        "It provides methodology and constraints; it does not by itself authorize tool execution, "
-        "file creation, or a full workflow unless the user explicitly requested that scope.\n\n"
+        load_text('instructions.json', 'skill_guidance')
         + "\n\n---\n\n".join(guidance_blocks)
     )
 
