@@ -19,6 +19,7 @@ Go 程式可使用 `project_scaffold(framework="go_basic")` 建立獨立目錄�
 | 功能領域 | 現有能力 | 狀態與限制 | 實作依據 |
 | --- | --- | --- | --- |
 | Agent 執行迴圈 | 多輪模型／工具呼叫、讀取 AGENTS.md、規劃與反思提示、取消檢查 | 已實作；15 次迭代、持久化 task／checkpoint／循序依賴、總 token／request／deadline／子代理預算；跨代理 DAG、獨立 Reviewer 與結果合併 | `server.py`, `agent_runtime.py`, `agent_execution/budgets.py` |
+| 動態文字設定 | 系統提示詞、工具說明、安全原則、判斷問題及輔助提示詞由外部 Markdown／JSON 載入 | 初始化、每次任務及 checkpoint 恢復時重新讀取；工具描述於模型請求前更新，保留既有權限與參數契約 | `agent_configuration/`, `server.py`, `agent_runtime.py` |
 | Provider 相容與重試 | OpenAI-compatible endpoint、文字／視覺／embedding 模型設定、能力探測、Retry-After | 已實作；關閉 SDK 隱藏重試，task 預算涵蓋重試；成本上限須配置模型費率，多 provider failover 尚未提供 | `server.py`, `agent_execution/budgets.py`, `agent_execution/model_probe.py` |
 | 檔案與命令 | 讀寫、刪除、字串替換、列目錄、curl 擷取、命令執行 | 已實作；共用政策檢查角色與路徑／symlink，本機命令有條件確認；遠端通訊執行命令自動批准 | `base.py` |
 | Skills | skill.json + SKILL.md、觸發詞匹配、輸入驗證、工具 allowlist、共用政策、步驟與結果紀錄、啟停 CLI | 已實作；唯一明確且可執行的匹配直接執行；多個匹配／指引型 Skill 交給模型；執行步驟目前為 tool_sequence | `skills.py`, `skills_cli.py`, `agent_runtime.py` |
@@ -108,6 +109,95 @@ SERVER_PORT=8000
 ```
 
 `OLLAMA_API_KEY` must be a LiteLLM virtual key that starts with `sk-`. `OLLAMA_EMBEDDING_MODEL` is optional and defaults to `OLLAMA_MODEL`. The `.env` file is ignored by Git and should not be committed.
+
+### 系統提示詞、工具說明與安全設定
+
+Agent 的文字設定集中於 `agent_configuration/data/`，採用 UTF-8 Markdown／JSON。
+原本寫在 Python 的主提示詞、核心／桌面工具說明、環境使用規則、Laya 判斷問題、
+記憶萃取、任務評估、profile、報告及子代理 persona 已改由外部檔案讀取。
+CLI、Telegram polling 和統一 Web／API／WebSocket 服務共用此機制。
+
+| 設定檔（相對於 `agent_configuration/data/`） | 可調整內容 |
+| --- | --- |
+| `system.md` | Agent 身分與主要行為 |
+| `tool_usage.md` | 規劃、工具使用、反思及任務完成方法 |
+| `safety.md` | 安全原則、不可信資料與秘密處理限制 |
+| `tool_descriptions.json` | 核心及桌面工具的功能與參數說明 |
+| `environment.json` | 共通、Windows、POSIX、container 的使用規則；實際環境仍由後端偵測 |
+| `guard_questions.json` | Laya 的意圖、風險及是否需要確認等判斷問題 |
+| `memory_questions.json`、`relevance_questions.json`、`preservation_questions.json` | 記憶分類、相關性與保留判斷 |
+| `semantic_extraction.md`、`procedure_similarity.md` | 語意記憶萃取與程序相似度比對提示詞 |
+| `profile_extraction.md`、`skill_doctor.md` | 使用者 profile 萃取與 Skill Doctor 診斷提示詞 |
+| `personas.json` | Planner／Coder／Reviewer 的角色文字 |
+| `instructions.json` | 任務驗收、Critic 修正、摘要、IDE、檢索及 profile 等文字與模板 |
+
+**使用預設設定：**不必設定額外環境變數，直接編輯上述檔案。例如在專案根目錄執行：
+
+```powershell
+notepad .\agent_configuration\data\system.md
+notepad .\agent_configuration\data\tool_usage.md
+notepad .\agent_configuration\data\safety.md
+```
+
+預設目錄依套件位置解析，不依賴啟動時的工作目錄。專案根目錄的 `AGENTS.md`
+仍另行載入，不會被替代設定目錄取代；既有 Skill 的 `skill.json`／`SKILL.md`
+仍由 SkillRegistry 在 match／get 時重新讀取。
+
+**使用獨立設定目錄：**先複製完整設定，再於啟動程式前指定 `AGENT_CONFIG_DIR`。
+以下範例在 Windows 使用者資料目錄建立一份設定；複製指令會覆寫目標目錄的同名檔案，
+已有自訂內容時只需設定環境變數並啟動程式。
+
+```powershell
+$agentConfigPath = Join-Path $env:LOCALAPPDATA 'PythonAI\agent-config'
+New-Item -ItemType Directory -Path $agentConfigPath -Force | Out-Null
+Copy-Item -Path .\agent_configuration\data\* -Destination $agentConfigPath
+$env:AGENT_CONFIG_DIR = $agentConfigPath
+.\venv\Scripts\python.exe .\server.py
+```
+
+同一環境變數也適用於 `telegram_polling_worker.py` 與 `communication_server.py`，
+依既有部署方式選擇入口即可。範例中的環境變數只作用於目前 PowerShell 與其後啟動的子程序；
+由服務或其他啟動器執行時，請在該執行環境設定相同的絕對路徑。
+替代目錄必須包含完整設定，缺少檔案不會隱式回退到預設目錄。
+若要恢復預設目錄，停止程式後執行 `Remove-Item Env:AGENT_CONFIG_DIR -ErrorAction SilentlyContinue`，再重新啟動。
+
+**修改與生效時機：**
+
+1. 初始化：`server.build_system_prompt()` 讀取主提示詞、工具使用方法、安全原則與 `AGENTS.md`。
+2. 每次任務：`agent_runtime.run_agent_turn()` 更新既有對話中的受管理政策區塊，包含直接執行 Skill 的路徑。
+3. 直接執行／恢復：`server.run_agent()` 在直接呼叫及 checkpoint 恢復時重新載入，保留 persona、profile、歷史訊息與 tool call ID。
+4. 模型請求：重新讀取核心工具描述及既有 `tools/*.json` 的說明，只更新 `description`，不因此註冊新函式或改變參數型別。
+5. 輔助服務：評估器、分類器、記憶萃取與報告等在實際呼叫時讀取自己的文字設定。
+
+升級這次 Python 程式後需重新啟動一次；之後只改文字設定，下一輪任務即可套用，
+已送出的模型請求不會追溯修改。變更啟動環境中的 `AGENT_CONFIG_DIR` 則需重新啟動該程序。
+新增或啟用 Python 工具仍遵循既有擴充套件測試、人工核准與重啟流程；MCP 與經核准擴充的描述由各自來源提供。
+
+**檔案格式與錯誤處理：**Markdown 必須非空，JSON 必須有效並保留必要 key、型別與欄位。
+例如工具說明以 `read_file` 等工具名稱為第一層 key，`/description` 為工具說明，
+`/parameters/properties/path/description` 為路徑參數說明；修改文字時應保留其餘工具及參數的設定。
+`instructions.json` 的模板採 `${name}`，例如 `judge_request` 使用 `${user_goal}`、
+`${execution_summary}`、`${final_reply}`；保留必要變數名稱，純 JSON 範例的 `{}` 不須跳脫。
+模板只插入原文，不執行 Python／Jinja，也不再次求值替換內容。
+
+主提示詞、工具或安全設定無法載入時會回報 `ConfigurationError`，不使用舊快取繼續執行；
+輔助記憶服務保留原有離線／失敗降級流程。若由其他程式動態生成設定，應先寫暫存檔，
+完成後以 `os.replace()` 原子替換目標，避免讀到未完成的檔案。
+設定目錄屬於受信任的管理來源；RBAC、workspace 邊界、工具 allowlist、人工核准與參數驗證
+仍由程式執行，修改文字不會賦予額外權限。
+
+**驗證方式：**
+
+```powershell
+.\venv\Scripts\python.exe -m pytest agent_configuration/tests -q
+.\venv\Scripts\python.exe -m pytest -q
+git diff --check
+```
+
+2026-10-18 重構（`b97ee8d`）已新增並通過 17 項設定回歸測試，涵蓋同一 Agent 的下一次任務、
+工具說明更新、Unicode、模板、設定錯誤及歷史保留；當次完整回歸為 **958 passed、16 skipped、95 subtests passed**。
+略過項目是需另行啟用的 Chromium、Docker、真實模型供應商與 Temporal 服務整合，
+不代表這些外部環境已驗收。模組細節見 [Agent 動態文字設定](agent_configuration/README.md)。
 
 ## Usage
 
