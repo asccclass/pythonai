@@ -49,6 +49,22 @@ def test_same_fetch_loop_is_bounded_and_final_has_no_tools():
     assert 'README evidence' in latest['content'] and 'Reused earlier read' in latest['content']
 
 
+def test_same_browse_loop_reuses_successful_page_evidence():
+    import server
+    args = {'url': 'https://example.test/rates'}
+    raw, create = client([response([call('browse_webpage', args, str(i))]) for i in range(3)] +
+                         [response(content='南非幣即期買入為 1.9200。')])
+    run = Mock(return_value='| 南非幣 | 1.9200 | 2.0200 |')
+    with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
+        reply = server.run_agent([{'role': 'user', 'content': '查詢南非幣即期買入匯率'}])
+    assert reply == '南非幣即期買入為 1.9200。'
+    assert run.call_count == 2
+    latest = next(message for message in reversed(create.call_args.kwargs['messages'])
+                  if message.get('role') == 'tool')
+    assert 'Reused earlier read' in latest['content']
+    assert '南非幣 | 1.9200' in latest['content']
+
+
 def test_changing_mkdir_paths_stops_same_failure_family_then_allows_recovery():
     progress = TurnProgress()
     for path in ['a', 'b']:

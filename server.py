@@ -458,7 +458,7 @@ def run_agent(
                         from agent_execution.results import ToolResult
                         previous_id = progress.state['calls'].get(progress.key(tool_name, tool_args), {}).get('source_id')
                         previous = tool_results.get(previous_id, {})
-                        if tool_name in {'fetch_url', 'read_file', 'list_files'} and previous.get('success') is True:
+                        if tool_name in {'fetch_url', 'browse_webpage', 'read_file', 'list_files'} and previous.get('success') is True:
                             source_id = previous_id
                             result = ToolResult(True, 'Reused earlier read; no new network/filesystem read was performed.\n' + str(previous.get('output', '')),
                                                 evidence={'kind':'reuse_prior_read','source_tool_call':source_id})

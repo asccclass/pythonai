@@ -278,6 +278,93 @@ class TaskEvaluator:
     # ---------------------------------------------------------
     # LLM-as-a-Judge Track
     # ---------------------------------------------------------
+    @staticmethod
+    def _judge_terms(user_goal: str) -> list[str]:
+        """Return concrete goal fragments that may occur verbatim in tool evidence."""
+        terms = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9._:/-]{2,}", user_goal))
+        for run in re.findall(r"[\u3400-\u9fff]{2,}", user_goal):
+            for width in range(min(6, len(run)), 1, -1):
+                terms.update(run[index:index + width] for index in range(len(run) - width + 1))
+        return sorted(terms, key=lambda value: (-len(value), value))
+
+    @classmethod
+    def _judge_excerpt(cls, content: str, user_goal: str, limit: int) -> str:
+        if len(content) <= limit:
+            return content
+        folded = content.casefold()
+        hits: list[tuple[int, int]] = []
+        for term in cls._judge_terms(user_goal):
+            position = folded.find(term.casefold())
+            if position >= 0:
+                hits.append((position, len(term)))
+        if hits:
+            # Prefer the longest exact goal fragments, while retaining nearby table
+            # columns or prose needed to interpret the matching value.
+            hits.sort(key=lambda item: (-item[1], item[0]))
+            positions: list[int] = []
+            for position, _ in hits:
+                if all(abs(position - existing) > 240 for existing in positions):
+                    positions.append(position)
+                if len(positions) == 4:
+                    break
+            radius = max(120, (limit // max(1, len(positions))) // 2)
+            excerpts = []
+            for position in sorted(positions):
+                start = max(0, position - radius)
+                end = min(len(content), position + radius)
+                excerpts.append(content[start:end])
+            focused = "\n... [goal-focused evidence] ...\n".join(excerpts)
+            return focused[:limit]
+        head = max(1, int(limit * 0.6))
+        tail = max(1, limit - head - 35)
+        return content[:head] + "\n... [evidence truncated] ...\n" + content[-tail:]
+
+    @classmethod
+    def _judge_execution_summary(cls, user_goal: str, messages: list[dict[str, Any]]) -> str:
+        """Keep relevant tool evidence even when retries push it out of the tail."""
+        call_details: dict[str, tuple[str, str]] = {}
+        for msg in messages:
+            for call in msg.get("tool_calls") or []:
+                function = getattr(call, "function", None)
+                call_id = getattr(call, "id", None) if not isinstance(call, dict) else call.get("id")
+                name = getattr(function, "name", "") if function else call.get("function", {}).get("name", "")
+                arguments = getattr(function, "arguments", "") if function else call.get("function", {}).get("arguments", "")
+                if call_id:
+                    call_details[str(call_id)] = (str(name), str(arguments))
+
+        terms = cls._judge_terms(user_goal)
+        relevant_tools = []
+        for index, msg in enumerate(messages):
+            if msg.get("role") != "tool":
+                continue
+            content = str(msg.get("content") or "")
+            folded = content.casefold()
+            if any(term.casefold() in folded for term in terms):
+                relevant_tools.append(index)
+
+        selected = set(range(max(0, len(messages) - 8), len(messages)))
+        selected.update(relevant_tools[-4:])
+        parts = []
+        for index in sorted(selected):
+            msg = messages[index]
+            role = str(msg.get("role", "unknown"))
+            content = str(msg.get("content") or "")
+            if role == "tool":
+                call_id = str(msg.get("tool_call_id") or "")
+                name, arguments = call_details.get(call_id, ("unknown", ""))
+                excerpt = cls._judge_excerpt(content, user_goal, 1800)
+                parts.append(f"[tool {name} {call_id} args={arguments[:500]}]: {excerpt}")
+            else:
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls:
+                    names = []
+                    for call in tool_calls:
+                        function = getattr(call, "function", None)
+                        names.append(getattr(function, "name", "") if function else call.get("function", {}).get("name", ""))
+                    content = (content + f"\n[requested tools: {', '.join(filter(None, names))}]").strip()
+                parts.append(f"[{role}]: {cls._judge_excerpt(content, user_goal, 700)}")
+        return "\n".join(parts)
+
     def evaluate_llm_judge(
         self,
         user_goal: str,
@@ -288,15 +375,9 @@ class TaskEvaluator:
         if self.client is None or not self.model:
             return True, 1.0, "LLM-as-a-Judge 未配置，略過此項。"
 
-        conversation_summary = []
-        for msg in messages[-8:]:  # last few exchanges
-            role = msg.get("role", "unknown")
-            content = str(msg.get("content") or "")[:300]
-            conversation_summary.append(f"[{role}]: {content}")
-
         judge_prompt = load_text(
             'instructions.json', 'judge_request', user_goal=user_goal,
-            execution_summary='\n'.join(conversation_summary), final_reply=final_reply,
+            execution_summary=self._judge_execution_summary(user_goal, messages), final_reply=final_reply,
         )
         try:
             from agent_execution.budgets import budget_client

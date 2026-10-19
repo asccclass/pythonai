@@ -312,6 +312,27 @@ class TaskEvaluatorTests(unittest.TestCase):
         self.assertEqual(score,0)
         self.assertIn('Judge unavailable:',feedback)
 
+    def test_llm_judge_keeps_goal_relevant_web_evidence_outside_recent_tail(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content=json.dumps(
+                {"success": True, "score": 1.0, "feedback": "rate verified"}
+            )))])
+        table = ("currency rows before target\n" * 80) + "| 南非幣 | 1.9200 | 2.0200 |" + ("\nother rows" * 80)
+        messages = [
+            {"role": "assistant", "tool_calls": [{"id": "web-1", "function": {
+                "name": "browse_webpage", "arguments": '{"url":"https://example.test/rates"}'}}]},
+            {"role": "tool", "tool_call_id": "web-1", "content": table},
+        ] + [{"role": "assistant", "content": f"retry discussion {index}"} for index in range(10)]
+
+        evaluator = TaskEvaluator(self.workspace, client=mock_client, model="judge")
+        passed, _, _ = evaluator.evaluate_llm_judge("告訴我南非幣即期買入匯率", messages, "1.9200")
+
+        self.assertTrue(passed)
+        prompt = mock_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        self.assertIn("browse_webpage", prompt)
+        self.assertIn("南非幣 | 1.9200", prompt)
+
     # =========================================================
     # 3. Critic-Correction 自省修復迴圈測試 (server.run_agent)
     # =========================================================
