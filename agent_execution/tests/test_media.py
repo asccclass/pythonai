@@ -14,12 +14,16 @@ import unittest
 from unittest.mock import patch
 from agent_execution.policy import execution_scope
 from agent_execution.media.browser import browse
-from agent_execution.media.browser_worker import allowed_url
+from agent_execution.media.browser_worker import allowed_url, error_summary
 from agent_execution.media.documents import parse_document
 from agent_execution.media.audio import AudioTurn,voice_call
 
 
 class BrowserTests(unittest.TestCase):
+    def test_browser_worker_error_summary_preserves_bounded_cause(self):
+        self.assertEqual(error_summary(FileNotFoundError('chromium executable missing')), 'FileNotFoundError: chromium executable missing')
+        self.assertLessEqual(len(error_summary(RuntimeError('x' * 2000))), 512 + len('RuntimeError: '))
+
     def test_network_gate_rejects_local_and_unsafe_schemes(self):
         for url in ['file:///etc/passwd','http://user:secret@localhost/','http://127.0.0.1/']:
             with self.assertRaises((ValueError,PermissionError)):allowed_url(url,[])

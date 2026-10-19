@@ -100,6 +100,13 @@ class ResultTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.output,'Error: quoted log data')
 
+    def test_browser_vision_automation_failure_is_a_failed_tool_result(self):
+        from tools.browser_vision import browser_vision
+        with patch('tools.browser_vision.browse', side_effect=RuntimeError('FileNotFoundError: chromium executable missing')):
+            result = browser_vision.__wrapped__('https://example.test')
+        self.assertFalse(result.success)
+        self.assertIn('chromium executable missing', result.error)
+
     def test_actual_pytest_reports_pass_failure_empty_and_plain_script(self):
         target=self.root/'test_fixture.py'
         target.write_text('def test_true():\n    assert 2 + 2 == 4\n',encoding='utf-8')
@@ -274,6 +281,8 @@ class ResultTests(unittest.TestCase):
             'run_command':lambda:subprocess.CompletedProcess([],1,'all tests passed','failure')}):
             result=run_agent_turn('do work',self.runtime(runner,evaluator))
         self.assertIn('HITL',result.reply)
+        self.assertIn('未提供',result.reply)
+        self.assertNotIn('all tests passed',result.reply)
         step=self.store.steps(self.owner,'result-task')[0]
         self.assertEqual(step['state'],'failed')
         self.assertEqual(json.loads(step['result'])['exit_code'],1)

@@ -1,30 +1,9 @@
-from agent_execution import policy_tool, resolve_path
+from agent_execution import policy_tool
+from agent_execution.media.browser import browse
+from agent_execution.results import ToolResult
 import json
 import base64
-import time
-import traceback
 from pathlib import Path
-from base import resolve_workspace_path
-
-def execute_playwright_actions(page, actions):
-    """Executes a list of generic actions on the page."""
-    for action in actions:
-        act_type = action.get("action")
-        selector = action.get("selector")
-        
-        try:
-            if act_type == "click":
-                page.click(selector, timeout=5000)
-            elif act_type == "type":
-                page.fill(selector, action.get("text", ""), timeout=5000)
-            elif act_type == "wait":
-                time.sleep(action.get("time", 1))
-            elif act_type == "scroll":
-                page.evaluate("window.scrollBy(0, window.innerHeight)")
-            elif act_type == "wait_for":
-                page.wait_for_selector(selector, timeout=5000)
-        except Exception as e:
-            print(f"[BrowserVision] Action {act_type} on {selector} failed: {e}")
 
 @policy_tool("browser_vision")
 def browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Describe this page in detail.") -> str:
@@ -33,54 +12,24 @@ def browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Des
     If the LLM doesn't support vision, it falls back to extracting the DOM text.
     """
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return "Error: Playwright is not installed. Run 'pip install playwright' and 'playwright install chromium'."
-        
-    try:
         actions = json.loads(actions_json)
-    except Exception:
-        actions = []
-        
-    screenshot_bytes = None
-    dom_text = ""
-    
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ToolResult(False, error='Invalid browser actions JSON')
+    if not isinstance(actions, list):
+        return ToolResult(False, error='Browser actions must be a JSON array')
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            
-            # Go to URL
-            page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            
-            # Execute interactive steps
-            if actions:
-                execute_playwright_actions(page, actions)
-                
-            # Wait a bit for animations
-            time.sleep(1)
-            
-            # Capture DOM text as fallback
-            dom_text = page.evaluate("document.body.innerText")
-            
-            # Capture Screenshot
-            screenshot_bytes = page.screenshot(type="jpeg", quality=80)
-            browser.close()
-            
-    except Exception as e:
-        return f"Browser automation failed: {e}"
-
-    if not screenshot_bytes:
-        return "Failed to capture screenshot."
+        observed = browse(url, actions, screenshot=True)
+        screenshot = next((Path(path) for path in observed['artifacts'] if Path(path).suffix.lower() in {'.jpg', '.jpeg'}), None)
+        if screenshot is None:
+            return ToolResult(False, error='Browser did not produce a screenshot artifact')
+        screenshot_bytes = screenshot.read_bytes()
+        dom_text = observed['text']
+    except (OSError, RuntimeError, ValueError, PermissionError) as error:
+        return ToolResult(False, error=f'Browser automation failed ({type(error).__name__}): {str(error)[:512]}')
         
     # Convert screenshot to Base64
     base64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
     image_url = f"data:image/jpeg;base64,{base64_image}"
-    
-    # Save a local copy for debugging
-    scratch_dir = resolve_workspace_path("temp")
-    scratch_dir.mkdir(exist_ok=True)
-    (scratch_dir / "last_screenshot.jpg").write_bytes(screenshot_bytes)
     
     # Call VLM
     try:

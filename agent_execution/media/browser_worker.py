@@ -9,6 +9,12 @@ from urllib.parse import urlsplit
 from filelock import FileLock
 
 
+def error_summary(error):
+    """Return diagnostics useful to the caller without serialising a traceback."""
+    detail=' '.join(str(error).split())[:512]
+    return f'{type(error).__name__}: {detail}' if detail else type(error).__name__
+
+
 def allowed_url(url,hosts):
     parsed=urlsplit(url)
     if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password:raise ValueError('Browser requires HTTP(S) without URL credentials')
@@ -74,7 +80,7 @@ def main(request,response):
                 if len(serialized.encode())>1024*1024:raise ValueError('Browser state capacity exceeded')
                 state_file.write_text(serialized,encoding='utf-8')
             finally:context.close()
-    except Exception as error:result={'success':False,'error':type(error).__name__}
+    except Exception as error:result={'success':False,'error':error_summary(error)}
     Path(response).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
 
 

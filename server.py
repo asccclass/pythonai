@@ -609,7 +609,7 @@ def run_agent(
                     return (
                         f"⛔ 任務驗收未通過 ({reason})，已轉交人工審核 (HITL)。\n"
                         f"未通過原因:\n{eval_res.feedback}\n\n"
-                        f"Agent 最終回覆:\n{assistant_message.content or ''}"
+                        "候選最終回覆因未通過驗收而未提供，避免將未驗證內容當成事實。"
                     )
 
         return assistant_message.content or ""
