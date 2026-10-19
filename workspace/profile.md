@@ -6,6 +6,7 @@
 - **Organization:** 中央研究院資訊服務處 (Academia Sinica, Information Services Division)
 - **Interests:** AI 學習 (AI Learning)
 - **Height:** 179.5 cm
+- **Health:** 高血壓
 
 ## Interaction Preferences
 - **Assistant Role:** 助手、管家

@@ -1,34 +1,65 @@
-# whisper/ — Whisper STT 工具目錄
+# Whisper STT 工具
 
-存放 whisper-cli.exe 及其依賴 DLL，供 `whisper_stt` 工具使用。
+本目錄存放 whisper-cli.exe 及所需的 DLL、模型。
 
-## 目錄結構
+## 安裝（首次）
 
+```powershell
+# 方式 A：PowerShell
+.\tools\whisper\install.ps1
+
+# 方式 B：Python
+python tools\whisper\install.py
+```
+
+安裝後目錄結構：
 ```
 tools/whisper/
-├── bin/                  # 執行檔與 DLL（git 忽略，需手動複製）
-│   ├── whisper-cli.exe
-│   ├── ggml.dll
-│   ├── ggml-base.dll
-│   ├── ggml-cpu.dll
-│   └── whisper.dll
-└── ggml-base.bin         # 模型（選用，git 忽略）
+  whisper-cli.exe
+  whisper.dll
+  ggml.dll
+  ggml-base.dll
+  ggml-cpu.dll
+  ggml-base.bin      ← 模型（142 MB）
+  install.ps1
+  install.py
+  README.md
 ```
 
-## 初次設定
+## 環境變數（可選覆寫）
 
-執行 setup script 複製二進位檔：
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `WHISPER_CLI` | `tools/whisper/whisper-cli.exe` | exe 路徑 |
+| `WHISPER_MODEL` | `tools/whisper/ggml-base.bin` | 模型路徑 |
+| `WHISPER_LANG` | `zh` | 語言（`auto` 自動偵測）|
+| `WHISPER_THREADS` | `4` | CPU 執行緒數 |
+
+## 手動測試
 
 ```bash
-python tools/setup_whisper.py
+cd tools\whisper
+.\whisper-cli.exe --model .\ggml-base.bin --file test.wav --language zh --no-timestamps
 ```
 
-或手動從建置路徑複製：
-- **來源**：`C:\Users\andyl\Go\whisper.cpp\build\bin\Release\`
-- **模型**：`C:\Users\andyl\Go\whisper.cpp\ggml-base.bin`
+## Python API
 
-## 備注
+```python
+from desktop_assistant.services.whisper_stt import get_stt
 
-- `bin/` 目錄和 `.bin` 模型檔已加入 `.gitignore`，不會被提交
-- 若 `bin/` 不存在，工具會自動 fallback 到原始建置路徑
-- 模型同樣會先找本目錄，找不到再 fallback 到原始路徑
+stt = get_stt()
+if stt.available():
+    text = stt.transcribe("recording.wav")   # 同步
+    stt.transcribe_async("rec.wav", callback) # 非同步
+```
+
+## Qt 元件
+
+```python
+from desktop_assistant.services.whisper_mic import WhisperMicButton
+
+btn = WhisperMicButton()
+btn.transcribed.connect(input_box.insertPlainText)
+btn.error.connect(notify)
+# 需要 sounddevice: pip install sounddevice
+```
