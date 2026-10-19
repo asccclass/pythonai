@@ -6,11 +6,15 @@ from dataclasses import dataclass, replace
 from functools import wraps
 import inspect
 import json
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
 from permissions import check_tool_permission, current_role
 from .operations.tracing import traced
+
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyDenied(PermissionError):
@@ -111,6 +115,15 @@ def _audit_denial(name: str, reason: str) -> None:
                                  metadata=metadata)
 
 
+def _audit_tool_execution(name: str) -> None:
+    """Emit safe authorization diagnostics immediately before invoking a tool."""
+    context = _context.get()
+    metadata = {"stage": "tool_execution", "identity": context.identity,
+                "role": current_role(), "tool": name}
+    logger.info("SECURITY_DIAGNOSTIC %s", json.dumps(metadata, ensure_ascii=False,
+                                                        separators=(",", ":")))
+
+
 @traced('tool')
 def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any], *, _skip_hooks=False) -> Any:
     from .approvals import ApprovalStore, ApprovalRequired, canonical
@@ -204,6 +217,7 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
     try:
         with execution_scope(tool_hook_managed=None):
             try:
+                _audit_tool_execution(name)
                 result=function(**values)
             except Exception as error:
                 if manager is not None:

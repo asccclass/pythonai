@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from websocket_server import (
     Session,
+    _log_role_diagnostic,
     app,
     handle_audio_frame,
     hub,
@@ -42,6 +43,15 @@ class WebSocketServerTests(unittest.TestCase):
         self.assertEqual(message["payload"]["resumed"], True)
         self.assertIn("session_id", message["payload"])
         self.assertEqual(hub.sessions[("andy", "default", "desktop-andy-01")].user_id, "andy")
+
+    def test_role_diagnostic_logs_only_routing_metadata(self):
+        with self.assertLogs("websocket_server", level="INFO") as logs:
+            _log_role_diagnostic("websocket_entry", "websocket:andy", "admin", "websocket_connect")
+        diagnostic = logs.output[0]
+        self.assertIn('"stage":"websocket_entry"', diagnostic)
+        self.assertIn('"identity":"websocket:andy"', diagnostic)
+        self.assertIn('"role":"admin"', diagnostic)
+        self.assertIn('"tool":"websocket_connect"', diagnostic)
 
     def test_ping_returns_pong_with_ref(self):
         with patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1"}, clear=False):

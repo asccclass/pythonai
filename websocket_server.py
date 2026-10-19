@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -21,6 +22,14 @@ from agent_execution.companion.protocol import (conversation_id, scope_device, d
 PROTOCOL_VERSION = 1
 RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error", "workspace.result", "session.delete.preview", "session.delete.result"}
 DEFAULT_FEATURES = {"stt": False, "tts": False, "tts_voices": []}
+logger = logging.getLogger(__name__)
+
+
+def _log_role_diagnostic(stage: str, identity: str, role: str, tool: str) -> None:
+    """Log only authorization-routing metadata; never user content or tool arguments."""
+    logger.info("SECURITY_DIAGNOSTIC %s", json.dumps({
+        "stage": stage, "identity": identity, "role": role, "tool": tool,
+    }, ensure_ascii=False, separators=(",", ":")))
 
 
 def new_id() -> str:
@@ -244,7 +253,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
     from agent_execution import execution_scope
     from agent_execution.sessions import RuntimeSessions, project_workspace
     from base import auto_approve_command_runs
-    from permissions import get_user_role, set_current_role
+    from permissions import current_role, get_user_role, set_current_role
     identity = f"websocket:{session.user_id}"
     scoped_session = f"{session.project}:{session.scoped_device}"
     cancelled = session.cancel_chat or threading.Event()
@@ -323,6 +332,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                     project=session.project, conversation=session.conversation_id, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
                     set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop), approval_bridge(wait_approval if 'approval.auto_resume' in session.caps else None):
                 from agent_execution.tasks import dispatch_task_input
+                _log_role_diagnostic("task_dispatch", identity, current_role(), "dispatch_task_input")
                 desktop_result = human_desktop_command(user_text)
                 if desktop_result is not None:
                     from agent_runtime import AgentTurnResult
@@ -394,6 +404,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
             return
         conversation = conversation_id(payload.get("conversation_id", ""))
         session = hub.get(device_id, str(payload.get("device_type") or "web"), tokens[token], project, conversation)
+        from permissions import get_user_role
+        _log_role_diagnostic("websocket_entry", f"websocket:{session.user_id}",
+                             get_user_role(f"websocket:{session.user_id}"), "websocket_connect")
         if session.ws is not None:
             await session.ws.close(code=4409)
         for future, connection in list(session.desktop_requests.values()):

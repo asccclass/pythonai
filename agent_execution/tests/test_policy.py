@@ -114,6 +114,18 @@ class PolicyTests(unittest.TestCase):
             custom_tool(path="../outside")
         self.assertEqual(calls, [{"path": "note.txt"}])
 
+    def test_tool_execution_diagnostic_includes_identity_role_and_tool(self):
+        tool = Mock(return_value="ok")
+        with self.assertLogs("agent_execution.policy", level="INFO") as logs, \
+             set_current_role("admin"), execution_scope(identity="websocket:andy"):
+            self.assertEqual(execute_tool("fetch_url", {}, tool), "ok")
+        diagnostic = next(message for message in logs.output if "SECURITY_DIAGNOSTIC" in message)
+        self.assertIn('"stage":"tool_execution"', diagnostic)
+        self.assertIn('"identity":"websocket:andy"', diagnostic)
+        self.assertIn('"role":"admin"', diagnostic)
+        self.assertIn('"tool":"fetch_url"', diagnostic)
+        tool.assert_called_once_with()
+
     def test_git_cannot_use_parent_repository(self):
         result = subprocess.CompletedProcess([], 0, stdout=self.directory.name, stderr="")
         with patch("agent_execution.process.run_process", return_value=result), self.assertRaises(PermissionError):
