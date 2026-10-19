@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from agent_execution.budgets import TaskBudget, BudgetExhausted, budget_scope, budget_client, child_scope, _depth
-from agent_execution.context import govern_messages, normalize_blocks, ContextTooLarge, message_tokens
+from agent_execution.context import fit_tool_schemas, govern_messages, normalize_blocks, ContextTooLarge, message_tokens
 from agent_execution.policy import execution_scope, execute_tool, current_context
 from agent_execution.tasks import task_owner, _active
 
@@ -70,6 +70,21 @@ class BudgetTests(unittest.TestCase):
         restored.reserve('m',18000,100)
         self.assertEqual(restored.snapshot()['tokens'],18500)
         self.assertEqual(restored.snapshot()['requests'],2)
+
+    def test_context_overflow_compacts_tool_schemas_before_provider_call(self):
+        schemas = [
+            {'function': {'name': 'fetch_url', 'description': 'fetch ' + 'x' * 1500}},
+            {'function': {'name': 'write_file', 'description': 'write ' + 'x' * 1500}},
+            {'function': {'name': 'ask_user', 'description': 'ask ' + 'x' * 1500}},
+        ]
+        raw = self.client()
+        profile = {'m': {'context_tokens': 2300}}
+        with patch.dict(os.environ, {'AGENT_MODEL_CAPABILITIES': json.dumps(profile)}), budget_scope():
+            budget_client(raw).chat.completions.create(
+                model='m', messages=[{'role': 'user', 'content': 'Fetch https://example.test'}], tools=schemas)
+        sent = raw.chat.completions.create.call_args.kwargs['tools']
+        self.assertIn('fetch_url', [schema['function']['name'] for schema in sent])
+        self.assertLess(len(sent), len(schemas))
 
     def test_missing_or_invalid_usage_keeps_reservation(self):
         budget=TaskBudget(self.owner,'unknown')
@@ -361,6 +376,22 @@ class BudgetTests(unittest.TestCase):
 
 
 class ContextTests(unittest.TestCase):
+    def test_tool_schema_fallback_keeps_explicitly_requested_tool_within_budget(self):
+        schemas = [
+            {'function': {'name': 'fetch_url', 'description': 'fetch ' + 'x' * 1500}},
+            {'function': {'name': 'write_file', 'description': 'write ' + 'x' * 1500}},
+            {'function': {'name': 'ask_user', 'description': 'ask ' + 'x' * 1500}},
+        ]
+        messages = [{'role': 'system', 'content': 'trusted'},
+                    {'role': 'user', 'content': 'Fetch this URL: https://example.test'}]
+        with self.assertRaises(ContextTooLarge):
+            govern_messages(messages, 2200, schemas)
+        fitted = fit_tool_schemas(messages, 2200, schemas)
+        names = [schema['function']['name'] for schema in fitted]
+        self.assertIn('fetch_url', names)
+        self.assertNotIn('write_file', names)
+        self.assertEqual(govern_messages(messages, 2200, fitted), messages)
+
     def test_image_encoding_length_is_not_text_context_and_images_remain_intact(self):
         import copy
         messages=[{'role':'user','content':[{'type':'text','text':'辨識'},

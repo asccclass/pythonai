@@ -561,7 +561,7 @@ CLI／通訊／WebSocket 的 task 預算與 checkpoint 保存於同一 `AGENT_TA
 | `AGENT_TASK_MAX_REQUESTS` | 24 | 包含失敗、timeout 及明確重試 |
 | `AGENT_TASK_DEADLINE_SECONDS` | 600 | 建立起算的 wall deadline，包含人工暫停 |
 | `AGENT_TASK_MAX_CHILDREN`／`AGENT_TASK_MAX_DEPTH` | 4／2 | 累計子代理數與巢狀深度；0 禁止 |
-| `AGENT_MODEL_MAX_OUTPUT_TOKENS` | 2048 | 每次生成上限 |
+| `AGENT_MODEL_MAX_OUTPUT_TOKENS` | 1024 | 每次生成上限；較小的值會保留較多 context 給指令與工具 schema |
 | `AGENT_MODEL_CONTEXT_TOKENS` | 32768 | 預設單模型輸入＋輸出視窗 |
 | `AGENT_MODEL_CONCURRENCY` | 4 | 同一 task DB 的跨程序模型 slots |
 | `AGENT_TASK_CONCURRENCY` | 4 | 每個 communication worker 的背景工作上限 |

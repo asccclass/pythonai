@@ -1,6 +1,7 @@
 """Token-bounded messages with complete tool pairs and preserved task constraints."""
 import copy
 import json
+import re
 
 
 class ContextTooLarge(ValueError):
@@ -125,6 +126,40 @@ def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None, im
     if fitted is not None:
         return fitted
     raise ContextTooLarge('Protected instructions, goal, approvals or latest input exceed model context budget')
+
+
+def fit_tool_schemas(messages, max_tokens, tools, goal='', criteria=None, image_tokens=None):
+    """Return a useful, deterministic tool subset that leaves room for protected context.
+
+    This is an admission control fallback.  It never changes messages or bypasses
+    permissions: omitted tools simply cannot be called during this model round.
+    """
+    if not tools:
+        return []
+    # Confirm that the protected prompt itself fits before considering schemas.
+    govern_messages(messages, max_tokens, [], goal, criteria, image_tokens)
+    text = ' '.join(str(message.get('content') or '') for message in messages
+                    if message.get('role') == 'user') + ' ' + str(goal or '')
+    words = set(re.findall(r'[a-z0-9_]+', text.lower()))
+    recent_calls = {call.get('function', {}).get('name') for message in messages
+                    for call in (message.get('tool_calls') or []) if isinstance(call, dict)}
+    def name(schema):
+        return str(schema.get('function', {}).get('name') or '')
+    def priority(schema):
+        tool = name(schema)
+        aliases = set(tool.lower().split('_')) | {tool.lower()}
+        mentioned = bool(aliases & words) or (tool == 'fetch_url' and ('http' in text.lower() or 'url' in words))
+        return (0 if tool in recent_calls else 1 if mentioned else 2 if tool == 'ask_user' else 3,
+                count_tokens(schema), tool)
+    selected = []
+    for schema in sorted(tools, key=priority):
+        candidate = [*selected, schema]
+        try:
+            govern_messages(messages, max_tokens, candidate, goal, criteria, image_tokens)
+        except ContextTooLarge:
+            continue
+        selected = candidate
+    return selected
 
 
 def model_capabilities(model):

@@ -42,7 +42,7 @@ class TaskBudget:
         self.max_children=int(numeric('AGENT_TASK_MAX_CHILDREN',4,allow_zero=True))
         self.max_depth=int(numeric('AGENT_TASK_MAX_DEPTH',2,allow_zero=True))
         self.max_cost=numeric('AGENT_TASK_MAX_COST_USD',0,allow_zero=True)
-        self.max_output=int(numeric('AGENT_MODEL_MAX_OUTPUT_TOKENS',2048))
+        self.max_output=int(numeric('AGENT_MODEL_MAX_OUTPUT_TOKENS',1024))
         self.concurrency=int(numeric('AGENT_MODEL_CONCURRENCY',4))
         with closing(self.connect()) as conn, conn:
             conn.executescript('''
@@ -318,7 +318,7 @@ class BudgetEndpoint:
         if self.kind == 'chat' and kwargs.get('tools') == []:
             kwargs.pop('tools')
         from .policy import current_context
-        from .context import govern_messages, route_model, model_capabilities, message_tokens
+        from .context import ContextTooLarge, fit_tool_schemas, govern_messages, route_model, model_capabilities, message_tokens
         budget=active_budget()
         if budget is None:
             endpoint=self.client.chat.completions if self.kind=='chat' else self.client.embeddings
@@ -340,9 +340,22 @@ class BudgetEndpoint:
             from .tasks import _active
             task=_active.get()
             row=task[0].get(task[1],task[2]) if task else None
-            kwargs['messages']=govern_messages(kwargs['messages'],window-output,kwargs.get('tools'),
-                goal=row['goal'] if row else '',criteria=row['criteria'] if row else None,
-                image_tokens=capabilities.get('image_input_tokens'))
+            context_limit = window-output
+            goal, criteria = (row['goal'], row['criteria']) if row else ('', None)
+            try:
+                kwargs['messages']=govern_messages(kwargs['messages'],context_limit,kwargs.get('tools'),
+                    goal=goal,criteria=criteria,image_tokens=capabilities.get('image_input_tokens'))
+            except ContextTooLarge:
+                compact_tools=fit_tool_schemas(kwargs['messages'],context_limit,kwargs.get('tools') or [],
+                    goal=goal,criteria=criteria,image_tokens=capabilities.get('image_input_tokens'))
+                if compact_tools == kwargs.get('tools'):
+                    raise
+                if compact_tools:
+                    kwargs['tools']=compact_tools
+                else:
+                    kwargs.pop('tools', None)
+                kwargs['messages']=govern_messages(kwargs['messages'],context_limit,compact_tools,
+                    goal=goal,criteria=criteria,image_tokens=capabilities.get('image_input_tokens'))
             prompt=message_tokens(kwargs['messages'],capabilities.get('image_input_tokens'))+token_upper_bound(kwargs.get('tools',[]))
             if kwargs.get('stream'):
                 kwargs['stream_options']={**kwargs.get('stream_options',{}),'include_usage':True}
