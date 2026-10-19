@@ -57,15 +57,29 @@ def browser_vision(url: str, actions_json: str = "[]", vision_prompt: str = "Des
         # Fallback if the LLM does not support vision (e.g. raises BadRequestError or TypeError)
         from agent_execution.budgets import BudgetExhausted
         if isinstance(e,BudgetExhausted):raise
-        error_str = str(e).lower()
         print(f"[BrowserVision] VLM Error caught: {e}. Falling back to text-only mode.")
-        
+
+        # Guard: if DOM text is too thin, the page likely did not render (JS-heavy site).
+        # Return a clear error instead of letting the LLM hallucinate from empty content.
+        if len(dom_text.strip()) < 200:
+            return (
+                f"[BrowserVision Error] The page DOM is nearly empty ({len(dom_text.strip())} chars). "
+                "The page may require JavaScript rendering that was not completed. "
+                "Try using browser_session with a 'wait' action (e.g. {\"action\":\"wait\",\"time\":3000}) "
+                "before reading, or verify the URL is correct. "
+                "DO NOT guess or fabricate any values."
+            )
+
         fallback_prompt = (
-            f"The Vision API failed because the current model '{OLLAMA_MODEL}' likely does not support images.\n"
-            f"Please analyze the following extracted DOM text instead, based on this prompt: '{vision_prompt}'\n\n"
+            f"The Vision API failed. Analyze the following extracted DOM text based on this prompt: '{vision_prompt}'\n\n"
+            f"IMPORTANT RULES:\n"
+            f"- Only report data that is EXPLICITLY present in the DOM text below.\n"
+            f"- If the requested data (e.g. a specific currency exchange rate) is NOT found in the text, "
+            f"say clearly: 'The requested data was not found in the page content.' "
+            f"- NEVER guess, estimate, or fabricate numeric values.\n\n"
             f"--- DOM TEXT ---\n{dom_text[:4000]}\n--- END DOM TEXT ---"
         )
-        
+
         try:
             fallback_response = client.chat.completions.create(
                 model=OLLAMA_MODEL,

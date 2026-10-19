@@ -35,6 +35,11 @@ def actions(page,items,artifacts):
             if not isinstance(text,str) or len(text)>8192:raise ValueError('Form input limit')
             locator.fill(text,timeout=5000)
         elif kind=='wait_for':locator.wait_for(state='visible',timeout=5000)
+        elif kind=='wait':
+            import time
+            ms=item.get('time',1000)
+            if not isinstance(ms,(int,float)) or not 0<ms<=10000:raise ValueError('Wait time must be 1-10000 ms')
+            time.sleep(ms/1000)
         elif kind=='assert_text':
             from playwright.sync_api import expect
             expect(locator).to_have_text(item['text'],timeout=5000)
@@ -70,7 +75,7 @@ def main(request,response):
                 context.route('**/*',route)
                 context.route_web_socket('**/*',lambda socket:socket.close())
                 page=context.pages[0] if context.pages else context.new_page()
-                page.goto(value['url'],wait_until='domcontentloaded',timeout=15000)
+                page.goto(value['url'],wait_until='networkidle',timeout=30000)
                 actions(page,value['actions'],artifacts)
                 if value['screenshot']:page.screenshot(path=str(artifacts/'page.jpg'),type='jpeg',quality=70)
                 result={'success':True,'url':page.url,'text':page.locator('body').inner_text(timeout=5000)[:65536],

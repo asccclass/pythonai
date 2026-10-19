@@ -203,11 +203,14 @@ def curl_command(url: str, max_time: int = 20, follow_redirects: bool = True) ->
     return command
 
 
-def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True, raw: bool = False) -> subprocess.CompletedProcess[str]:
+def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True, raw: bool = False,
+              contains: str = '') -> subprocess.CompletedProcess[str]:
     from agent_execution.turn_control.web import fetch_target, readable_content
     from urllib.parse import urlsplit
     if urlsplit(url).scheme not in {'http', 'https'}:
         return subprocess.CompletedProcess([], 1, '', 'fetch_url requires an HTTP(S) URL')
+    if not isinstance(contains, str) or len(contains) > 256 or any(ord(char) < 32 for char in contains):
+        return subprocess.CompletedProcess([], 1, '', 'fetch_url contains must be at most 256 printable characters')
     target = url if raw else fetch_target(url)
     command = curl_command(target, max_time=max_time, follow_redirects=follow_redirects)
     command[1:1] = ['--fail']
@@ -215,7 +218,7 @@ def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True, raw: 
         command[1:1] = ['--header', 'Accept: application/vnd.github.raw+json']
     result = run_process(command, **subprocess_text_options())
     if result.returncode == 0 and not raw:
-        result.stdout = readable_content(result.stdout or '', url)
+        result.stdout = readable_content(result.stdout or '', url, contains=contains)
         source = f'Source: {url}\n' + (f'README: {target}\n' if target != url else '')
         result.stdout = source + load_text('instructions.json', 'untrusted_web') + result.stdout
     return result
@@ -539,6 +542,7 @@ TOOLS_SCHEMAS = [
                             "description": load_tool_text('fetch_url/parameters/properties/url/description')
                         },
                         "raw": {"type": "boolean", "description": load_tool_text('fetch_url/parameters/properties/raw/description')},
+                        "contains": {"type": "string", "description": load_tool_text('fetch_url/parameters/properties/contains/description')},
                         "max_time": {
                             "type": "integer",
                             "description": load_tool_text('fetch_url/parameters/properties/max_time/description')

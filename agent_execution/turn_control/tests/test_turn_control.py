@@ -138,7 +138,29 @@ def test_html_main_content_and_bound():
     html = '<!doctype html><html><body><nav>noise</nav><article><h1>Principle</h1><script>bad()</script><p>real content</p></article></body></html>'
     text = readable_content(html, 'https://example.test')
     assert 'real content' in text and 'noise' not in text and 'bad()' not in text
-    assert 'truncated' in readable_content('a' * 25000, 'https://example.test')
+    bounded = readable_content('page-start\n' + 'a' * 25000 + '\nSouth African Rand: 1.23\npage-end',
+                               'https://example.test')
+    assert 'truncated' in bounded and 'page-start' in bounded and 'South African Rand: 1.23' in bounded
+    assert bounded.endswith('page-end') and len(bounded) <= 24000
+
+
+def test_focused_web_content_recovers_requested_middle_evidence():
+    content = 'page-start\n' + 'before ' * 5000 + '\nSouth African Rand: 1.23\n' + 'after ' * 5000 + '\npage-end'
+    focused = readable_content(content, 'https://example.test', limit=4000, contains='south african rand')
+    assert focused.startswith('[Focused excerpts containing: south african rand]')
+    assert 'South African Rand: 1.23' in focused
+    assert 'page-start' not in focused and 'page-end' not in focused and len(focused) <= 4000
+
+
+def test_fetch_url_contains_uses_full_response_before_bounding():
+    import base
+    content = 'prefix ' * 5000 + 'South African Rand: 1.23' + ' suffix' * 5000
+    result = subprocess.CompletedProcess([], 0, content, '')
+    with patch('base.run_process', return_value=result):
+        fetched = base.fetch_url('https://example.test/rates', contains='South African Rand')
+    assert fetched.returncode == 0 and 'South African Rand: 1.23' in fetched.stdout
+    schema = next(item for item in base.TOOLS_SCHEMAS if item['function']['name'] == 'fetch_url')
+    assert 'contains' in schema['function']['parameters']['properties']
 
 
 def test_fetch_failure_and_non_http_not_success():

@@ -20,9 +20,10 @@
     "/parameters/properties/path/description": "The workspace-relative path to the file to delete"
   },
   "fetch_url": {
-    "/description": "Read a URL as bounded readable text. GitHub repository URLs return README via GitHub API without assuming a branch; HTML pages return main article Markdown. Use the returned content to answer, do not repeatedly fetch the same URL. HTTP errors fail. raw=true preserves raw content.",
+    "/description": "Read a URL as bounded readable text. GitHub repository URLs return README via GitHub API without assuming a branch; HTML pages return main article Markdown. If the output says it was truncated or lacks a requested item, call again with contains set to that exact name or phrase. A failed or truncated result does not verify omitted facts; never claim it was re-checked unless a successful result contains the fact. HTTP errors fail. raw=true preserves raw content.",
     "/parameters/properties/url/description": "The URL to fetch",
     "/parameters/properties/raw/description": "Return raw content instead of readable main text (default false).",
+    "/parameters/properties/contains/description": "Optional exact name or phrase used to return bounded matching excerpts from the full readable page.",
     "/parameters/properties/max_time/description": "Maximum curl runtime in seconds",
     "/parameters/properties/follow_redirects/description": "Whether curl should follow redirects"
   },
