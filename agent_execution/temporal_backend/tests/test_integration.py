@@ -77,6 +77,7 @@ def configured(tmp_path, monkeypatch):
     runtime = tmp_path / '.system_generated'
     runtime.mkdir()
     monkeypatch.setenv('AGENT_TASK_DB', str(runtime / 'tasks.db'))
+    monkeypatch.setenv('AGENT_APPROVAL_DB', str(runtime / 'approvals.db'))
     monkeypatch.setenv('AGENT_TENANT_ROOT', str(runtime / 'tenants'))
     monkeypatch.setenv('AGENT_WORKSPACE_ROOT', str(tmp_path))
     monkeypatch.setenv('AGENT_EXECUTION_BACKEND', 'temporal')

@@ -5,7 +5,7 @@ import time
 import uuid
 
 from agent_execution.tasks import assert_owner_active
-from .contracts import STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, STEP_LIMIT, validate_cursor, validate_snapshot
+from .contracts import STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME, STEP_LIMIT, validate_cursor, validate_snapshot
 from .ledger import Ledger, OperationUncertain
 from .store import canonical
 
@@ -58,9 +58,9 @@ class StepStore:
         """Only bootstrap may adopt a pre-cursor running claim; it performs no business I/O."""
         row = self.store.get(key)
         kind = self.store.workflow_type(row)
-        if kind not in {STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME}:
+        if kind not in {STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME}:
             raise PermissionError('Submission is not bound to the step protocol')
-        queue = self.store.queue_for('human' if kind == HUMAN_WORKFLOW_NAME else 'steps')
+        queue = self.store.queue_for({STEP_WORKFLOW_NAME: 'steps', HUMAN_WORKFLOW_NAME: 'human', APPROVAL_WORKFLOW_NAME: 'approval'}[kind])
         if (row['address'], row['namespace'], row['queue']) != (settings.address, settings.namespace, queue):
             raise PermissionError('Step submission targets another host or namespace')
         with closing(self.store.tasks.connect()) as conn, conn:

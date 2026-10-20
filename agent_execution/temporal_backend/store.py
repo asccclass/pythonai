@@ -2,6 +2,7 @@
 from contextlib import closing
 import hashlib
 import json
+import sqlite3
 import time
 import uuid
 
@@ -55,25 +56,25 @@ class Store:
         return self.queue_for('bridge')
 
     def queue_for(self, engine):
-        if engine not in {'bridge', 'steps', 'human'}:
+        if engine not in {'bridge', 'steps', 'human', 'approval'}:
             raise ValueError('Unknown Temporal engine')
         with closing(self.tasks.connect()) as conn:
             token = conn.execute('SELECT token FROM temporal_host WHERE id=1').fetchone()[0]
-        suffix = {'bridge': '-readonly-v1', 'steps': '-steps-readonly-v1', 'human': '-steps-readonly-v2'}[engine]
+        suffix = {'bridge': '-readonly-v1', 'steps': '-steps-readonly-v1', 'human': '-steps-readonly-v2', 'approval': '-steps-readonly-v3'}[engine]
         return 'pythonai-host-' + token + suffix
 
     def workflow_type(self, row):
-        from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME
+        from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME
         with closing(self.tasks.connect()) as conn:
             protocol = conn.execute('SELECT * FROM temporal_protocols WHERE submission_id=?', (row['id'],)).fetchone()
         if protocol is None:
             if row['queue'] != self.queue:
                 raise ValueError('Missing execution protocol for non-legacy submission')
             return WORKFLOW_NAME  # Existing M0 submissions keep their protocol.
-        versions = {WORKFLOW_NAME: 1, STEP_WORKFLOW_NAME: 1, HUMAN_WORKFLOW_NAME: 2}
+        versions = {WORKFLOW_NAME: 1, STEP_WORKFLOW_NAME: 1, HUMAN_WORKFLOW_NAME: 2, APPROVAL_WORKFLOW_NAME: 3}
         if protocol['workflow_type'] not in versions or protocol['version'] != versions[protocol['workflow_type']]:
             raise ValueError('Unsupported Temporal execution protocol')
-        engine = {WORKFLOW_NAME: 'bridge', STEP_WORKFLOW_NAME: 'steps', HUMAN_WORKFLOW_NAME: 'human'}[protocol['workflow_type']]
+        engine = {WORKFLOW_NAME: 'bridge', STEP_WORKFLOW_NAME: 'steps', HUMAN_WORKFLOW_NAME: 'human', APPROVAL_WORKFLOW_NAME: 'approval'}[protocol['workflow_type']]
         if row['queue'] != self.queue_for(engine):
             raise ValueError('Execution protocol does not match its persisted queue')
         return protocol['workflow_type']
@@ -148,10 +149,10 @@ class Store:
             conn.execute('INSERT INTO temporal_submissions(id,owner,task_id,workflow_id,input_digest,input,context,role,address,namespace,queue,state,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                          (key, owner, task, workflow_id, fingerprint, data, scope, role,
                           settings.address, settings.namespace, queue, 'pending', time.time()))
-            from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME
-            kind = {'bridge': WORKFLOW_NAME, 'steps': STEP_WORKFLOW_NAME, 'human': HUMAN_WORKFLOW_NAME}[settings.engine]
+            from .contracts import WORKFLOW_NAME, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME
+            kind = {'bridge': WORKFLOW_NAME, 'steps': STEP_WORKFLOW_NAME, 'human': HUMAN_WORKFLOW_NAME, 'approval': APPROVAL_WORKFLOW_NAME}[settings.engine]
             conn.execute('INSERT INTO temporal_protocols VALUES(?,?,?)',
-                         (key, kind, 2 if settings.engine == 'human' else 1))
+                         (key, kind, {'bridge': 1, 'steps': 1, 'human': 2, 'approval': 3}[settings.engine]))
             conn.execute('INSERT INTO temporal_budget_contracts VALUES(?,?)', (key, budget_contract))
             return dict(conn.execute('SELECT * FROM temporal_submissions WHERE id=?', (key,)).fetchone())
 
@@ -275,6 +276,12 @@ class Store:
             conn.execute("UPDATE temporal_submissions SET state='cancelled',updated=? WHERE id=? AND state IN ('pending','dispatched','running')", (time.time(), key))
             conn.execute("UPDATE tasks SET state='cancelled',reply='Task cancelled',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=(SELECT task_id FROM temporal_submissions WHERE id=?) AND state NOT IN ('completed','failed','cancelled')",
                          (time.time(), owner, key))
+
+        try:
+            from .approval_gate import cancel_waits
+            cancel_waits(self, row)
+        except (OSError, sqlite3.Error):
+            pass  # Cancellation fences already committed; reconcile/TTL retires grants.
 
     @staticmethod
     def settings(row):

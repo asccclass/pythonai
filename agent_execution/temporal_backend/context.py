@@ -37,11 +37,15 @@ def execution_context(store, row, cancelled=None):
     from agent_execution.workspace_lifecycle import LifecycleStore
     from permissions import get_user_role, set_current_role
     from .router import activity_scope
-    from .contracts import READ_TOOLS, STEP_TOOLS, HUMAN_WORKFLOW_NAME
+    from .contracts import READ_TOOLS, STEP_TOOLS, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME
     from .ledger import Ledger
     from .operations import operation_scope
     scope = json.loads(row['context'])
     store.verify_budget_contract(row)
+    if store.workflow_type(row) == APPROVAL_WORKFLOW_NAME:
+        from agent_execution.approvals import ApprovalStore
+        if scope.pop('approval_db', None) != str(ApprovalStore().path.resolve()):
+            raise PermissionError('Approval database configuration changed')
     role = row['role']
     if scope['identity'] == 'local':
         if scope['source'] != 'local':
@@ -54,7 +58,7 @@ def execution_context(store, row, cancelled=None):
     if Path(scope['workspace']).resolve() != configured:
         raise PermissionError('Workspace configuration changed; relocation refused')
     scope['workspace'] = configured
-    tools = STEP_TOOLS if store.workflow_type(row) == HUMAN_WORKFLOW_NAME else READ_TOOLS
+    tools = STEP_TOOLS if store.workflow_type(row) in {HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME} else READ_TOOLS
     scope['allowed_tools'] = frozenset(scope['allowed_tools']) & tools
     if scope.get('communication_db'):
         scope['communication_db'] = Path(scope['communication_db'])

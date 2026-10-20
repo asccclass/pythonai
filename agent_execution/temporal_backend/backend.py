@@ -4,7 +4,7 @@ from contextlib import closing
 import json
 
 from .config import Settings
-from .contracts import READ_TOOLS, STEP_TOOLS, HUMAN_WORKFLOW_NAME
+from .contracts import READ_TOOLS, STEP_TOOLS, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME
 
 
 def restore_result(row, messages):
@@ -29,7 +29,10 @@ def invoke(store, messages, *, resume=False):
     settings = Settings.load()
     scope = {name: getattr(context, name) for name in ('source', 'identity', 'session', 'conversation', 'project')}
     scope['workspace'] = str(workspace_root())
-    tools = STEP_TOOLS if settings.engine == 'human' else READ_TOOLS
+    if settings.engine == 'approval':
+        from agent_execution.approvals import ApprovalStore
+        scope['approval_db'] = str(ApprovalStore().path.resolve())
+    tools = STEP_TOOLS if settings.engine in {'human', 'approval'} else READ_TOOLS
     scope['allowed_tools'] = sorted(tools if context.allowed_tools is None else tools & context.allowed_tools)
     if context.communication_db:
         scope['communication_db'] = str(context.communication_db.resolve())
@@ -43,11 +46,18 @@ def invoke(store, messages, *, resume=False):
     if row['state'] in {'completed', 'failed'} and row['result']:
         return restore_result(row, messages)
     if resume:
-        if store.workflow_type(row) != HUMAN_WORKFLOW_NAME:
+        if store.workflow_type(row) not in {HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME}:
             raise ValueError('Human answers require the step protocol')
-        checkpoint = store.tasks.get(owner, task)['checkpoint']
+        task_row = store.tasks.get(owner, task)
+        checkpoint = task_row['checkpoint']
+        if task_row['phase'] == 'waiting_approval':
+            from agent_execution.approvals import ApprovalStore
+            key = checkpoint['approval_wait']['id']
+            if ApprovalStore().decision_state(key, context.identity, context.session) == 'pending':
+                from exceptions import TaskSuspendedException
+                raise TaskSuspendedException(task_row['reply'], checkpoint['suspended_tool_call_id'], checkpoint['messages'])
         call_id = checkpoint.get('suspended_tool_call_id')
-        if call_id:
+        if call_id and task_row['phase'] != 'waiting_approval':
             saved_messages = checkpoint['messages']
             if (len(messages) == len(saved_messages)+1 and messages[:-1] == saved_messages
                     and messages[-1].get('role') == 'tool' and messages[-1].get('tool_call_id') == call_id):
@@ -68,18 +78,36 @@ def invoke(store, messages, *, resume=False):
         try:
             from .decisions import Decisions
             decisions = Decisions(store)
+            gate = None
+            if store.workflow_type(row) == APPROVAL_WORKFLOW_NAME:
+                from .approval_gate import ApprovalGate
+                gate = ApprovalGate(store)
             while True:
                 done, _ = await asyncio.wait({result}, timeout=.2)
                 if done:
                     return result.result()
                 task_row = store.tasks.get(owner, task)
-                if task_row['state'] == 'suspended':
+                if task_row['state'] == 'suspended' and task_row['phase'] == 'waiting_approval':
+                    from agent_execution.approvals import ApprovalStore
+                    key = task_row['checkpoint']['approval_wait']['id']
+                    if ApprovalStore().decision_state(key, context.identity, context.session) == 'pending':
+                        return {'submission_id': row['id'], 'waiting': True}
+                if task_row['state'] == 'suspended' and task_row['phase'] == 'waiting_user':
                     # Only expose a wait after its cursor and outbox slot commit.
                     with closing(store.tasks.connect()) as conn:
                         wait = conn.execute('SELECT state FROM temporal_human_answers WHERE submission_id=? ORDER BY revision DESC LIMIT 1',
                                             (row['id'],)).fetchone()
                     if wait and wait['state'] == 'waiting':
                         return {'submission_id': row['id'], 'waiting': True}
+                if gate is not None:
+                    from agent_execution.approvals import ApprovalStore
+                    from .approval_outbox import pending as approval_events
+                    for event in approval_events(ApprovalStore(), queues={row['queue']}):
+                        if json.loads(event['binding'])['submission_id'] == row['id']:
+                            try:
+                                await gate.dispatch(client, event)
+                            except Exception:
+                                pass
                 for pending in decisions.pending():
                     if pending['id'] == row['id']:
                         try:

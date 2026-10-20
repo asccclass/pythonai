@@ -212,7 +212,7 @@ def test_unknown_schema_is_not_downgraded():
 
 
 @pytest.mark.parametrize('engine,mode', [('bridge','read_only_bridge'), ('steps','read_only_steps'),
-                                        ('human','read_only_human_steps')])
+                                        ('human','read_only_human_steps'), ('approval','read_only_approval_steps')])
 def test_preflight_does_not_create_a_database(tmp_path, monkeypatch, engine, mode):
     from agent_execution.temporal_backend.preflight import inspect
     path = tmp_path / 'not-created.db'

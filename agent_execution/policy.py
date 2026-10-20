@@ -212,6 +212,9 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
             store.consume(error.approval_id, context.identity, context.session, action, approval_values)
         else:
             raise PolicyDenied(str(error)) from error
+    if not _skip_hooks:
+        from .temporal_backend.operations import authorize_tool
+        authorize_tool(name, values)
     token = _approved.set(authorization)
     delegate=_delegated_wrapper.set(function if getattr(function,'_policy_tool_name',None)==name else None)
     try:

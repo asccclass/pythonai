@@ -47,7 +47,10 @@ class ApprovalStore:
         conn.execute("INSERT INTO approval_events(approval_id,identity,session,event,created) VALUES(?,?,?,?,?)",
                      (approval_id, identity, session, event, time.time()))
 
-    def request(self, identity, session, action, arguments, ttl=300):
+    def request(self, identity, session, action, arguments, ttl=300, *, binding=None):
+        if binding is not None:
+            from .temporal_backend.approval_outbox import request_bound
+            return request_bound(self, identity, session, action, arguments, ttl, binding)
         data = canonical(arguments)
         digest = hashlib.sha256(data.encode()).hexdigest()
         with closing(self.connect()) as conn, conn:
@@ -63,22 +66,39 @@ class ApprovalStore:
             return key
 
     def decide(self, approval_id, identity, session, approve):
+        if type(approve) is not bool:
+            raise ValueError('Approval decision must be boolean')
+        from .temporal_backend.approval_outbox import record_decision, same_decision
+        state = 'approved' if approve else 'denied'
         with closing(self.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            from .temporal_backend.approval_outbox import get_binding, validate_target
+            target = get_binding(conn, approval_id)
+            if target is not None and not same_decision(conn, approval_id, identity, session, state):
+                validate_target(json.loads(target))
             updated = conn.execute("UPDATE approvals SET state=? WHERE id=? AND identity=? AND session=? AND state='pending' AND expires>?",
                                    ("approved" if approve else "denied", approval_id, identity, session, time.time()))
+            duplicate = not updated.rowcount and same_decision(conn, approval_id, identity, session, state)
             self.audit(conn, approval_id, identity, session,
-                       ("approved" if approve else "denied") if updated.rowcount else "decision_rejected")
-            accepted = updated.rowcount == 1
+                       state if updated.rowcount else state+'_duplicate' if duplicate else 'decision_rejected')
+            accepted = updated.rowcount == 1 or duplicate
+            if accepted:
+                record_decision(conn, approval_id, state)
         if not accepted:
             raise PermissionError("Approval is missing, expired, decided, or belongs to another session")
 
-    def consume(self, approval_id, identity, session, action, arguments):
+    def consume(self, approval_id, identity, session, action, arguments, *, binding=None):
         digest = hashlib.sha256(canonical(arguments).encode()).hexdigest()
+        from .temporal_backend.approval_outbox import validate_consumption, record_decision
         with closing(self.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            validate_consumption(conn, approval_id, binding)
             updated = conn.execute("UPDATE approvals SET state='consumed' WHERE id=? AND identity=? AND session=? AND action=? AND digest=? AND state='approved' AND expires>?",
                                    (approval_id, identity, session, action, digest, time.time()))
             self.audit(conn, approval_id, identity, session, "consumed" if updated.rowcount else "consume_rejected")
             accepted = updated.rowcount == 1
+            if accepted:
+                record_decision(conn, approval_id, 'consumed')
         if not accepted:
             raise PermissionError("Approval does not authorize this identity, session, action or arguments; it may be expired or already used")
 
@@ -97,8 +117,12 @@ class ApprovalStore:
 
     def cancel_wait(self, approval_id, identity, session):
         with closing(self.connect()) as conn, conn:
-            conn.execute("UPDATE approvals SET state='cancelled' WHERE id=? AND identity=? AND session=? AND state IN ('pending','approved')",
+            conn.execute('BEGIN IMMEDIATE')
+            updated = conn.execute("UPDATE approvals SET state='cancelled' WHERE id=? AND identity=? AND session=? AND state IN ('pending','approved')",
                          (approval_id, identity, session))
+            if updated.rowcount:
+                from .temporal_backend.approval_outbox import record_decision
+                record_decision(conn, approval_id, 'cancelled')
 
 
 def human_command(text, identity, session):
@@ -116,6 +140,12 @@ def human_command(text, identity, session):
         return "Usage: /approve <approval_id> or /deny <approval_id>"
     try:
         store.decide(parts[1], identity, session, parts[0] == "/approve")
+        from .temporal_backend.approval_outbox import get_binding
+        with closing(store.connect()) as conn:
+            target = get_binding(conn, parts[1])
+            if target is not None:
+                task_id = json.loads(target)['task_id']
+                return f"Approval decision saved. The original Temporal task will continue or stop; use /resume {task_id} to retrieve its result."
         return "Approval decision saved. Retry the identical operation with this approval_id."
     except PermissionError as error:
         return str(error)

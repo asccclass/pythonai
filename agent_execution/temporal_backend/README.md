@@ -12,7 +12,7 @@
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、approval resume、排程／coordinator 轉交、逐 token 遠端串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、逐 token 遠端串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
 
 ## 版本與安裝
 
@@ -75,7 +75,41 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
 
-## TP13：人工回答（操作審批仍待後續交付）
+## TP13.5–13.6：操作審批整合
+
+新任務設定 `AGENT_TEMPORAL_ENGINE=approval` 時固定綁定 `AgentTaskWorkflowV3` 與
+`-steps-readonly-v3` queue。此模式對模型要求的每個唯讀工具先請求審批，`ask_user`
+仍使用 V2 的文字回答流程；不開放寫入、skill、scheduler 或 coordinator。現有 bridge、
+steps、human 任務不改派，新 Worker 同時服務四種 queue，並共用 host 併發限制。
+
+審批在工具的 PRE hooks／I/O 之前建立。問題透過原 suspended 回覆顯示工具與參數、
+`/approve <id>`／`/deny <id>`；`/approvals` 可檢視完整參數。只有現有已認證的人類
+審批入口能決定，admin、identity、session 邊界維持原規則。決定後 Worker 會續行／停止
+同一 Workflow；可用 `/resume <task_id>` 取回結果。文字「approved」或模型提供的
+approval ID 不能核准操作。原桌面授權 API 仍使用 ApprovalStore.decide，並補送原 `approval.required` 可靠事件顯示卡片；
+WebSocket 以原 `approval.decide` 協定決定，CLI／Telegram 沿用命令。本輪沒有把
+TP15 的串流／最終通知治理一併宣稱完成。
+
+TaskStore 的 `temporal_approval_waits` 先保存不可變 intent，再於 approval DB 以唯一
+binding 建立 request；決定早到或兩庫間中斷後重試會取回同一 request，不產生新 grant
+或延長期限。binding 包含 host queue、submission、owner、task、operation ID；授權
+同時固定 project/action 與工具／參數 digest。ApprovalStore 的決定和
+`temporal_approval_outbox` 同 transaction 提交；不同 SQLite 檔案不假裝為原子交易。
+
+Signal 只有 submission/event ID。RPC 結果未知保留 outbox，重送以 event ID 去重，
+不用 signal-with-start。Activity 查原資料庫的 pending／approved／denied／expired／
+cancelled 狀態；等待採 Timer，不占 Activity thread。核准後工具仍走原政策；若 PRE hook
+改變工具或參數，原 grant 不可授權修改後的操作。執行前重查當前角色、路徑、allowlist、
+lifecycle、budget、ledger 與 exact binding，然後一次性 consume。消耗後中斷保持
+uncertain，不重新發放授權，不重跑未知工具；完成結果重取不再 consume。
+
+Approval DB 的路徑也持久化綁定，新 Worker 設定不符會拒絕；前端與 Worker 必須使用
+相同 `AGENT_TASK_DB`／`AGENT_APPROVAL_DB`。TTL 仍受原 300 秒／root deadline 約束，
+停機也計時。拒絕／過期終止此任務，不要求模型換參數反覆重試。取消先提交 TaskStore
+fence，再盡力撤銷 grant；即使 approval DB 暫時不可用，原任務也不能消耗或執行。
+V3 排空前須保留支援 V3 的 Worker；回滾新任務旗標不遷移存量工作。
+
+## TP13：人工回答（前輪交付）
 
 設定 `AGENT_TEMPORAL_ENGINE=human` 的新任務綁定 `AgentTaskWorkflowV2`，可使用 `ask_user`。
 V2 使用獨立 `-steps-readonly-v2` queue，舊 Worker 不會誤接新流程；新 Worker 同時服務
@@ -103,8 +137,8 @@ deadline 本身到期時沿用 TP12 的保守終止映射。
 session 均拒絕。多工具回合在 `ask_user` 後立即保存等待，剩餘工具在回答後續行。
 完整串流與記憶／profile finalization 去重仍屬 TP15。
 
-本輪僅完成人工回答；ApprovalStore 的 decision outbox、授權通知、撤權重查與一次性
-consume 故障矩陣仍待 TP13.5–13.6，寫入工具仍受 TP17 gate 限制。
+前輪僅完成人工回答；本輪接續的 ApprovalStore decision outbox、授權通知、撤權重查與
+一次性 consume 故障矩陣見上節。寫入工具仍受 TP17 gate 限制。
 
 TP13 人工回答專項驗證（2026-10-20）：Temporal 全模組 **149 passed**，228.63 秒，
 已啟用真實 development Service／Worker 測試。新增 18 個單元／契約案例與 3 個真實

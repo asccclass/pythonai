@@ -7,7 +7,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from .config import Settings
-from .contracts import STEP_ACTIVITIES, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, validate_cursor, validate_envelope, validate_snapshot
+from .contracts import STEP_ACTIVITIES, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME, validate_cursor, validate_envelope, validate_snapshot
 from .context import execution_context
 from .step_store import StepStore
 from .store import Store
@@ -53,7 +53,7 @@ def authority(payload, *, bootstrap=False):
     key = validate_envelope(payload) if bootstrap else validate_cursor(payload)['submission_id']
     store = Store()
     row = store.get(key)
-    if activity.info().workflow_id != row['workflow_id'] or store.workflow_type(row) not in {STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME}:
+    if activity.info().workflow_id != row['workflow_id'] or store.workflow_type(row) not in {STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME}:
         raise PermissionError('Step does not belong to this Workflow protocol')
     return store, row, StepStore(store)
 
@@ -169,4 +169,13 @@ def finalize(payload: dict) -> dict:
     return {'submission_id': row['id']}
 
 
-ACTIVITIES = [bootstrap, model, tool, evaluation, recover, finalize, human]
+@activity.defn(name=STEP_ACTIVITIES['approval'])
+@protected
+def approval(payload: dict) -> dict:
+    from .approval_gate import ApprovalGate
+    store, row, steps = authority(payload)
+    with execution_context(store, row, activity.is_cancelled) as ledger:
+        return ApprovalGate(store).probe(payload, ledger, steps)
+
+
+ACTIVITIES = [bootstrap, model, tool, evaluation, recover, finalize, human, approval]

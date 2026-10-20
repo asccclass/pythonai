@@ -7,8 +7,10 @@ WORKFLOW_NAME = 'PythonAIReadOnlyBridgeV1'
 ACTIVITY_NAME = 'pythonai_readonly_bridge_v1'
 STEP_WORKFLOW_NAME = 'AgentTaskWorkflowV1'
 HUMAN_WORKFLOW_NAME = 'AgentTaskWorkflowV2'
+APPROVAL_WORKFLOW_NAME = 'AgentTaskWorkflowV3'
+APPROVAL_SIGNAL = 'pythonai_approval_decision_v1'
 STEP_ACTIVITIES = {kind: 'pythonai_step_' + kind + '_v1' for kind in
-                   ('bootstrap', 'model', 'tool', 'evaluation', 'recover', 'finalize', 'human')}
+                   ('bootstrap', 'model', 'tool', 'evaluation', 'recover', 'finalize', 'human', 'approval')}
 HUMAN_SIGNAL = 'pythonai_human_decision_v1'
 STEP_IO_MAX_ATTEMPTS = 1
 STEP_METADATA_MAX_ATTEMPTS = 3
@@ -48,12 +50,29 @@ def validate_cursor(value):
     validate_reference(value['state_ref'])
     return value
 
+def validate_approval_event(value):
+    if (not isinstance(value, dict) or set(value) != {'schema_version', 'submission_id', 'event_id'}
+            or not isinstance(value['event_id'], str) or not re.fullmatch('[a-f0-9]{32}', value['event_id'])):
+        raise ValueError('Invalid approval event reference')
+    validate_envelope({k: value[k] for k in ('schema_version', 'submission_id')})
+    return value
+
+
+def validate_approval_probe(value):
+    if (not isinstance(value, dict) or set(value) != {'cursor', 'ready', 'expires'}
+            or type(value['ready']) is not bool or type(value['expires']) not in {int, float}
+            or not math.isfinite(value['expires']) or value['expires'] < 0
+            or (value['ready'] and value['expires'] != 0) or (not value['ready'] and value['expires'] <= 0)):
+        raise ValueError('Invalid approval wait result')
+    validate_cursor(value['cursor'])
+    return value
+
 
 def validate_snapshot(value):
     if (not isinstance(value, dict) or set(value) != {'schema_version', 'phase', 'checkpoint', 'task_state', 'reply'}
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or not isinstance(value['phase'], str) or value['phase'] not in {'temporal_pending', 'step_ready', 'step_preparing', 'model_pending', 'model_received',
-                                      'tool_started', 'tool_done', 'evaluation_pending', 'evaluation_done', 'waiting_user'}
+                                      'tool_started', 'tool_done', 'evaluation_pending', 'evaluation_done', 'waiting_user', 'waiting_approval'}
             or not isinstance(value['task_state'], str) or value['task_state'] not in {'pending', 'running', 'completed', 'failed', 'suspended'}
             or (value['reply'] is not None and not isinstance(value['reply'], str))
             or not isinstance(value['checkpoint'], dict)):

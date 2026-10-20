@@ -8,7 +8,8 @@ from .contracts import ACTIVITY_NAME, WORKFLOW_NAME, validate_envelope
 
 from .contracts import (STEP_WORKFLOW_NAME, STEP_ACTIVITIES, STEP_IO_MAX_ATTEMPTS,
                         STEP_METADATA_MAX_ATTEMPTS, STEP_RECOVERY_LIMIT, STEP_LIMIT,
-                        HUMAN_SIGNAL, HUMAN_WORKFLOW_NAME, validate_cursor)
+                        HUMAN_SIGNAL, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME, APPROVAL_SIGNAL,
+                        validate_approval_event, validate_approval_probe, validate_cursor)
 
 
 @workflow.defn(name=WORKFLOW_NAME)
@@ -53,7 +54,7 @@ class AgentTaskWorkflowV1:
                 schedule_to_close_timeout=timedelta(minutes=10),
                 heartbeat_timeout=timedelta(seconds=45),
                 retry_policy=RetryPolicy(maximum_attempts=STEP_METADATA_MAX_ATTEMPTS
-                    if kind in {'bootstrap', 'recover', 'finalize', 'human'} else STEP_IO_MAX_ATTEMPTS))
+                    if kind in {'bootstrap', 'recover', 'finalize', 'human', 'approval'} else STEP_IO_MAX_ATTEMPTS))
 
         def checked(value):
             try:
@@ -85,6 +86,30 @@ class AgentTaskWorkflowV1:
                             timeout=timedelta(seconds=max(.001, remaining)))
                     except TimeoutError:
                         pass  # Recheck TTL and persist the terminal projection.
+            if getattr(self, 'approval_gates', False) and cursor['next_kind'] == 'tool':
+                advanced = False
+                while True:
+                    before = self.notifications
+                    probe = await execute('approval', cursor)
+                    try:
+                        validate_approval_probe(probe)
+                    except (ValueError, TypeError, KeyError):
+                        raise ApplicationError('InvalidApprovalProbe', non_retryable=True) from None
+                    following = checked(probe['cursor'])
+                    if following != cursor:
+                        if following['revision'] != cursor['revision']+1:
+                            raise ApplicationError('InvalidApprovalRevision', non_retryable=True)
+                        cursor, advanced = following, True
+                        break
+                    if probe['ready']:
+                        break
+                    try:
+                        await workflow.wait_condition(lambda: self.notifications != before,
+                            timeout=timedelta(seconds=max(.001, probe['expires']-workflow.now().timestamp())))
+                    except TimeoutError:
+                        pass
+                if advanced:
+                    continue
             if cursor['next_kind'] == 'finalize':
                 result = await execute('finalize', cursor)
                 if result != {'submission_id': key}:
@@ -110,6 +135,32 @@ class AgentTaskWorkflowV1:
 @workflow.defn(name=HUMAN_WORKFLOW_NAME)
 class AgentTaskWorkflowV2(AgentTaskWorkflowV1):
     """New admission/queue keeps V1 workers away from human continuations."""
+    @workflow.run
+    async def run(self, envelope: dict) -> dict:
+        return await super().run(envelope)
+
+
+@workflow.defn(name=APPROVAL_WORKFLOW_NAME)
+class AgentTaskWorkflowV3(AgentTaskWorkflowV2):
+    """Approval-gated reads use a new, immutable admission protocol and queue."""
+    approval_gates = True
+
+    def __init__(self):
+        super().__init__()
+        self.approval_events = set()
+
+    @workflow.signal(name=APPROVAL_SIGNAL)
+    def approval_decision(self, event: dict):
+        try:
+            validate_approval_event(event)
+        except (ValueError, TypeError, KeyError):
+            return
+        if getattr(self, 'envelope', None) is not None and event['submission_id'] != self.envelope['submission_id']:
+            return
+        if event['event_id'] not in self.approval_events and len(self.approval_events) < STEP_LIMIT*4:
+            self.approval_events.add(event['event_id'])
+            self.notifications += 1
+
     @workflow.run
     async def run(self, envelope: dict) -> dict:
         return await super().run(envelope)

@@ -42,6 +42,6 @@ class Settings:
             raise ValueError('Temporal Activity concurrency must be 1..8')
         operation_limits()
         engine = os.environ.get('AGENT_TEMPORAL_ENGINE', 'bridge')
-        if engine not in {'bridge', 'steps', 'human'}:
-            raise ValueError('AGENT_TEMPORAL_ENGINE must be bridge, steps or human')
+        if engine not in {'bridge', 'steps', 'human', 'approval'}:
+            raise ValueError('AGENT_TEMPORAL_ENGINE must be bridge, steps, human or approval')
         return cls(address, namespace, concurrency, engine)

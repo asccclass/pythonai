@@ -241,6 +241,8 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
     try:
         reply = invoke_runtime_agent(runtime, agent_messages, episode_id)
     except TaskSuspendedException as error:
+        from agent_execution.temporal_backend.approval_gate import notify_wait
+        notify_wait(getattr(runtime, 'event_callback', None))
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
         finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn, status="running")
@@ -578,6 +580,8 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
     try:
         reply = invoke_runtime_agent(runtime, messages, episode_id, resume=True)
     except TaskSuspendedException as error:
+        from agent_execution.temporal_backend.approval_gate import notify_wait
+        notify_wait(getattr(runtime, 'event_callback', None))
         runtime.messages = error.messages
         log_episode_event(runtime.memory, episode_id, "task_suspended", content=error.question)
         finish_turn_memory_review(runtime, episode_id, False, status="running")

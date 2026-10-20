@@ -557,6 +557,13 @@ History 不包含 owner、limits 或用量明文。實作及驗收順序：
 
 ### 12.4 TP13 人工回答與操作審批的交付拆分
 
+TP13.5–13.6 的實作順序（2026-10-20）：先在 ApprovalStore 同庫建立 operation binding 與
+decision outbox，確保決定／通知原子提交；再新增 V3／獨立 queue 的工具前 metadata gate，
+以 Timer／Signal 等待。執行段仍走原 policy，於 ledger 已開始後重新核對角色、路徑、參數、
+task／step／owner／session 與一次性 consume；未知效果不重試。先以受控唯讀工具驗證，
+不提前開放 TP17 寫入。最後依序通過契約測試、真實 Service／Worker／replay、完整 pytest，
+再更新驗收與建立 commit。
+
 依 TP10–TP12 的 ledger、fence 與 immutable budget 推進，先完成可用的人工回答鏈路，
 再串接現有 ApprovalStore 的一次性授權；兩者不得相互代用。實作集中於既有
 `agent_execution/temporal_backend/`，不增加使用者入口或修改正式 `.env`。

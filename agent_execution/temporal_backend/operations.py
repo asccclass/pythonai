@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _ledger = ContextVar('temporal_operation_ledger', default=None)
+_tool_operation = ContextVar('temporal_tool_operation', default=None)
 
 
 @contextmanager
@@ -39,4 +40,16 @@ def run_operation(kind, step, arguments, execute, **serialization):
                 name = schema.get('function', {}).get('name')
                 if not check_tool_permission(name) or (context.allowed_tools is not None and name not in context.allowed_tools):
                     raise PermissionError('Model capabilities changed; refresh the execution context')
-        return ledger.run(step, kind, arguments, execute, **serialization)
+        def guarded_execute():
+            token = _tool_operation.set((ledger, step) if kind == 'tool' else None)
+            try:
+                return execute()
+            finally:
+                _tool_operation.reset(token)
+        return ledger.run(step, kind, arguments, guarded_execute, **serialization)
+
+def authorize_tool(name, arguments):
+    operation = _tool_operation.get()
+    if operation is not None:
+        from .approval_gate import authorize
+        authorize(*operation, name, arguments)

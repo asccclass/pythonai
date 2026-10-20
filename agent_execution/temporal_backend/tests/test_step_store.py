@@ -21,7 +21,8 @@ def task(tmp_path, monkeypatch, request):
     engine = getattr(request, 'param', 'steps')
     for key, value in {'AGENT_TASK_DB': str(tmp_path/'tasks.db'), 'AGENT_TENANT_ROOT': str(tmp_path/'tenants'),
         'AGENT_WORKSPACE_ROOT': str(tmp_path), 'AGENT_TRACE_ENABLED': '0', 'AGENT_TASK_WORKTREE': '0',
-        'AGENT_TEMPORAL_ENGINE': engine, 'AGENT_EXECUTION_BACKEND': 'temporal'}.items():
+        'AGENT_TEMPORAL_ENGINE': engine, 'AGENT_EXECUTION_BACKEND': 'temporal',
+        'AGENT_APPROVAL_DB': str(tmp_path/'approvals.db')}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('AGENT_PROJECT_WORKSPACES', raising=False)
     with execution_scope(source='local', identity='local', project='default', session='step', task_id='step-task', workspace=tmp_path):
@@ -30,7 +31,10 @@ def task(tmp_path, monkeypatch, request):
         owner = task_owner(context)
         store.bind(owner, context.task_id, 'temporal')
         scope = {name: getattr(context, name) for name in ('source', 'identity', 'session', 'conversation', 'project')}
-        scope.update(workspace=str(tmp_path), allowed_tools=sorted(STEP_TOOLS if engine == 'human' else READ_TOOLS))
+        scope.update(workspace=str(tmp_path), allowed_tools=sorted(STEP_TOOLS if engine in {'human', 'approval'} else READ_TOOLS))
+        if engine == 'approval':
+            from agent_execution.approvals import ApprovalStore
+            scope['approval_db'] = str(ApprovalStore().path.resolve())
         row = store.submit(owner, context.task_id, [{'role':'user','content':'private step goal'}], scope, 'admin', Settings.load())
         steps = StepStore(store)
         row = steps.bootstrap_claim(row['id'], Settings.load())

@@ -7,7 +7,7 @@ from contextlib import closing
 import time
 
 from agent_execution.tasks import assert_owner_active
-from .contracts import HUMAN_SIGNAL, SCHEMA_VERSION, HUMAN_WORKFLOW_NAME
+from .contracts import HUMAN_SIGNAL, SCHEMA_VERSION, HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME
 
 
 class Decisions:
@@ -26,8 +26,8 @@ class Decisions:
         call = task['checkpoint'].get('suspended_tool_call_id')
         if not isinstance(call, str) or not call:
             raise ValueError('Missing suspended tool call')
-        if self.store.workflow_type(self.store.get(cursor['submission_id'])) != HUMAN_WORKFLOW_NAME:
-            raise PermissionError('Human waiting requires the V2 protocol')
+        if self.store.workflow_type(self.store.get(cursor['submission_id'])) not in {HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME}:
+            raise PermissionError('Human waiting requires V2 or a later step protocol')
         contract = conn.execute('SELECT contract FROM temporal_budget_contracts WHERE submission_id=?',
                                 (cursor['submission_id'],)).fetchone()
         if contract is None:
@@ -41,7 +41,7 @@ class Decisions:
         if not isinstance(answer, str) or not answer.strip() or len(answer.encode()) > 1024*1024:
             raise ValueError('Human answer must contain text and fit within 1 MiB')
         submission = self.store.get(key, owner)
-        if self.store.workflow_type(submission) != HUMAN_WORKFLOW_NAME:
+        if self.store.workflow_type(submission) not in {HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME}:
             raise PermissionError('Human answers require the step protocol')
         with closing(self.store.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')

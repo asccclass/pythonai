@@ -24,7 +24,7 @@ def inspect():
     return {'backend': selected_backend(), 'sdk_version': sdk,
             'address': settings.address, 'namespace': settings.namespace,
             'mode': {'bridge': 'read_only_bridge', 'steps': 'read_only_steps',
-                     'human': 'read_only_human_steps'}[settings.engine], 'connected': False,
+                     'human': 'read_only_human_steps', 'approval': 'read_only_approval_steps'}[settings.engine], 'connected': False,
             'new_submission_engine': settings.engine,
             'operation_limits': operation_limits(),
             'backup_inventory': {name: {'path': str(path.resolve()), 'exists': path.exists()}
