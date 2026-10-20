@@ -7,6 +7,21 @@
 
 `agent-browser` 是原生 CLI，不是 Python 的 Playwright 相容函式庫；因此本次是建立一個 Python adapter，而非逐行改寫 API 呼叫。它可用 `--json` 回傳機器可讀結果、`batch --json` 減少多次啟動成本，並支援 selector、snapshot、screenshot、下載、狀態檔及持久 profile。[官方 README](https://github.com/vercel-labs/agent-browser#agent-mode) 也特別說明：`networkidle` 不適合持續連線的頁面，應優先等待明確的 selector、文字、URL 或 JavaScript 條件。
 
+### Playwright 與 agent-browser 比較
+
+| 面向 | Playwright | agent-browser |
+| --- | --- | --- |
+| Python 整合 | 原生 Python API；現有程式可直接控制 browser/context/page、request route 與 download | CLI；Python 端須透過 subprocess/JSON adapter 操作 |
+| 瀏覽器支援 | Chromium、Firefox、WebKit | 主要為 Chrome/CDP，並非跨瀏覽器測試框架的等價替代 |
+| AI agent 操作 | 需由本專案自行設計 action schema、DOM 讀取與定位方式 | 內建 accessibility snapshot refs、語意 locator、`--json` 與 MCP，較符合 agent 的互動模式 |
+| 安裝與執行 | Python 套件搭配 Playwright browser runtime | 獨立原生 CLI 與 Chrome for Testing；無須 Python Playwright runtime |
+| 網路隔離 | 可在程式內精細攔截每一個 request，現行 worker 也會封鎖 WebSocket | 有 `--allowed-domains`，可封鎖非白名單子資源、WebSocket/EventSource 與 WebRTC；但不能與 profile、restore/state replay 共用 |
+| 登入狀態 | persistent context、cookie/storage state 都能由 Python 完整控制 | 支援 persistent profile、session 與 state；但安全 allowlist 與狀態恢復的相容性須另行驗證 |
+| 測試能力 | assertion、trace、fixture、平行測試、跨瀏覽器生態成熟 | 偏 CLI 驗收與 agent automation；不取代 Playwright Test 的完整功能 |
+| 維運成本 | 既有實作成本最低 | 需處理 CLI 版本、輸出 JSON schema、daemon/session、Windows argv 與錯誤轉換 |
+
+**本專案判斷：** agent-browser 對公開、無登入的 AI 瀏覽任務較有優勢；其 snapshot、語意定位與 MCP/CLI 介面可降低 agent 操作 DOM 的成本。它不會全面優於 Playwright：現有私有登入、下載隔離與嚴格網路控管依賴 Playwright 的細粒度 context/route 控制，且 agent-browser 官方 allowlist 與 profile/restore 不能並用。因此應先採雙軌導入，將無狀態的公開瀏覽遷至 agent-browser；`browser_session` 等安全敏感流程在 capability matrix 與負向安全測試通過前，繼續使用 Playwright。
+
 ### 不變條件（驗收底線）
 
 - `browse_webpage`、`browser_session`、`browser_vision` 的工具名稱、輸入 schema 與 `ToolResult` 成功／失敗語意不變。
