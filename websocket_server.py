@@ -441,7 +441,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "connection_id": session.state['desktop_connection_id'],
                 "server_time": now_ms(),
                 "resumed": resumable,
-                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'approval_auto_resume': True, **lifecycle_features(session)},
+                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'speech_polish': True, 'approval_auto_resume': True, **lifecycle_features(session)},
                 "last_seq": session.seq,
                 "history_floor": floor,
             },
@@ -537,6 +537,32 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
         session.request_id = message_id
         session.attachments = attachments
         session.current_chat_task = asyncio.create_task(handle_chat(session, text, str(message_id or "")))
+    elif message_type == "speech.polish":
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            await session.send("error", {"code": "bad_message", "message": "speech.polish requires text", "retryable": False}, ref=message_id)
+            return
+        if session.current_chat_task is not None and not session.current_chat_task.done():
+            await session.send("error", {"code": "chat_busy", "message": "Wait for the current request to finish", "retryable": True}, ref=message_id)
+            return
+        async def polish():
+            prompt = (
+                "請校正以下繁體中文語音辨識文字。只修正明顯同音錯字與標點，"
+                "忠實保留原意；只回傳校正後文字，不要解釋、回答或使用工具。\n\n"
+                f"【原始語音文字】\n{text}"
+            )
+            corrected = text
+            try:
+                async for kind, value in brain_reply_stream(prompt, session):
+                    if kind == "end" and isinstance(value, dict):
+                        corrected = str(value.get("text") or text).strip() or text
+                    elif kind == "error":
+                        raise RuntimeError(str(value.get("message") or "speech polishing failed"))
+                await session.send("speech.polish.result", {"text": corrected}, ref=message_id)
+            except Exception:
+                await session.send("speech.polish.result", {"text": text, "fallback": True}, ref=message_id)
+        session.cancel_chat = threading.Event()
+        session.current_chat_task = asyncio.create_task(polish())
     elif message_type == "chat.interrupt":
         if session.current_chat_task is not None and not session.current_chat_task.done():
             session.cancel_chat.set()

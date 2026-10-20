@@ -128,6 +128,20 @@ class WebSocketServerTests(unittest.TestCase):
         self.assertIn("你好", final["payload"]["text"])
         self.assertGreater(len(deltas), 0)
 
+    def test_speech_polish_returns_transient_result(self):
+        async def fixture_stream(text, session):
+            yield "end", {"text": "校正後文字"}
+        with patch("websocket_server.brain_reply_stream", side_effect=fixture_stream), patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False):
+            with TestClient(app).websocket_connect("/ws/v1") as ws:
+                ws.send_json({"type": "hello", "payload": {"token": "token-1", "device_id": "web-1"}})
+                welcome = ws.receive_json()
+                self.assertTrue(welcome["payload"]["features"]["speech_polish"])
+                ws.send_json({"v": 1, "type": "speech.polish", "id": "speech-1", "payload": {"text": "原始辨識文字"}})
+                result = ws.receive_json()
+        self.assertEqual(result["type"], "speech.polish.result")
+        self.assertEqual(result["ref"], "speech-1")
+        self.assertEqual(result["payload"]["text"], "校正後文字")
+
     def test_event_updates_focus_and_routes_proactive_to_focused_device(self):
         with patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False):
             with TestClient(app).websocket_connect("/ws/v1") as ws:
