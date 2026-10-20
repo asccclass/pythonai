@@ -10,17 +10,18 @@ from agent_execution.policy import current_context
 from agent_execution.tasks import task_owner
 from agent_execution.temporal_backend.config import Settings
 from agent_execution.temporal_backend.context import execution_context
-from agent_execution.temporal_backend.contracts import READ_TOOLS, STEP_WORKFLOW_NAME, WORKFLOW_NAME, validate_cursor, validate_snapshot
+from agent_execution.temporal_backend.contracts import READ_TOOLS, STEP_TOOLS, STEP_WORKFLOW_NAME, WORKFLOW_NAME, validate_cursor, validate_snapshot
 from agent_execution.temporal_backend.ledger import OperationUncertain
 from agent_execution.temporal_backend.step_store import StepStore
 from agent_execution.temporal_backend.store import Store, canonical
 
 
 @pytest.fixture
-def task(tmp_path, monkeypatch):
+def task(tmp_path, monkeypatch, request):
+    engine = getattr(request, 'param', 'steps')
     for key, value in {'AGENT_TASK_DB': str(tmp_path/'tasks.db'), 'AGENT_TENANT_ROOT': str(tmp_path/'tenants'),
         'AGENT_WORKSPACE_ROOT': str(tmp_path), 'AGENT_TRACE_ENABLED': '0', 'AGENT_TASK_WORKTREE': '0',
-        'AGENT_TEMPORAL_ENGINE': 'steps', 'AGENT_EXECUTION_BACKEND': 'temporal'}.items():
+        'AGENT_TEMPORAL_ENGINE': engine, 'AGENT_EXECUTION_BACKEND': 'temporal'}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('AGENT_PROJECT_WORKSPACES', raising=False)
     with execution_scope(source='local', identity='local', project='default', session='step', task_id='step-task', workspace=tmp_path):
@@ -29,7 +30,7 @@ def task(tmp_path, monkeypatch):
         owner = task_owner(context)
         store.bind(owner, context.task_id, 'temporal')
         scope = {name: getattr(context, name) for name in ('source', 'identity', 'session', 'conversation', 'project')}
-        scope.update(workspace=str(tmp_path), allowed_tools=sorted(READ_TOOLS))
+        scope.update(workspace=str(tmp_path), allowed_tools=sorted(STEP_TOOLS if engine == 'human' else READ_TOOLS))
         row = store.submit(owner, context.task_id, [{'role':'user','content':'private step goal'}], scope, 'admin', Settings.load())
         steps = StepStore(store)
         row = steps.bootstrap_claim(row['id'], Settings.load())
@@ -52,6 +53,7 @@ def test_protocol_and_queue_are_pinned_not_selected_by_later_environment(task, m
     store,steps,row,ledger,cursor=task
     assert store.workflow_type(row)==STEP_WORKFLOW_NAME
     assert row['queue']==store.queue_for('steps') and row['queue']!=store.queue
+    assert 'ask_user' not in current_context().allowed_tools
     monkeypatch.setenv('AGENT_TEMPORAL_ENGINE','bridge')
     old=store.submit(row['owner'],row['task_id'],[{'role':'user','content':'private step goal'}],{},'viewer',Settings.load())
     assert old['id']==row['id'] and store.workflow_type(old)==STEP_WORKFLOW_NAME

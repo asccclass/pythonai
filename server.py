@@ -443,6 +443,9 @@ def run_agent(
                             'state':'failed','result':json.dumps(tool_results[tool_call.id],ensure_ascii=False)})
                     elif suspend_request is None:
                         suspend_request = (tool_call.id,question)
+                    if step_controller is not None and suspend_request is not None:
+                        # Persist the human boundary before yielding to another tool.
+                        raise TaskSuspendedException(question, tool_call.id, messages)
                     continue
                 step = {'id':tool_call.id,'name':tool_name,'arguments':tool_args,
                         'dependencies':sorted(resolved_calls),'state':'running'}

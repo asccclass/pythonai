@@ -211,12 +211,16 @@ def test_unknown_schema_is_not_downgraded():
         assert [r[0] for r in conn.execute('SELECT version FROM temporal_schema')] == [2]
 
 
-def test_preflight_does_not_create_a_database(tmp_path, monkeypatch):
+@pytest.mark.parametrize('engine,mode', [('bridge','read_only_bridge'), ('steps','read_only_steps'),
+                                        ('human','read_only_human_steps')])
+def test_preflight_does_not_create_a_database(tmp_path, monkeypatch, engine, mode):
     from agent_execution.temporal_backend.preflight import inspect
     path = tmp_path / 'not-created.db'
     monkeypatch.setenv('AGENT_TASK_DB', str(path))
+    monkeypatch.setenv('AGENT_TEMPORAL_ENGINE', engine)
     result = inspect()
     assert result['connected'] is False
+    assert result['mode'] == mode and result['new_submission_engine'] == engine
     assert result['backup_inventory']['tasks']['exists'] is False
     assert not path.exists()
 

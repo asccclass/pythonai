@@ -14,15 +14,24 @@ async def serve():
     from temporalio.worker import Worker
     from temporalio.client import WorkflowExecutionStatus
     from .activities import execute_readonly
-    from .workflows import ReadOnlyBridge, AgentTaskWorkflowV1
+    from .workflows import ReadOnlyBridge, AgentTaskWorkflowV1, AgentTaskWorkflowV2
     from .step_activities import ACTIVITIES
     from .client import connect, dispatch
     from agent_execution.turn_control.environment import host_environment
     settings, store = Settings.load(), Store()
+    from .decisions import Decisions
+    decisions = Decisions(store)
     client = await connect(settings)
-    queues = {store.queue, store.queue_for('steps')}
+    queues = {store.queue, store.queue_for('steps'), store.queue_for('human')}
     async def reconcile():
         while True:
+            for row in decisions.pending():
+                if (row['address'], row['namespace']) != (settings.address, settings.namespace) or row['queue'] not in queues:
+                    continue
+                try:
+                    await decisions.dispatch(client, row)
+                except Exception as error:
+                    print(json.dumps({'temporal': 'decision_pending', 'error_type': type(error).__name__}), flush=True)
             for row in store.pending():
                 if (row['address'], row['namespace']) != (settings.address, settings.namespace) or row['queue'] not in queues:
                     continue
@@ -57,11 +66,16 @@ async def serve():
                               activities=ACTIVITIES, activity_executor=executor,
                               max_concurrent_activities=settings.concurrency,
                               graceful_shutdown_timeout=timedelta(seconds=15))
+        human_worker = Worker(client, task_queue=store.queue_for('human'), workflows=[AgentTaskWorkflowV2],
+                              activities=ACTIVITIES, activity_executor=executor,
+                              max_concurrent_activities=settings.concurrency,
+                              graceful_shutdown_timeout=timedelta(seconds=15))
         print(json.dumps({'temporal': 'worker_configured', 'namespace': settings.namespace,
-                          'queues': sorted(queues), 'os': host_environment()['os'], 'mode': 'bridge_and_readonly_steps'}), flush=True)
+                          'queues': sorted(queues), 'os': host_environment()['os'], 'mode': 'bridge_and_readonly_steps_v1_v2'}), flush=True)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(bridge_worker)
             await stack.enter_async_context(steps_worker)
+            await stack.enter_async_context(human_worker)
             reconciler = asyncio.create_task(reconcile())
             try:
                 await asyncio.Future()

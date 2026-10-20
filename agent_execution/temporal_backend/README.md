@@ -7,12 +7,12 @@
 - 預設仍為 sqlite；optional SDK lazy import。新任務固定 backend，舊任務不因環境設定而改引擎。
 - 同一 TaskStore SQLite transaction 建立 task、submission 與來源 fingerprint，outbox 可由 Worker 啟動後 reconcile。
 - Workflow History 僅放版本、opaque submission ID、有限控制欄位與 artifact reference，輸入／結果仍在同機可信 SQLite；沒有明文對話／絕對路徑進入 History。
-- 固定同 DB host queue；只接受 loopback Temporal 服務。Worker 重建角色、workspace、profile 與根預算，限制 READ_TOOLS。M0 整段 Activity 最多執行一次；逐步模式的 model／tool／evaluation Activity 各最多一次。
+- 固定同 DB host queue；只接受 loopback Temporal 服務。Worker 重建角色、workspace、profile 與根預算，限制 READ_TOOLS（human V2 另允許 ask_user）。M0 整段 Activity 最多執行一次；逐步模式的 model／tool／evaluation Activity 各最多一次。
 - 直接 legacy claim 不可取得已綁 Temporal 任務；已開始 Activity 不可再次取得，取消後不能發布晚到結果。
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、人工回答／approval resume、排程／coordinator 轉交、逐 token 遠端串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
+限制：目前不支援 Temporal skill、approval resume、排程／coordinator 轉交、逐 token 遠端串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
 
 ## 版本與安裝
 
@@ -74,6 +74,50 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 ```
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
+
+## TP13：人工回答（操作審批仍待後續交付）
+
+設定 `AGENT_TEMPORAL_ENGINE=human` 的新任務綁定 `AgentTaskWorkflowV2`，可使用 `ask_user`。
+V2 使用獨立 `-steps-readonly-v2` queue，舊 Worker 不會誤接新流程；新 Worker 同時服務
+M0／steps V1／human V2，並共用 host 併發限制。V2 任務排空前不能將 Worker 降回舊版本。
+問題仍由原有入口
+回覆；直接輸入文字回答會接回原 Workflow，`/resume <task_id>` 在尚無新回答時顯示
+原問題。未確認副作用的 uncertain 任務仍拒絕自動恢復。原本 bridge 任務不改派，
+已綁 V2 的任務也不因預設 engine 切回 bridge 而變更流程。
+
+`waiting_user` checkpoint 確認完成後，同 transaction 保存 human cursor 與等待紀錄。
+`temporal_human_answers` 位於同一 TaskStore DB；回答與 notification outbox 原子提交。
+通知只含 submission ID，沒有問題、答案或 owner。Worker 每輪 reconcile 重送尚未
+確認送達的通知，結果未知不清除 outbox；不用 signal-with-start 復活已關閉流程。
+Workflow 的 Signal 只喚醒 metadata Activity，後者核對 cursor、owner、call ID、
+lifecycle、fence 與 TTL，再將回答消耗、checkpoint 與新 cursor 一次提交。
+
+等待不占 Activity thread／host slot／模型槽位，採 Temporal Timer 與 Signal；
+metadata Activity 最多三次，model/tool/evaluation 仍最多一次。TTL 為等待建立時的
+300 秒與原 root deadline 的較早者，停機也計時，消耗時過期就終止，不延長舊額度。
+即使答案已受理，Worker 停機直到期限後才消耗，仍不得執行後續工具。根 Workflow
+deadline 本身到期時沿用 TP12 的保守終止映射。
+
+答案最多 1 MiB 且只接受文字；shared ledger storage limit 也計入答案與等待 metadata。
+相同答案重送不增加紀錄，變更已決定答案／跨 owner／錯 call ID／取消／刪除中的
+session 均拒絕。多工具回合在 `ask_user` 後立即保存等待，剩餘工具在回答後續行。
+完整串流與記憶／profile finalization 去重仍屬 TP15。
+
+本輪僅完成人工回答；ApprovalStore 的 decision outbox、授權通知、撤權重查與一次性
+consume 故障矩陣仍待 TP13.5–13.6，寫入工具仍受 TP17 gate 限制。
+
+TP13 人工回答專項驗證（2026-10-20）：Temporal 全模組 **149 passed**，228.63 秒，
+已啟用真實 development Service／Worker 測試。新增 18 個單元／契約案例與 3 個真實
+服務案例，涵蓋既有文字入口回答、等待中 Worker 重啟、早到／重複通知、回覆遺失、
+TTL Timer、單次消耗、跨 owner、舊回答不重用、session 刪除、取消與 V2 queue 隔離。
+V1／V2 History replay 通過，History 沒有問題／答案／檔案明文；模型使用受控回應，
+TP11 真實 provider 與原始長任務驗收仍未完成。
+測試服務／執行資料置於 `.system_generated`，避免 SQLite journals 被驗收器視為
+任務產物。紀錄 `temp/temporal-tp13-v2-final.log`；未啟用正式設定或遷移正式資料。
+
+最終完整 pytest **1065 passed、9 skipped、95 subtests passed**，1118.53 秒，
+真實 Service／Worker lane 已啟用；僅有既有 Starlette／AnyIO deprecation warning。
+pip check、compileall、diff check 通過。完整紀錄 `temp/temporal-tp13-full.log`。
 
 ## TP12：根預算、retry ownership 與取消矩陣
 

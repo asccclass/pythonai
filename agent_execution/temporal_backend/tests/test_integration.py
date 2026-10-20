@@ -72,8 +72,12 @@ class LocalServer:
 
 @pytest.fixture
 def configured(tmp_path, monkeypatch):
-    monkeypatch.setenv('AGENT_TASK_DB', str(tmp_path / 'tasks.db'))
-    monkeypatch.setenv('AGENT_TENANT_ROOT', str(tmp_path / 'tenants'))
+    # Runtime/service databases are infrastructure, not agent-produced evidence.
+    # Keep changing SQLite journals out of the evaluator's workspace snapshots.
+    runtime = tmp_path / '.system_generated'
+    runtime.mkdir()
+    monkeypatch.setenv('AGENT_TASK_DB', str(runtime / 'tasks.db'))
+    monkeypatch.setenv('AGENT_TENANT_ROOT', str(runtime / 'tenants'))
     monkeypatch.setenv('AGENT_WORKSPACE_ROOT', str(tmp_path))
     monkeypatch.setenv('AGENT_EXECUTION_BACKEND', 'temporal')
     monkeypatch.setenv('AGENT_TRACE_ENABLED', '0')
@@ -89,7 +93,9 @@ def server(configured, monkeypatch):
     binary = os.environ.get('PYTHONAI_TEMPORAL_TEST_CLI')
     if not binary:
         pytest.skip('Set PYTHONAI_TEMPORAL_TEST_CLI for real service tests')
-    instance = LocalServer(str(Path(binary).resolve()), configured)
+    service_data = configured / '.system_generated' / 'temporal-service'
+    service_data.mkdir()
+    instance = LocalServer(str(Path(binary).resolve()), service_data)
     monkeypatch.setenv('AGENT_TEMPORAL_ADDRESS', instance.address)
     instance.start()
     try:

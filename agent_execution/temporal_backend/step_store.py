@@ -5,7 +5,7 @@ import time
 import uuid
 
 from agent_execution.tasks import assert_owner_active
-from .contracts import STEP_WORKFLOW_NAME, STEP_LIMIT, validate_cursor, validate_snapshot
+from .contracts import STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, STEP_LIMIT, validate_cursor, validate_snapshot
 from .ledger import Ledger, OperationUncertain
 from .store import canonical
 
@@ -13,6 +13,8 @@ from .store import canonical
 class StepStore:
     def __init__(self, store):
         self.store = store
+        from .decisions import Decisions
+        self.decisions = Decisions(store)
         with closing(store.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             conn.execute('CREATE TABLE IF NOT EXISTS temporal_step_schema(version INTEGER PRIMARY KEY)')
@@ -55,9 +57,11 @@ class StepStore:
     def bootstrap_claim(self, key, settings):
         """Only bootstrap may adopt a pre-cursor running claim; it performs no business I/O."""
         row = self.store.get(key)
-        if self.store.workflow_type(row) != STEP_WORKFLOW_NAME:
+        kind = self.store.workflow_type(row)
+        if kind not in {STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME}:
             raise PermissionError('Submission is not bound to the step protocol')
-        if (row['address'], row['namespace'], row['queue']) != (settings.address, settings.namespace, self.store.queue_for('steps')):
+        queue = self.store.queue_for('human' if kind == HUMAN_WORKFLOW_NAME else 'steps')
+        if (row['address'], row['namespace'], row['queue']) != (settings.address, settings.namespace, queue):
             raise PermissionError('Step submission targets another host or namespace')
         with closing(self.store.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -127,7 +131,10 @@ class StepStore:
             return result
         if row['status'] != 'running' or row['fence'] != fence:
             raise PermissionError('Continuation result fence is stale')
-        if kind == 'finalize':
+        if kind == 'human':
+            if task['state'] != 'suspended' or task['phase'] != 'waiting_user':
+                raise PermissionError('Human wait requires a confirmed suspension')
+        elif kind == 'finalize':
             if task['state'] not in {'completed', 'failed'}:
                 raise PermissionError('Cannot finalize a nonterminal task')
         else:
@@ -139,6 +146,8 @@ class StepStore:
             raise ValueError('Continuation step limit reached')
         ref = self._put(conn, ledger, self.snapshot(task))
         result = self.cursor(cursor['submission_id'], revision, kind, ref)
+        if kind == 'human':
+            self.decisions.create(conn, result, task)
         conn.execute("INSERT INTO temporal_step_runs VALUES(?,?,?,?,'ready',NULL,NULL)",
                      (cursor['submission_id'], revision, kind, canonical(ref)))
         conn.execute("UPDATE temporal_step_runs SET status='completed',output=? WHERE submission_id=? AND revision=? AND fence=?",
@@ -173,6 +182,8 @@ class StepStore:
             phase, saved = task['phase'], task['checkpoint']
             if task['state'] in {'completed', 'failed'}:
                 return self._commit(conn, cursor, run['fence'], ledger, 'finalize', task)
+            if task['state'] == 'suspended' and phase == 'waiting_user':
+                return self._commit(conn, cursor, run['fence'], ledger, 'human', task)
             if task['state'] not in {'pending', 'running'}:
                 raise OperationUncertain('Task requires human resolution')
             if phase == 'step_ready':
@@ -207,3 +218,50 @@ class StepStore:
                          (ledger.owner, ledger.task))
             task = {**task, 'state': 'pending'}
             return self._commit(conn, cursor, run['fence'], ledger, kind, task)
+
+    def human(self, cursor, ledger):
+        """Inspect or consume once; waiting itself occupies no Activity thread."""
+        if cursor['submission_id'] != ledger.key or cursor['next_kind'] != 'human':
+            raise PermissionError('Not this task human cursor')
+        validate_snapshot(ledger.load(cursor['state_ref']))
+        with closing(self.store.tasks.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            ledger._scope(conn, active=False)
+            run = self._row(conn, cursor)
+            if run['status'] == 'completed':
+                result = validate_cursor(json.loads(run['output']))
+                ledger.load(result['state_ref'])
+                return {'cursor': result, 'expires': 0}
+            answer = conn.execute('SELECT * FROM temporal_human_answers WHERE submission_id=? AND revision=?',
+                                  (ledger.key, cursor['revision'])).fetchone()
+            task = self.store.tasks.get(ledger.owner, ledger.task)
+            if (not answer or task['state'] != 'suspended' or task['phase'] != 'waiting_user'
+                    or task['checkpoint'].get('suspended_tool_call_id') != answer['call_id']):
+                raise PermissionError('Human wait no longer matches its task')
+            if answer['state'] == 'waiting' and answer['expires'] > time.time():
+                return {'cursor': cursor, 'expires': answer['expires']}
+            saved = task['checkpoint']
+            # Delivery after TTL does not extend root deadlines or authorize I/O.
+            if answer['expires'] <= time.time():
+                task = {**task, 'state': 'failed', 'reply': 'Error: Human answer wait expired'}
+                kind, decision_state = 'finalize', 'expired'
+            elif answer['state'] == 'answered':
+                saved['messages'].append({'role': 'tool', 'tool_call_id': saved.pop('suspended_tool_call_id'),
+                                          'content': answer['answer']})
+                from agent_execution.turn_control.continuation import next_kind
+                kind = next_kind('tool_done', saved)
+                task = {**task, 'state': 'pending', 'phase': 'tool_done', 'reply': None}
+                decision_state = 'consumed'
+            else:
+                raise PermissionError('Human decision already consumed without a projection')
+            data = canonical(saved)
+            self.store.tasks.capacity(conn, len(data.encode())-len(canonical(self.store.tasks.get(ledger.owner, ledger.task)['checkpoint']).encode()))
+            conn.execute('UPDATE tasks SET state=?,phase=?,checkpoint=?,reply=?,updated=? WHERE owner=? AND id=?',
+                         (task['state'], task['phase'], data, task['reply'], time.time(), ledger.owner, ledger.task))
+            fence = uuid.uuid4().hex
+            conn.execute("UPDATE temporal_step_runs SET status='running',fence=? WHERE submission_id=? AND revision=?",
+                         (fence, ledger.key, cursor['revision']))
+            result = self._commit(conn, cursor, fence, ledger, kind, task)
+            conn.execute('UPDATE temporal_human_answers SET state=? WHERE submission_id=? AND revision=?',
+                         (decision_state, ledger.key, cursor['revision']))
+            return {'cursor': result, 'expires': 0}

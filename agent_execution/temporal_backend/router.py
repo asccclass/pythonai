@@ -54,6 +54,10 @@ def route(messages, *, resume=False, skill=False):
         if previous and previous['state'] in {'completed', 'failed'} and previous['result']:
             from .backend import restore_result
             return restore_result(previous, messages)
+        from .contracts import HUMAN_WORKFLOW_NAME
+        if previous and store.workflow_type(previous) == HUMAN_WORKFLOW_NAME and not skill:
+            from .backend import invoke
+            return invoke(store, messages, resume=True)
     if skill or resume:
         raise ValueError('M0 Temporal supports new read-only Agent tasks; skill/manual resume is not enabled')
     from .backend import invoke

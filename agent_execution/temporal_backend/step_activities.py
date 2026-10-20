@@ -7,7 +7,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from .config import Settings
-from .contracts import STEP_ACTIVITIES, STEP_WORKFLOW_NAME, validate_cursor, validate_envelope, validate_snapshot
+from .contracts import STEP_ACTIVITIES, STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME, validate_cursor, validate_envelope, validate_snapshot
 from .context import execution_context
 from .step_store import StepStore
 from .store import Store
@@ -53,7 +53,7 @@ def authority(payload, *, bootstrap=False):
     key = validate_envelope(payload) if bootstrap else validate_cursor(payload)['submission_id']
     store = Store()
     row = store.get(key)
-    if activity.info().workflow_id != row['workflow_id'] or store.workflow_type(row) != STEP_WORKFLOW_NAME:
+    if activity.info().workflow_id != row['workflow_id'] or store.workflow_type(row) not in {STEP_WORKFLOW_NAME, HUMAN_WORKFLOW_NAME}:
         raise PermissionError('Step does not belong to this Workflow protocol')
     return store, row, StepStore(store)
 
@@ -68,6 +68,7 @@ def bootstrap(payload: dict) -> dict:
 
 
 def advance(payload, kind):
+    from exceptions import TaskSuspendedException
     from agent_execution import execution_scope
     from agent_execution.policy import current_context
     from agent_execution.tasks import durable_invoke
@@ -98,6 +99,8 @@ def advance(payload, kind):
                 durable_invoke(execute, messages, None, resume=True)
             except TaskYield as boundary:
                 next_kind = boundary.next_kind
+            except TaskSuspendedException:
+                next_kind = 'human'
             except BudgetExhausted:
                 next_kind = 'finalize'
             else:
@@ -136,6 +139,14 @@ def recover(payload: dict) -> dict:
         raise
 
 
+@activity.defn(name=STEP_ACTIVITIES['human'])
+@protected
+def human(payload: dict) -> dict:
+    store, row, steps = authority(payload)
+    with execution_context(store, row, activity.is_cancelled) as ledger:
+        return steps.human(payload, ledger)
+
+
 @activity.defn(name=STEP_ACTIVITIES['finalize'])
 @protected
 def finalize(payload: dict) -> dict:
@@ -158,4 +169,4 @@ def finalize(payload: dict) -> dict:
     return {'submission_id': row['id']}
 
 
-ACTIVITIES = [bootstrap, model, tool, evaluation, recover, finalize]
+ACTIVITIES = [bootstrap, model, tool, evaluation, recover, finalize, human]

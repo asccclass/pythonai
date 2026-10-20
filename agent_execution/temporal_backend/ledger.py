@@ -62,7 +62,7 @@ class Ledger:
                                (self.owner, self.task)).fetchone()
         states = {'running'} if active else {'running', 'completed', 'failed'}
         if (not row or not self.fence or row['fence'] != self.fence or row['state'] not in states
-                or not task or task['state'] not in ({'pending', 'running'} if active else {'pending', 'running', 'completed', 'failed'})
+                or not task or task['state'] not in ({'pending', 'running'} if active else {'pending', 'running', 'completed', 'failed', 'suspended'})
                 or not binding or binding[0] != 'temporal'):
             raise PermissionError('Operation fenced by task or submission state')
         if digest([row['input_digest'], row['context'], row['role']]) != self.scope_digest:
@@ -115,7 +115,8 @@ class Ledger:
             self._scope(conn, active=False)
             return self._row(conn, step)
 
-    def _capacity(self, conn, extra):
+    @staticmethod
+    def _capacity(conn, extra):
         from agent_execution.delivery import positive_limit, CapacityError
         used = conn.execute('''SELECT COALESCE(SUM(length(data)+length(CAST(owner AS BLOB))+
             length(CAST(task_id AS BLOB))+32+64+8),0) FROM temporal_artifacts''').fetchone()[0]
@@ -125,6 +126,8 @@ class Ledger:
             FROM operation_ledger''').fetchone()[0]
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_step_runs'").fetchone():
             used += conn.execute('SELECT COUNT(*)*1024 FROM temporal_step_runs').fetchone()[0]
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_human_answers'").fetchone():
+            used += conn.execute("SELECT COALESCE(SUM(length(CAST(COALESCE(answer,'') AS BLOB))+1024),0) FROM temporal_human_answers").fetchone()[0]
         if used + extra > positive_limit('AGENT_TEMPORAL_LEDGER_STORAGE_BYTES', 256*1024*1024):
             raise CapacityError('Temporal operation storage capacity reached')
 

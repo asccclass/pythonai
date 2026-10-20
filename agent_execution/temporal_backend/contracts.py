@@ -6,8 +6,10 @@ SCHEMA_VERSION = 1
 WORKFLOW_NAME = 'PythonAIReadOnlyBridgeV1'
 ACTIVITY_NAME = 'pythonai_readonly_bridge_v1'
 STEP_WORKFLOW_NAME = 'AgentTaskWorkflowV1'
+HUMAN_WORKFLOW_NAME = 'AgentTaskWorkflowV2'
 STEP_ACTIVITIES = {kind: 'pythonai_step_' + kind + '_v1' for kind in
-                   ('bootstrap', 'model', 'tool', 'evaluation', 'recover', 'finalize')}
+                   ('bootstrap', 'model', 'tool', 'evaluation', 'recover', 'finalize', 'human')}
+HUMAN_SIGNAL = 'pythonai_human_decision_v1'
 STEP_IO_MAX_ATTEMPTS = 1
 STEP_METADATA_MAX_ATTEMPTS = 3
 STEP_RECOVERY_LIMIT = 3
@@ -15,6 +17,7 @@ STEP_LIMIT = 1024
 READ_TOOLS = frozenset({'read_file', 'list_files', 'fetch_url', 'git_status', 'git_diff',
                         'search_codebase', 'code_symbols', 'go_to_definition',
                         'find_references', 'workspace_info'})
+STEP_TOOLS = READ_TOOLS | {'ask_user'}
 
 
 def validate_envelope(value):
@@ -39,7 +42,7 @@ def validate_reference(value):
 def validate_cursor(value):
     if (not isinstance(value, dict) or set(value) != {'schema_version', 'submission_id', 'revision', 'next_kind', 'state_ref'}
             or type(value['revision']) is not int or not 0 <= value['revision'] <= STEP_LIMIT
-            or not isinstance(value['next_kind'], str) or value['next_kind'] not in {'model', 'tool', 'evaluation', 'finalize'}):
+            or not isinstance(value['next_kind'], str) or value['next_kind'] not in {'model', 'tool', 'evaluation', 'finalize', 'human'}):
         raise ValueError('Invalid step cursor')
     validate_envelope({k: value[k] for k in ('schema_version', 'submission_id')})
     validate_reference(value['state_ref'])
@@ -50,8 +53,8 @@ def validate_snapshot(value):
     if (not isinstance(value, dict) or set(value) != {'schema_version', 'phase', 'checkpoint', 'task_state', 'reply'}
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or not isinstance(value['phase'], str) or value['phase'] not in {'temporal_pending', 'step_ready', 'step_preparing', 'model_pending', 'model_received',
-                                      'tool_started', 'tool_done', 'evaluation_pending', 'evaluation_done'}
-            or not isinstance(value['task_state'], str) or value['task_state'] not in {'pending', 'running', 'completed', 'failed'}
+                                      'tool_started', 'tool_done', 'evaluation_pending', 'evaluation_done', 'waiting_user'}
+            or not isinstance(value['task_state'], str) or value['task_state'] not in {'pending', 'running', 'completed', 'failed', 'suspended'}
             or (value['reply'] is not None and not isinstance(value['reply'], str))
             or not isinstance(value['checkpoint'], dict)):
         raise ValueError('Invalid continuation snapshot')

@@ -25,9 +25,21 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP11 真實 LLM 驗收及 TP13–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答已接通，操作審批仍待辦；TP11 真實 LLM 驗收及 TP14–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-18）
+### 目前導入進度（2026-10-20）
+
+本輪接續 TP13 人工回答：新增 opt-in `human` engine／`AgentTaskWorkflowV2` 與獨立 queue，
+新任務允許 `ask_user`；既有 steps V1 能力與 queue 不變。由既有 runner 保存
+`waiting_user` checkpoint，再原子提交 human cursor／等待紀錄。原入口顯示問題與受理
+文字回答，回答與通知 outbox 同庫提交；Workflow 只收不透明 submission 通知，Activity
+重新核對並一次性消耗回答。等待由 Temporal Timer／Signal 處理，不占住 Activity thread。
+TTL 固定為 300 秒與原 root deadline 的較早者；Worker 停機期間也計時，消耗時已過期的
+回答不得恢復 I/O。相同回答／通知重送不重開任務，不增加 budget，不會把歷史 tool result
+誤當新回答。操作審批／ApprovalStore 整合仍未開放，不能將本輪標記為 TP13 全部完成。
+本輪完整 pytest **1065 passed、9 skipped、95 subtests passed**，1118.53 秒；Temporal
+專項 **149 passed**（包含真實 Service／Worker 與 V1／V2 replay）。pip check、compileall
+及 diff check 通過；模型使用受控回應，未重驗真實 LLM，未啟用正式設定。
 
 本輪 TP12：新 submission 固定 root budget reference、deadline 與 limits；checkpoint 固定
 iteration／provider retry／evaluation retry 上限。Provider retry 只由 runner 擁有，I/O
@@ -55,9 +67,10 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP10 | 已實作版本化 operation ledger、canonical digest、雙層 fence、原子 result/evidence 引用與完整性檢查；接入唯讀 Activity 的 model/tool/evaluation，共用結果不重跑，未知結果保守阻擋；詳見 backend README |
 | TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過，真實 LLM 本輪逾時待驗收 |
 | TP12 | 已實作 root budget contract、恢復限制、retry ownership、deadline 與目前唯讀範圍的取消矩陣；驗收詳見 backend README |
-| TP13–TP30 | 待辦；尚未導入人工等待／審批、完整子 Workflow／子程序取消、排程、多 Agent、正式部署及多機 |
+| TP13 | 人工回答的同庫 outbox、Timer／Signal 等待、TTL、一次性 consume 與原入口續行已接通；操作審批整合仍待辦，驗收見 12.4 |
+| TP14–TP30 | 待辦；完整子 Workflow／子程序取消、串流／finalization 去重、排程、多 Agent、正式部署及多機尚未交付 |
 
-M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator、未完成任務 manual resume 會拒絕；已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
+M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
 M0 程式驗收（前次交付）：完整 pytest **831 passed、8 skipped、95 subtests passed**，558.82 秒；在後續非本次的 Whisper commit `3276657` 後補做最新 HEAD 相容性回歸 **80 passed、4 subtests passed**；最終 Temporal 模組 **30 passed**（含全套後追加的純測試 rollback case，Temporal 產品程式碼未再修改），pip check／compileall／diff check 通過。真實 provider 逾時的限制保留，不以受控模型的測試結果代替真實 LLM 成功證據。
 
@@ -527,7 +540,7 @@ TP09–TP10 已具備共用 I/O steps 與 operation ledger。TP11 已拆分 Work
 
 實作見 `temporal_backend/{contracts,context,step_store,step_activities,workflows}.py` 及 `turn_control/continuation.py`。`AGENT_TEMPORAL_ENGINE=steps` 僅影響新受理的 Temporal 任務，預設為 `bridge`；存量任務的 protocol／queue 不改派。Worker 同時服務兩個版本，並共享 host 併發上限。最多 1024 個步驟、三次經核對的 Workflow 恢復；model／tool／evaluation Activity max-attempts=1，bootstrap／recover／finalize metadata 最多三次。只有已確認完成邊界或 ledger 證明 I/O 尚未開始才恢復；`step_preparing`（前置 hooks 未確認）與 `tool_started`（包含 raw result 已提交但完成 hooks 未確認）一律 uncertain。回滾新任務旗標時仍須保留此版 Worker 服務已綁 steps 的存量工作。
 
-下一項為 TP12 的完整預算／provider retry ownership 矩陣；TP11 本輪真實 LLM 逾時驗收仍需追蹤，不因推進下一項而標為通過。
+TP12 的完整預算／provider retry ownership 矩陣已完成；目前接續 TP13，人工回答與尚待串接的操作審批分列於 12.4。TP11 真實 LLM 逾時驗收仍需追蹤，不因推進後續項目而標為通過。
 
 ### 12.3 TP12 預算、retry ownership 與取消矩陣
 
@@ -541,6 +554,24 @@ History 不包含 owner、limits 或用量明文。實作及驗收順序：
 - [x] TP12.4：根 deadline 同時限制 client wait、Workflow execution timeout、model slot／stream／retry backoff 與每個新步驟；排隊逾期可證明無效果時終止為 failed，執行中逾期且效果未知時維持 uncertain。
 - [x] TP12.5：建立目前唯讀範圍的取消矩陣：dispatch 前、host slot 等待、model 前／中、tool 前／後、projection/finalize 與 late result fencing；Temporal CANCELED 投影為 cancelled。人工等待、子 Workflow 與寫入子程序樹仍分別由 TP13／TP14／TP17 擴充。
 - [x] TP12.6：以真實 Service/Worker 驗證 provider retry 不與 Activity retry 相乘、結果回覆遺失不增加 request、舊 budget contract 重啟有效、deadline／取消不發布 late result、新舊 History replay；完整 pytest **1016 passed、9 skipped、95 subtests passed**，pip check、compileall、diff check 通過。本輪使用受控 provider 驗證 retry ownership，TP11 真實 LLM 逾時驗收仍未完成。
+
+### 12.4 TP13 人工回答與操作審批的交付拆分
+
+依 TP10–TP12 的 ledger、fence 與 immutable budget 推進，先完成可用的人工回答鏈路，
+再串接現有 ApprovalStore 的一次性授權；兩者不得相互代用。實作集中於既有
+`agent_execution/temporal_backend/`，不增加使用者入口或修改正式 `.env`。
+
+- [x] TP13.1：新增同 TaskStore 的 `temporal_human_answers`，human cursor、call ID、期限與等待紀錄原子提交；回答與 notification outbox 原子提交。跨 owner／錯 call ID／變更已接受答案均拒絕，相同答案重送只保留一份。
+- [x] TP13.2：新增 metadata Activity 與 reference-only Signal，Workflow 使用 Timer 等待，不在 Activity 輪詢；先查持久決定再等待，早到／重複通知不能遺失決定或代替授權。RPC 結果未知保留 outbox，由同機 Worker reconcile 重送。
+- [x] TP13.3：新增 opt-in `human` engine／V2 Workflow／獨立 queue，新唯讀任務開放 `ask_user`，保存確認過的 suspension，原 transport 文字回答與 `/resume` 加入原 Workflow；M0 bridge、V1 及未知效果任務不因此開放恢復。多工具回合先交付問題，回答後再處理剩餘工具。
+- [x] TP13.4：300 秒 TTL 受原 root deadline 約束，過期不恢復 I/O；回答消耗、checkpoint 與下一 cursor 同 transaction，斷線、重啟、重複通知不重置 requests／limits。取消及 deleting／deleted session 拒絕回答與晚到結果。
+- [ ] TP13.5：擴充 ApprovalStore 原子 decision outbox、既有授權入口通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。完成前仍禁止 Temporal approval resume 及寫入工具。
+- [ ] TP13.6：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰及端到端測試通過，再將 TP13 整體標記完成。人工回答的本輪測試結果另列於 backend README。
+
+後續依序：TP13.5–13.6 → TP14 取消／子程序 → TP15 串流與 finalization 去重 →
+TP16 封閉 E2E → TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 排程、DAG 與版本治理
+必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
+測試代替。TP02 非 Windows 平台驗證與 TP11 真實 LLM／原始長任務驗收仍獨立保留。
 
 ## 13. 測試矩陣、驗收與放量
 
