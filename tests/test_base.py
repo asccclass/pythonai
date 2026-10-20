@@ -49,12 +49,21 @@ class BaseTests(unittest.TestCase):
         from agent_execution.results import ToolResult
 
         self.assertIs(base.TOOLS["browse_webpage"], browse_webpage)
-        with patch.dict("sys.modules", {"playwright.sync_api": None}):
+        with patch("agent_execution.media.agent_browser.read_public_page", side_effect=RuntimeError("agent-browser unavailable")):
             result = browse_webpage("https://example.test/rates")
 
         self.assertIsInstance(result, ToolResult)
         self.assertFalse(result.success)
         self.assertIn("Browsing failed:", result.error)
+
+    def test_browser_tool_uses_agent_browser_for_public_reads(self):
+        with patch("agent_execution.media.agent_browser.read_public_page", return_value="public page") as read:
+            result = browse_webpage("https://example.test/rates")
+
+        read.assert_called_once_with("https://example.test/rates", timeout=15)
+        self.assertTrue(result.success)
+        self.assertEqual(result.output, "public page")
+        self.assertEqual(result.evidence["kind"], "agent_browser_read")
 
     def test_browser_tool_rejects_non_http_url(self):
         result = browse_webpage("file:///private/rates")

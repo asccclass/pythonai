@@ -789,17 +789,10 @@ def browse_webpage(url: str):
         return ToolResult(False, error='browse_webpage requires an HTTP(S) URL',
                           side_effects={'status': 'none'})
     try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                page = browser.new_page()
-                page.goto(url, wait_until="networkidle", timeout=15000)
-                content = page.evaluate("() => document.body.innerText")
-            finally:
-                browser.close()
-            return ToolResult(True, str(content)[:15000],
-                              evidence={'kind': 'rendered_webpage', 'url': url})
+        from agent_execution.media.agent_browser import read_public_page
+        content = read_public_page(url, timeout=15)
+        return ToolResult(True, str(content)[:15000],
+                              evidence={'kind': 'agent_browser_read', 'url': url})
     except Exception as e:
         return ToolResult(False, error=f'Browsing failed: {e}',
                           side_effects={'status': 'none'},
