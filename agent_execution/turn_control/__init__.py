@@ -23,6 +23,9 @@ def iteration_limit(requested=None, saved=None):
 
 
 class TurnProgress:
+    BROWSER_TOOLS = frozenset({'browser_vision', 'browser_session', 'browse_webpage'})
+    BROWSER_ENVIRONMENT_FAMILY = 'browser:environment'
+
     def __init__(self, state=None):
         self.state = state or {'calls': {}, 'failures': {}, 'blocked': 0}
         self.state.setdefault('blocked_keys', [])
@@ -38,12 +41,32 @@ class TurnProgress:
             return name + ':' + str(command[0]).lower()
         return TurnProgress.key(name, args)
 
+    @classmethod
+    def environment_family(cls, name, result):
+        """Group browser installation failures independently of model prompts.
+
+        URL, actions and vision prompts remain part of the normal operation key.
+        Only errors that identify a missing Playwright/browser runtime are shared,
+        so ordinary navigation or page-specific failures can still change strategy.
+        """
+        if name not in cls.BROWSER_TOOLS or result.success:
+            return None
+        detail = f'{result.error}\n{result.output}'.casefold()
+        missing_executable = 'executable doesn\'t exist' in detail and 'browser' in detail
+        missing_playwright = ('no module named' in detail or 'modulenotfounderror' in detail) and 'playwright' in detail
+        install_required = 'playwright install' in detail
+        if missing_executable or missing_playwright or install_required:
+            return cls.BROWSER_ENVIRONMENT_FAMILY
+        return None
+
     def before(self, name, args):
         key = self.key(name, args)
         record = self.state['calls'].get(key, {})
+        environment_blocked = (name in self.BROWSER_TOOLS and
+                               self.state['failures'].get(self.BROWSER_ENVIRONMENT_FAMILY, 0) >= 2)
         # Successful writes may be repeated after another step changes the file. Only
         # consecutive identical outcomes and failures are blocked; no cached writes replay.
-        if key in self.state['blocked_keys'] or (self.state.get('last_key') == key and record.get('repeats', 0) >= 2) or self.state['failures'].get(self.family(name, args), 0) >= 2:
+        if key in self.state['blocked_keys'] or environment_blocked or (self.state.get('last_key') == key and record.get('repeats', 0) >= 2) or self.state['failures'].get(self.family(name, args), 0) >= 2:
             self.state['blocked'] += 1
             if key not in self.state['blocked_keys']:
                 self.state['blocked_keys'].append(key)
@@ -58,13 +81,18 @@ class TurnProgress:
                     if old_key in self.state['blocked_keys']:
                         self.state['blocked_keys'].remove(old_key)
         key, family = self.key(name, args), self.family(name, args)
+        environment_family = self.environment_family(name, result)
         outcome = hashlib.sha256(json.dumps([result.success, result.output, result.error], ensure_ascii=False).encode()).hexdigest()
         previous = self.state['calls'].get(key, {})
         repeats = previous.get('repeats', 0) + 1 if self.state.get('last_key') == key and previous.get('outcome') == outcome else 1
         self.state['last_key'] = key
         self.state['calls'][key] = {'outcome': outcome, 'repeats': repeats, 'success': result.success, 'name': name}
         self.state['failures'][family] = 0 if result.success else self.state['failures'].get(family, 0) + 1
-        if repeats >= 2 or self.state['failures'][family] >= 2:
+        if result.success and name in self.BROWSER_TOOLS:
+            self.state['failures'].pop(self.BROWSER_ENVIRONMENT_FAMILY, None)
+        elif environment_family:
+            self.state['failures'][environment_family] = self.state['failures'].get(environment_family, 0) + 1
+        if repeats >= 2 or self.state['failures'][family] >= 2 or (environment_family and self.state['failures'][environment_family] >= 2):
             return ('Progress warning: this operation returned no new result or the same tool family failed twice. '
                     'Reflect on the error and change strategy; do not repeat the same operation. '
                     'Use create_directory for mkdir; use fetched content to answer instead of fetching it again.')

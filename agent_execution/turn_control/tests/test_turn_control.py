@@ -93,6 +93,50 @@ def test_failure_can_change_arguments_to_repair():
     assert progress.before('edit_file', dict(args, old_str='correct')) is None
 
 
+def test_browser_environment_failure_is_shared_across_tools_and_prompts():
+    progress = TurnProgress()
+    missing = ToolResult(False, error=(
+        "BrowserType.launch_persistent_context: Executable doesn't exist at browser.exe. "
+        "Please run: playwright install"))
+
+    progress.observe('browser_vision', {'url': 'https://example.test', 'vision_prompt': 'first'}, missing)
+    assert progress.before('browser_session', {'url': 'https://example.test', 'actions': []}) is None
+    warning = progress.observe('browser_session', {'url': 'https://example.test', 'actions': []}, missing)
+
+    assert warning
+    assert progress.before('browser_vision', {
+        'url': 'https://example.test', 'vision_prompt': 'different prompt'})
+
+
+def test_browser_page_failures_with_different_arguments_are_not_environment_family():
+    progress = TurnProgress()
+    page_failure = ToolResult(False, error='Browser action failed: selector timed out')
+
+    progress.observe('browser_vision', {'url': 'https://one.test', 'vision_prompt': 'first'}, page_failure)
+    progress.observe('browser_session', {'url': 'https://two.test', 'actions': []}, page_failure)
+
+    assert progress.before('browser_vision', {
+        'url': 'https://three.test', 'vision_prompt': 'different prompt'}) is None
+
+
+def test_agent_does_not_reexecute_missing_browser_for_changed_prompts():
+    import server
+    calls = [call('browser_vision', {
+        'url': 'https://example.test/rates', 'vision_prompt': f'find rate attempt {index}'}, str(index))
+        for index in range(5)]
+    raw, _ = client([response([tool_call]) for tool_call in calls])
+    missing = ToolResult(False, error=(
+        "BrowserType.launch_persistent_context: Executable doesn't exist at browser.exe. "
+        "Please run: playwright install"))
+    run = Mock(return_value=missing)
+
+    with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
+        reply = server.run_agent([{'role': 'user', 'content': 'find the current rate'}], max_iterations=10)
+
+    assert reply.startswith('Error: Agent could not conclude')
+    assert run.call_count == 2
+
+
 def test_last_round_is_reserved_for_final_response():
     import server
     raw, create = client([response([call('list_files', {}, 'one')]), response(content='done')])
