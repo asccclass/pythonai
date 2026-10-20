@@ -776,18 +776,40 @@ def search_web(query: str, max_results: int = 5) -> str:
     except Exception as e:
         return f"Search failed: {e}"
 
-def browse_webpage(url: str) -> str:
+def browse_webpage(url: str):
+    """Return rendered page text, with browser failures represented structurally.
+
+    This function is advertised in ``TOOLS_SCHEMAS``.  Returning ``ToolResult``
+    on failure is important: a plain ``"Browsing failed: ..."`` string is
+    otherwise interpreted as a successful tool result by ``normalize_result``.
+    """
+    from urllib.parse import urlsplit
+    from agent_execution.results import ToolResult
+    if urlsplit(url).scheme not in {'http', 'https'}:
+        return ToolResult(False, error='browse_webpage requires an HTTP(S) URL',
+                          side_effects={'status': 'none'})
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=15000)
-            content = page.evaluate("() => document.body.innerText")
-            browser.close()
-            return content[:15000]
+            try:
+                page = browser.new_page()
+                page.goto(url, wait_until="networkidle", timeout=15000)
+                content = page.evaluate("() => document.body.innerText")
+            finally:
+                browser.close()
+            return ToolResult(True, str(content)[:15000],
+                              evidence={'kind': 'rendered_webpage', 'url': url})
     except Exception as e:
-        return f"Browsing failed: {e}"
+        return ToolResult(False, error=f'Browsing failed: {e}',
+                          side_effects={'status': 'none'},
+                          evidence={'kind': 'rendered_webpage', 'url': url})
+
+
+# Keep every advertised tool executable by the runtime.  This registration is
+# intentionally here because the browser implementation is defined below the
+# initial tool map.
+TOOLS['browse_webpage'] = browse_webpage
 
 def analyze_image(image_path: str | Path, prompt: str = "Describe this image in detail.") -> str:
     try:

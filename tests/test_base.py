@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import base
 from base import (
+    browse_webpage,
     curl_command,
     delete_file,
     fetch_url,
@@ -43,6 +44,23 @@ class BaseTests(unittest.TestCase):
             (root / "sample.txt").write_text("hello", encoding="utf-8")
             with patch.dict("os.environ", {"AGENT_WORKSPACE_ROOT": str(root)}):
                 self.assertEqual(read_file("sample.txt"), "hello")
+
+    def test_advertised_browser_tool_is_registered_and_reports_browser_failure(self):
+        from agent_execution.results import ToolResult
+
+        self.assertIs(base.TOOLS["browse_webpage"], browse_webpage)
+        with patch.dict("sys.modules", {"playwright.sync_api": None}):
+            result = browse_webpage("https://example.test/rates")
+
+        self.assertIsInstance(result, ToolResult)
+        self.assertFalse(result.success)
+        self.assertIn("Browsing failed:", result.error)
+
+    def test_browser_tool_rejects_non_http_url(self):
+        result = browse_webpage("file:///private/rates")
+
+        self.assertFalse(result.success)
+        self.assertIn("HTTP(S)", result.error)
 
     def test_list_files_returns_names(self):
         with tempfile.TemporaryDirectory() as temp_dir:
