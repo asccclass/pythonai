@@ -24,6 +24,24 @@ class EvaluationResult:
     evidence: list[dict] = field(default_factory=list)
 
 
+def public_web_source_evidence(steps):
+    """Return immutable evidence only for a wholly read-only public web turn."""
+    if not steps or any(step.get('name') not in {'browse_webpage', 'fetch_url', 'search_web'} for step in steps):
+        return []
+    evidence=[]
+    for step in steps:
+        if step.get('name') != 'browse_webpage' or step.get('state') != 'completed':
+            continue
+        try:
+            args=json.loads(step['input']);result=json.loads(step.get('result') or '{}')
+        except (ValueError,TypeError):
+            continue
+        url=args.get('url','');output=result.get('output','');kind=result.get('evidence',{}).get('kind')
+        if result.get('success') is True and isinstance(url,str) and url.startswith(('http://','https://')) and isinstance(output,str) and output.strip() and kind == 'agent_browser_read':
+            evidence.append({'kind':'public_web_source','url':url,'characters':len(output)})
+    return evidence
+
+
 class TaskEvaluator:
     def __init__(
         self,
@@ -457,6 +475,9 @@ class TaskEvaluator:
                         result = {}
                     if isinstance(result, dict) and self._permission_denied(str(result.get('error') or '')):
                         issues.append(f"工具權限不足 ({step['name']}): {result['error']}")
+        source_evidence=public_web_source_evidence(steps) if active else []
+        criteria['source_evidence:public_web']=bool(source_evidence)
+        evidence.extend(source_evidence)
         permission_denied = any('PermissionError' in issue or '工具權限不足' in issue or self._permission_denied(issue) for issue in issues) or any(
             msg.get('role') == 'tool' and self._permission_denied(str(msg.get('content') or ''))
             for msg in messages)
@@ -487,7 +508,7 @@ class TaskEvaluator:
             feedback=final_feedback,
             criteria_met=criteria,
             side_effects=side_effects,
-            verified=overall_success and bool(checks) and all(checks.values()),
+            verified=overall_success and ((bool(checks) and all(checks.values())) or bool(source_evidence)),
             retryable=not llm_feedback.startswith('Judge unavailable:') and not permission_denied,
             evidence=evidence,
         )

@@ -169,7 +169,8 @@ class TaskStore:
             data=json.loads(row['checkpoint']) if row else {}
             criteria=json.loads(row['criteria']) if row else {}
             evaluation=data.get('evaluation') or data.get('skill_result',{}).get('verification') or {}
-            verified=state=='completed' and bool(criteria.get('checks')) and evaluation.get('verified') is True and bool(evaluation.get('evidence'))
+            source_verified=(evaluation.get('criteria_met') or {}).get('source_evidence:public_web') is True
+            verified=state=='completed' and (bool(criteria.get('checks')) or source_verified) and evaluation.get('verified') is True and bool(evaluation.get('evidence'))
             quality='verified_completed' if verified else 'unverified'
             if conn.execute('UPDATE tasks SET state=?,reply=?,verification=?,lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND lease_owner=? AND lease_until>?',
                 (state,reply,quality,time.time(),owner,key,token,time.time())).rowcount != 1:

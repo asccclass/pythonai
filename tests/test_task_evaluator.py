@@ -159,6 +159,15 @@ class TaskEvaluatorTests(unittest.TestCase):
         self.assertTrue(res.criteria_met.get("test_passed:tests/test_calc.py"))
         self.assertIn("驗收通過", res.feedback)
 
+    def test_public_web_source_evidence_requires_successful_agent_browser_step(self):
+        from task_evaluator import public_web_source_evidence
+        good={'name':'browse_webpage','state':'completed','input':'{"url":"https://example.test/rates"}',
+              'result':json.dumps({'success':True,'output':'rate 1.9200','evidence':{'kind':'agent_browser_read'}})}
+        assert public_web_source_evidence([good]) == [{'kind':'public_web_source','url':'https://example.test/rates','characters':11}]
+        bad={**good,'result':json.dumps({'success':True,'output':'','evidence':{'kind':'agent_browser_read'}})}
+        assert not public_web_source_evidence([bad])
+        assert not public_web_source_evidence([good,{'name':'write_file'}])
+
     def test_evaluator_code_task_with_failing_tests(self):
         evaluator = TaskEvaluator(
             workspace_root=self.workspace,
