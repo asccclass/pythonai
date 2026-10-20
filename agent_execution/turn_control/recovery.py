@@ -52,3 +52,24 @@ def recovered_edit_failure(step, steps, root):
     except (ValueError, TypeError, KeyError, AttributeError, OSError):
         pass
     return False
+
+
+def recovered_read_failure(step, steps, root=None):
+    """A duplicate, side-effect-free read cannot invalidate existing evidence."""
+    try:
+        failed = json.loads(step.get('result') or '{}')
+        args = json.loads(step['input'])
+        if (step['name'] not in {'browse_webpage', 'fetch_url'} or step['state'] != 'failed' or
+                failed.get('side_effects', {}).get('status') not in {None, 'none'} or
+                not isinstance(args.get('url'), str)):
+            return False
+        for other in steps:
+            if other is step or other['name'] != step['name'] or other['state'] != 'completed':
+                continue
+            other_args = json.loads(other['input'])
+            other_result = json.loads(other.get('result') or '{}')
+            if other_args.get('url') == args['url'] and other_result.get('success') is True:
+                return True
+    except (ValueError, TypeError, KeyError, AttributeError):
+        pass
+    return False

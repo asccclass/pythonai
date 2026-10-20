@@ -443,10 +443,12 @@ class TaskEvaluator:
         if active:
             # Executor checkpoints are trusted facts; model prose is never evidence.
             steps=active[0].steps(active[1],active[2])
-            from agent_execution.turn_control.recovery import recovered_directory_failure, recovered_edit_failure
+            from agent_execution.turn_control.recovery import recovered_directory_failure, recovered_edit_failure, recovered_read_failure
             for step in steps:
                 if step['state']!='completed':
-                    if recovered_directory_failure(step, steps, self.workspace_root) or recovered_edit_failure(step, steps, self.workspace_root):
+                    if (recovered_directory_failure(step, steps, self.workspace_root) or
+                            recovered_edit_failure(step, steps, self.workspace_root) or
+                            recovered_read_failure(step, steps, self.workspace_root)):
                         continue
                     issues.append(f"Tool step not successful: {step['id']}")
                     try:

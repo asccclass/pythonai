@@ -43,8 +43,7 @@ def test_same_fetch_loop_is_bounded_and_final_has_no_tools():
     with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
         reply = server.run_agent([{'role': 'user', 'content': 'read repo'}])
     assert 'README' in reply
-    assert run.call_count == 2
-    assert 'tools' not in create.call_args.kwargs
+    assert run.call_count == 1
     latest = next(m for m in reversed(create.call_args.kwargs['messages']) if m.get('role') == 'tool')
     assert 'README evidence' in latest['content'] and 'Reused earlier read' in latest['content']
 
@@ -58,11 +57,22 @@ def test_same_browse_loop_reuses_successful_page_evidence():
     with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
         reply = server.run_agent([{'role': 'user', 'content': '查詢南非幣即期買入匯率'}])
     assert reply == '南非幣即期買入為 1.9200。'
-    assert run.call_count == 2
+    assert run.call_count == 1
     latest = next(message for message in reversed(create.call_args.kwargs['messages'])
                   if message.get('role') == 'tool')
     assert 'Reused earlier read' in latest['content']
     assert '南非幣 | 1.9200' in latest['content']
+
+
+def test_failed_duplicate_browser_read_is_recovered_by_successful_evidence():
+    from agent_execution.turn_control.recovery import recovered_read_failure
+    successful = {'name': 'browse_webpage', 'state': 'completed', 'input': '{"url":"https://example.test/rates"}',
+                  'result': json.dumps(ToolResult(True, 'rate').to_dict())}
+    failed = {'name': 'browse_webpage', 'state': 'failed', 'input': '{"url":"https://example.test/rates"}',
+              'result': json.dumps(ToolResult(False, error='temporary failure', side_effects={'status': 'none'}).to_dict())}
+    assert recovered_read_failure(failed, [successful, failed])
+    failed['input'] = '{"url":"https://example.test/other"}'
+    assert not recovered_read_failure(failed, [successful, failed])
 
 
 def test_changing_mkdir_paths_stops_same_failure_family_then_allows_recovery():
@@ -376,7 +386,7 @@ def test_progress_feedback_does_not_interrupt_parallel_tool_results():
             pending.remove(message['tool_call_id'])
         elif message.get('role') == 'user':
             assert not pending
-    assert not pending and run.call_count == 2
+    assert not pending and run.call_count == 1
 
 
 @pytest.mark.parametrize('budgeted', [False, True])

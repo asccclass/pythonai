@@ -65,6 +65,8 @@ class TurnProgress:
         record = self.state['calls'].get(key, {})
         environment_blocked = (name in self.BROWSER_TOOLS and
                                self.state['failures'].get(self.BROWSER_ENVIRONMENT_FAMILY, 0) >= 2)
+        if name in {'fetch_url', 'browse_webpage', 'read_file', 'list_files'} and record.get('success'):
+            return 'This read already succeeded. Reuse its evidence to answer; do not fetch it again.'
         # Successful writes may be repeated after another step changes the file. Only
         # consecutive identical outcomes and failures are blocked; no cached writes replay.
         if key in self.state['blocked_keys'] or environment_blocked or (self.state.get('last_key') == key and record.get('repeats', 0) >= 2) or self.state['failures'].get(self.family(name, args), 0) >= 2:
@@ -76,11 +78,12 @@ class TurnProgress:
 
     def observe(self, name, args, result):
         if result.success and name in {'write_file', 'edit_file', 'create_directory', 'run_command', 'apply_project_patch'}:
-            for old_key, record in self.state['calls'].items():
+            for old_key, record in list(self.state['calls'].items()):
                 if record.get('name') in {'read_file', 'list_files'}:
                     self.state['failures'].pop(old_key, None)
                     if old_key in self.state['blocked_keys']:
                         self.state['blocked_keys'].remove(old_key)
+                    self.state['calls'].pop(old_key, None)
         key, family = self.key(name, args), self.family(name, args)
         environment_family = self.environment_family(name, result)
         outcome = hashlib.sha256(json.dumps([result.success, result.output, result.error], ensure_ascii=False).encode()).hexdigest()
