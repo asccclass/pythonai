@@ -54,8 +54,9 @@ class TurnProgress:
         detail = f'{result.error}\n{result.output}'.casefold()
         missing_executable = 'executable doesn\'t exist' in detail and 'browser' in detail
         missing_playwright = ('no module named' in detail or 'modulenotfounderror' in detail) and 'playwright' in detail
-        install_required = 'playwright install' in detail
-        if missing_executable or missing_playwright or install_required:
+        missing_agent_browser = 'agent-browser is unavailable' in detail or 'agent-browser executable is not installed' in detail
+        install_required = 'playwright install' in detail or 'agent-browser install' in detail
+        if missing_executable or missing_playwright or missing_agent_browser or install_required:
             return cls.BROWSER_ENVIRONMENT_FAMILY
         return None
 

@@ -119,6 +119,16 @@ def test_browser_page_failures_with_different_arguments_are_not_environment_fami
         'url': 'https://three.test', 'vision_prompt': 'different prompt'}) is None
 
 
+def test_agent_browser_environment_failure_is_shared_across_public_browser_calls():
+    progress = TurnProgress()
+    missing = ToolResult(False, error='Browsing failed: agent-browser is unavailable; install agent-browser or Node.js/npx')
+
+    progress.observe('browse_webpage', {'url': 'https://one.test'}, missing)
+    progress.observe('browse_webpage', {'url': 'https://two.test'}, missing)
+
+    assert progress.before('browse_webpage', {'url': 'https://three.test'})
+
+
 def test_agent_does_not_reexecute_missing_browser_for_changed_prompts():
     import server
     calls = [call('browser_vision', {

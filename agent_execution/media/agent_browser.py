@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import shutil
 from urllib.parse import urlsplit
 
 from ..process import run_process
@@ -10,6 +12,27 @@ from ..process import run_process
 
 class AgentBrowserError(RuntimeError):
     """A safe, user-facing failure from agent-browser."""
+
+
+AGENT_BROWSER_NPM_PACKAGE = 'agent-browser@0.39.1'
+
+
+def _command_prefix() -> list[str]:
+    configured = os.environ.get('AGENT_BROWSER_EXECUTABLE')
+    if configured:
+        return [configured]
+    installed = shutil.which('agent-browser')
+    if installed:
+        return [installed]
+    root = Path(__file__).resolve().parents[2]
+    local = root / 'node_modules' / '.bin' / ('agent-browser.cmd' if os.name == 'nt' else 'agent-browser')
+    if local.is_file():
+        return [str(local)]
+    npx = shutil.which('npx')
+    if npx:
+        # Keep automatic bootstrap deterministic when the CLI is not globally installed.
+        return [npx, '--yes', AGENT_BROWSER_NPM_PACKAGE]
+    raise AgentBrowserError('agent-browser is unavailable; install agent-browser or Node.js/npx')
 
 
 def _public_hostname(url: str) -> str:
@@ -43,9 +66,11 @@ def _text_from_response(payload: object) -> str:
 def read_public_page(url: str, *, timeout: float = 15) -> str:
     """Read an unauthenticated public page with a per-request domain allowlist."""
     host = _public_hostname(url)
-    executable = os.environ.get('AGENT_BROWSER_EXECUTABLE', 'agent-browser')
-    command = [executable, '--json', '--allowed-domains', host, 'read', url,
-               '--timeout', str(int(timeout * 1000))]
+    # `--json` is a read subcommand option. Before the subcommand, agent-browser
+    # exits successfully but prints no JSON, which turns every tool call into a
+    # false failed step during task acceptance.
+    command = _command_prefix() + ['--allowed-domains', host, 'read', url,
+                                   '--timeout', str(int(timeout * 1000)), '--json']
     try:
         result = run_process(command, timeout=timeout, max_output_bytes=1024 * 1024)
     except FileNotFoundError as error:
