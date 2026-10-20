@@ -27,3 +27,11 @@ codebase_index.db-*
 vscode-extension/node_modules/
 vscode-extension/.vscode-test/
 .pythonai-workspace-trash/
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

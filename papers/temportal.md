@@ -1,6 +1,29 @@
 # PythonAI 導入 Temporal 詳細規劃
+Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，不是一般查詢流程必經元件。預設 AGENT_EXECUTION_BACKEND=sqlite，只有顯式設為 temporal，且任務有受管理的 task_id 時才會介入。
 
 規劃日期：2026-10-17（Asia/Taipei）。文件名稱依需求保留為 `temportal.md`，產品與程式命名使用 Temporal。
+
+流程：
+
+```
+既有入口
+  │
+  ├─ sqlite（預設）→ 本機 server.run_agent → 工具／驗收／HITL
+  │
+  └─ temporal（選用）
+       ├─ 建立 backend binding 與 submission
+       ├─ 交給同機 Temporal Worker
+       └─ Worker 執行原有 server.run_agent 邏輯
+            └─ 回覆、工具結果、驗收再投影回本機 TaskStore
+```
+
+它的主要影響：
+* 耐久化與重啟恢復：Temporal Workflow History 只保存 submission ID、狀態與 artifact 引用；對話、工具輸出、checkpoint 仍留在本機 SQLite，避免敏感內容進入 Temporal History。
+* 防重複執行：工具呼叫以「iteration + tool-call ID」建立穩定操作紀錄。若 Worker 中斷、回覆遺失，已完成的步驟會取回先前結果，而非再次執行。
+* 不確定副作用更保守：工具已開始但無法證實完成時，任務會標記為 uncertain，要求人工核對，不會盲目重跑。
+* 重試責任切分：模型供應商重試仍由既有 server.run_agent 控制；Temporal 的 model/tool/evaluation Activity 設為最多一次，避免「Temporal 重試 × 模型重試」造成重複請求。
+* 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
+* 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
 狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP11 真實 LLM 驗收及 TP13–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
