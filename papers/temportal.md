@@ -595,6 +595,19 @@ TP16 封閉 E2E → TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 
 - [x] TP14.4：真實 Service／Worker 驗證離線取消重送、遠端取消、程序結束、late result fencing、保留 root budget 與 History replay；既有人工等待／approval 取消回歸通過。
 - [x] TP14.5（2026-10-21）：專案 venv 完整 pytest **1132 passed、9 skipped、95 subtests passed**，1061.31 秒；pip check、compileall、diff check 通過。取消 outbox 契約 14 項、liveness／程序清理 5 項、真實 Service／Worker 整合 5 項通過，含新舊取消 History replay。使用受控 provider；Windows 隔離 runner 退出驗證不代替正式部署崩潰演練，真實 LLM／非 Windows／Docker 實機驗收保持未完成。紀錄及實作見 backend README，交付建立對應 commit。
 
+### 12.6 TP15 串流與 finalization 去重
+
+沿用既有 bridge／V1／V2／V3 Workflow，新受理且經 AgentRuntime 的 Temporal 任務固定
+publication version 與可信 memory／episode／WebSocket delivery references；不序列化 callback，
+不把事件本文送進 History。純 SQLite、既有無 publication binding 的任務維持原行為。
+
+- [ ] TP15.1：TaskStore 同庫保存具穩定 ID／順序／容量限制的事件 journal；Worker 的 model／tool／evaluation callbacks 可重播，取消、刪除與舊 fence 拒絕追加。
+- [ ] TP15.2：沿用 EventStore seq／ACK，增加跨重試、ACK 後仍有效的事件去重；固定原 task/ref／owner。Worker outbox 重送、WebSocket reconnect 與即時投遞共用事件，不重開模型。
+- [ ] TP15.3：終態與 task+finalization_version intent 同交易；Memory DB 以同一 key 原子寫入 assistant event、episode 狀態及唯一 memory_review job。兩庫間中斷可恢復，不假裝跨庫原子；Worker 重啟與重複 resume 不重複後處理。
+- [ ] TP15.4：前端沿用原 profile 萃取安全規則，但相同 task／輸入只呼叫一次；未確認完成不自動重試。已完成 Temporal 結果不新建 episode、不重複萃取 profile 或排入記憶整理。
+- [ ] TP15.5：斷線僅解除 Temporal 串流訂閱；明確 interrupt／cancel 仍走 TP14。審批／人工等待後的 final 可由 Worker 寫入原可靠 outbox，重連取回。
+- [ ] TP15.6：契約、容量／權限、兩庫故障注入、真實 Service／Worker 與 History replay、WebSocket reconnect／ACK 後去重、完整 pytest／compileall／pip check／diff check 通過並 commit。真實 provider／桌面／部署證據分開。
+
 ## 13. 測試矩陣、驗收與放量
 
 ### 13.1 必須新增的回歸
