@@ -1,0 +1,27 @@
+{
+  "name": "pythonai",
+  "version": "1.0.0",
+  "description": "Workspace 暫存程式依 session 登記，保留至使用者刪除對話，不按天數淘汰。MyAI 提供「刪除對話」預覽／保留程式／確認／恢復流程；舊目錄預設 unmanaged，不會自動刪除。操作、限制及 rollback 請見 [workspace lifecycle](agent_execution/workspace_lifecycle/README.md)。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asccclass/pythonai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/asccclass/pythonai/issues"
+  },
+  "homepage": "https://github.com/asccclass/pythonai#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5"
+  }
+}
