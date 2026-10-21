@@ -75,6 +75,51 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
 
+## TP14：取消與執行清理
+
+既有 `/cancel`、session clear、TaskStore.cancel／cancel_session 與 Store.cancel 會在同一
+TaskStore transaction 更新任務、submission、operation fence 與 `temporal_cancellations`。
+紀錄只含 submission ID 與投遞狀態，一個 submission 最多一筆；不增加取消入口。
+舊 cancelled submissions 在 optional Store 升級時補建取消紀錄；純 SQLite 任務取消不
+建立 Temporal schema，也不載入 SDK。已完成結果不因晚到取消改標。
+
+Worker 每輪 reconcile 先重送本 host queues／address／namespace 的 pending 取消；
+不依賴 active 清單，因此本機已 cancelled 或 Worker 重啟也不遺失意圖。RPC 限時 10 秒，
+未知結果保留重試，只有成功或 NOT_FOUND 才 ack；不使用 signal-with-start 或重開任務。
+先提交本機 fence，再撤銷待用審批及通知遠端。取消與完成競賽可能使服務端先成為 FAILED，
+本機已提交的 cancelled 與 ledger uncertain 不被這個晚到狀態覆寫。
+
+bridge／V1／V2／V3 共用 10 秒 heartbeat monitor，heartbeat timeout 維持 45 秒。
+monitor 複製 Activity context，結束會停止、join 並還原 ContextVar。heartbeat API 發生例外
+後，合作式 checker 拋出 ActivityLeaseLost／OperationUncertain；這和使用者取消分開，
+不能當成「無副作用」或直接重跑。SDK heartbeat 有內部傳送與節流機制；本地呼叫成功不代表
+網路服務端已確認，不能宣稱拔網路後 10 秒內一定停止。
+
+同步 Activities 使用 `no_thread_cancel_exception=True`，以 cancellation checker 停止 I/O，
+避免 SDK 在 SQLite transaction 或程序 finally 清理途中注入 thread exception。SDK 取消
+仍回報 CancelledError；Workflow 用 `tp14-propagate-cancellation-v1` replay patch 避免
+將取消誤當可 recover 的 Activity 故障。舊 History 仍保留原 recovery 路徑。
+參見 [SDK cancellation 說明](https://github.com/temporalio/sdk-python#cancellation)。
+
+run_process 沿用 Windows suspended launch + Job Object／POSIX process group，取消、
+heartbeat 失效、timeout 或 checker 例外都會進 finally 清理程序樹；測試確認真實 descendant
+已結束。這不能強制撤回已送出的遠端 HTTP／模型請求；不合作的同步程式仍需等待其自身
+timeout，未知效果保留 uncertain，late result 不發布，root budget 不重置。
+目前同機唯讀產品流程沒有 Child Workflow；DAG 父子流程及 Parent Close Policy 的實作／
+孤兒清理由 TP21–22 交付，寫入工具與 Docker 實機終止證據仍留 TP17。
+
+TP14 專項驗證（2026-10-21）：取消 outbox 契約 14 項、liveness／程序清理 5 項、
+真實 SDK／Service／Worker 整合 5 項通過。包括舊取消 History（保留 recover）的相容 replay、
+新取消 History 不排入 recover，以及 Windows 隔離 Python runner 程序直接終止時的 Job Object 清理；後者不是整個正式 Worker 部署的崩潰演練。
+Temporal 全模組／process／communication cancel 回歸 **226 passed**，348.92 秒；
+另補跑取消 outbox、隔離 runner 退出與舊 History 專項，完整回歸統一覆蓋所有案例。
+完整專案 venv pytest **1132 passed、9 skipped、95 subtests passed**，1061.31 秒；
+pip check、compileall、diff check 通過。一項既有 Starlette／AnyIO deprecation warning；
+跳過案例及受控 provider 結果不作真實 LLM／瀏覽器／非 Windows／Docker 實機通過證據。
+完整紀錄 `temp/temporal-tp14-full.log`。
+紀錄在 `temp/temporal-tp14-targeted.log`、`temp/temporal-tp14-outbox-final.log`、
+`temp/temporal-tp14-process.log`、`temp/temporal-tp14-legacy-replay-final.log`（不入 Git）。
+
 ## TP13.5–13.6：操作審批整合
 
 新任務設定 `AGENT_TEMPORAL_ENGINE=approval` 時固定綁定 `AgentTaskWorkflowV3` 與
@@ -194,8 +239,8 @@ Checkpoint 同時固定 iteration、provider retry 與 evaluation retry 上限�
 | Temporal `CANCELED` | 投影 `cancelled` |
 | Temporal `FAILED`／`TIMED_OUT`／`TERMINATED` | 投影 `uncertain`，等待證據核對 |
 
-人工回答／審批等待、子 Workflow 傳播與寫入工具的子程序樹終止仍分別由 TP13、TP14、
-TP17 完成。TP12 不將正在執行的外部請求宣稱為可強制撤回；它只停止後續步驟並拒絕
+人工回答／審批等待已於 TP13 接通，共用取消與現有唯讀程序清理由 TP14 擴充；
+子 Workflow 傳播留 TP21–22，寫入與 Docker 實機終止仍留 TP17。TP12 不將正在執行的外部請求宣稱為可強制撤回；它只停止後續步驟並拒絕
 過期結果發布。
 
 TP12 驗證（2026-10-18）：完整 pytest **1016 passed、9 skipped、95 subtests passed**，

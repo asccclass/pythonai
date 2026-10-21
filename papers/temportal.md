@@ -25,11 +25,11 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答及同機唯讀操作審批已完成；TP11 真實 LLM 驗收及 TP14–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批及 TP14 取消／heartbeat／程序清理已完成；TP11 真實 LLM 驗收及 TP15–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-21）
 
-本輪完成 TP13.5–13.6 唯讀操作審批；完整驗收結果與啟用方式見 12.4 及 backend README。
+本輪完成 TP14 同機唯讀範圍的取消／heartbeat／程序清理；完整驗收見 12.5 及 backend README。TP13.5–13.6 操作審批交付見 12.4。
 
 前輪接續 TP13 人工回答：新增 opt-in `human` engine／`AgentTaskWorkflowV2` 與獨立 queue，
 新任務允許 `ask_user`；既有 steps V1 能力與 queue 不變。由既有 runner 保存
@@ -70,7 +70,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過，真實 LLM 本輪逾時待驗收 |
 | TP12 | 已實作 root budget contract、恢復限制、retry ownership、deadline 與目前唯讀範圍的取消矩陣；驗收詳見 backend README |
 | TP13 | 人工回答及唯讀操作審批完成：同庫 decision outbox、Timer／Signal、TTL、原入口通知與一次性 consume；V3 整合及驗收見 12.4，寫入仍留 TP17 |
-| TP14–TP30 | 待辦；完整子 Workflow／子程序取消、串流／finalization 去重、排程、多 Agent、正式部署及多機尚未交付 |
+| TP14 | 已完成目前唯讀範圍的取消 outbox、heartbeat 合作式停止、程序樹清理與 late-result fencing，驗收見 12.5；DAG 父子流程留 TP21–22，寫入／Docker 實機終止留 TP17 |
+| TP15–TP30 | 待辦；串流／finalization 去重、寫入、排程、多 Agent、正式部署及多機尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -554,7 +555,7 @@ History 不包含 owner、limits 或用量明文。實作及驗收順序：
 - [x] TP12.2：將 iteration、provider retry、evaluation retry 上限一併寫入 checkpoint；恢復時以已保存值為準，呼叫端或環境不能放大。限制值與 snapshot schema 需 fail closed。
 - [x] TP12.3：集中定義 retry ownership：OpenAI SDK hidden retry=0、provider retry 只在 `server.run_agent`、model/tool/evaluation Activity max-attempts=1、metadata Activity 最多 3、verified recovery 最多 3；每次實際 provider request 各自保守預留一次。
 - [x] TP12.4：根 deadline 同時限制 client wait、Workflow execution timeout、model slot／stream／retry backoff 與每個新步驟；排隊逾期可證明無效果時終止為 failed，執行中逾期且效果未知時維持 uncertain。
-- [x] TP12.5：建立目前唯讀範圍的取消矩陣：dispatch 前、host slot 等待、model 前／中、tool 前／後、projection/finalize 與 late result fencing；Temporal CANCELED 投影為 cancelled。人工等待、子 Workflow 與寫入子程序樹仍分別由 TP13／TP14／TP17 擴充。
+- [x] TP12.5：建立目前唯讀範圍的取消矩陣：dispatch 前、host slot 等待、model 前／中、tool 前／後、projection/finalize 與 late result fencing；Temporal CANCELED 投影為 cancelled。人工等待與共用取消已分別由 TP13／TP14 擴充；子 Workflow 留 TP21–22，寫入／Docker 實機子程序樹終止仍留 TP17。
 - [x] TP12.6：以真實 Service/Worker 驗證 provider retry 不與 Activity retry 相乘、結果回覆遺失不增加 request、舊 budget contract 重啟有效、deadline／取消不發布 late result、新舊 History replay；完整 pytest **1016 passed、9 skipped、95 subtests passed**，pip check、compileall、diff check 通過。本輪使用受控 provider 驗證 retry ownership，TP11 真實 LLM 逾時驗收仍未完成。
 
 ### 12.4 TP13 人工回答與操作審批的交付拆分
@@ -577,10 +578,22 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 - [x] TP13.5：以 opt-in `approval` engine／V3／獨立 queue 整合 ApprovalStore 原子 decision outbox、既有授權入口與桌面事件通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。只開放同機唯讀工具；寫入仍留 TP17。
 - [x] TP13.6（2026-10-21）：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰、人工回答接審批及端到端測試通過；35 項契約／單元測試、6 項真實 Service／Worker 測試含 V3 History replay。完整 pytest **1107 passed、9 skipped、95 subtests passed**，1069.19 秒；pip check、compileall、diff check 通過。使用受控模型；真實 provider 與桌面實機驗收未因此改標成功，細節見 backend README。
 
-後續依序：TP14 取消／子程序 → TP15 串流與 finalization 去重 →
+後續依序：TP15 串流與 finalization 去重 →
 TP16 封閉 E2E → TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
 測試代替。TP02 非 Windows 平台驗證與 TP11 真實 LLM／原始長任務驗收仍獨立保留。
+
+### 12.5 TP14 取消、heartbeat 與子程序清理
+
+範圍沿用目前同機唯讀 Workflow，不提前開放 TP17 寫入或 TP21 DAG／子 Workflow。
+子 Workflow 的父取消／Parent Close Policy 必須在 TP21 真正引入時一併實作驗收。
+依序完成以下項目；所有 Python 驗證使用專案 venv。
+
+- [x] TP14.1：既有單任務、session 與 Temporal 取消入口在 TaskStore 同交易提交 fence／取消 outbox；RPC 結果未知、Worker 重啟後可重送，限制原 host／namespace／queue，不復活任務。
+- [x] TP14.2：bridge／steps 共用 heartbeat monitor；SDK cancellation 或 heartbeat 例外觸發合作式停止，結束時清理 monitor／ContextVar；後者以 OperationUncertain 停止。同步 Activities 禁止非同步 thread exception 注入；Workflow cancellation 使用 replay patch 避免 recover，舊取消 History 可回放。
+- [x] TP14.3：沿用受控 run_process 的 Windows Job／POSIX process group 清理，驗證取消及 heartbeat 失效會終止真實子程序樹；不把 Workflow timeout 當 OS 終止證據。
+- [x] TP14.4：真實 Service／Worker 驗證離線取消重送、遠端取消、程序結束、late result fencing、保留 root budget 與 History replay；既有人工等待／approval 取消回歸通過。
+- [x] TP14.5（2026-10-21）：專案 venv 完整 pytest **1132 passed、9 skipped、95 subtests passed**，1061.31 秒；pip check、compileall、diff check 通過。取消 outbox 契約 14 項、liveness／程序清理 5 項、真實 Service／Worker 整合 5 項通過，含新舊取消 History replay。使用受控 provider；Windows 隔離 runner 退出驗證不代替正式部署崩潰演練，真實 LLM／非 Windows／Docker 實機驗收保持未完成。紀錄及實作見 backend README，交付建立對應 commit。
 
 ## 13. 測試矩陣、驗收與放量
 

@@ -211,11 +211,18 @@ class TaskStore:
 
     def cancel(self, owner, key):
         with closing(self.connect()) as conn, conn:
-            return conn.execute("UPDATE tasks SET state='cancelled',reply='Task cancelled',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')", (time.time(),owner,key)).rowcount == 1
+            conn.execute('BEGIN IMMEDIATE')
+            changed = conn.execute("UPDATE tasks SET state='cancelled',reply='Task cancelled',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')", (time.time(),owner,key)).rowcount == 1
+            from .temporal_backend.cancellation import request
+            request(conn, owner, key)
+            return changed
 
     def cancel_session(self, owner):
         with closing(self.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
             conn.execute("UPDATE tasks SET state='cancelled',reply='Session cleared',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND state NOT IN ('completed','failed','cancelled')", (time.time(),owner))
+            from .temporal_backend.cancellation import request
+            request(conn, owner)
 
     def mark_uncertain(self, owner, key):
         with closing(self.connect()) as conn, conn:

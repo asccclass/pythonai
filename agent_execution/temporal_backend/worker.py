@@ -29,6 +29,12 @@ async def serve():
     queues = {store.queue, store.queue_for('steps'), store.queue_for('human'), store.queue_for('approval')}
     async def reconcile():
         while True:
+            from .cancellation import pending as cancellations, dispatch as cancel_workflow
+            for row in cancellations(store, settings, queues):
+                try:
+                    await cancel_workflow(store, row, client)
+                except Exception as error:
+                    print(json.dumps({'temporal': 'cancellation_pending', 'error_type': type(error).__name__}), flush=True)
             for event in approval_events(approvals, queues=queues):
                 try:
                     target = json.loads(event['binding'])
@@ -59,7 +65,7 @@ async def serve():
                     task = store.tasks.get(row['owner'], row['task_id'])
                     if task['state'] == 'cancelled':
                         store.cancel(row['id'], row['owner'])
-                        await client.get_workflow_handle(row['workflow_id']).cancel()
+                        await cancel_workflow(store, row, client)
                         continue
                     status = (await client.get_workflow_handle(row['workflow_id']).describe()).status
                     if status == WorkflowExecutionStatus.CANCELED:

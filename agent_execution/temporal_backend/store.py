@@ -27,6 +27,7 @@ class Store:
             versions = [r[0] for r in conn.execute('SELECT version FROM temporal_schema')]
             if versions and versions != [1]:
                 raise ValueError('Unsupported Temporal database schema')
+            had_cancellations = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_cancellations'").fetchone())
             conn.executescript('''
                 CREATE TABLE IF NOT EXISTS temporal_schema(version INTEGER PRIMARY KEY);
                 INSERT OR IGNORE INTO temporal_schema VALUES(1);
@@ -43,6 +44,8 @@ class Store:
                     last_error TEXT, updated REAL NOT NULL, UNIQUE(owner,task_id));
                 CREATE TABLE IF NOT EXISTS temporal_protocols(
                     submission_id TEXT PRIMARY KEY, workflow_type TEXT NOT NULL, version INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS temporal_cancellations(
+                    submission_id TEXT PRIMARY KEY, delivery TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS temporal_budget_contracts(
                     submission_id TEXT PRIMARY KEY, contract TEXT NOT NULL);
             ''')
@@ -50,6 +53,8 @@ class Store:
             if versions != [1]:
                 raise ValueError('Unsupported Temporal database schema')
             conn.execute('INSERT OR IGNORE INTO temporal_host VALUES(1,?)', (uuid.uuid4().hex,))
+            if not had_cancellations:
+                conn.execute("INSERT OR IGNORE INTO temporal_cancellations SELECT id,'pending' FROM temporal_submissions WHERE state='cancelled'")
 
     @property
     def queue(self):
@@ -271,16 +276,16 @@ class Store:
         row = self.get(key, owner)
         with closing(self.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
-            from .ledger import fence_operations
-            fence_operations(conn, owner, row['task_id'])
-            conn.execute("UPDATE temporal_submissions SET state='cancelled',updated=? WHERE id=? AND state IN ('pending','dispatched','running')", (time.time(), key))
             conn.execute("UPDATE tasks SET state='cancelled',reply='Task cancelled',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=(SELECT task_id FROM temporal_submissions WHERE id=?) AND state NOT IN ('completed','failed','cancelled')",
                          (time.time(), owner, key))
+            from .cancellation import request
+            request(conn, owner, row['task_id'])
 
+        from agent_execution.delivery import CapacityError
         try:
             from .approval_gate import cancel_waits
             cancel_waits(self, row)
-        except (OSError, sqlite3.Error):
+        except (OSError, sqlite3.Error, ValueError, CapacityError):
             pass  # Cancellation fences already committed; reconcile/TTL retires grants.
 
     @staticmethod

@@ -1,10 +1,10 @@
 """Same-host, read-only bridge. No model-provided context or automatic replay."""
 import json
-import threading
 
 from temporalio import activity
-from temporalio.exceptions import ApplicationError
+from temporalio.exceptions import ApplicationError, CancelledError
 
+from .activity_guard import activity_guard, cancelled
 from .config import Settings
 from .contracts import ACTIVITY_NAME, validate_envelope
 from .store import Store
@@ -47,25 +47,16 @@ def run_submission(key, settings, *, runner=None, cancelled=None):
     return {'submission_id': key}
 
 
-@activity.defn(name=ACTIVITY_NAME)
+@activity.defn(name=ACTIVITY_NAME, no_thread_cancel_exception=True)
 def execute_readonly(envelope: dict) -> dict:
     key = validate_envelope(envelope)
     if activity.info().workflow_id != Store().get(key)['workflow_id']:
         raise ApplicationError('Submission does not belong to this Workflow', non_retryable=True)
-    stop = threading.Event()
-    def heartbeat():
-        while not stop.wait(10):
-            activity.heartbeat({'submission_id': key})
-    # Context explicitly propagated to the heartbeat thread; user auth is rebuilt above.
-    from contextvars import copy_context
-    thread = threading.Thread(target=copy_context().run, args=(heartbeat,), daemon=True)
-    thread.start()
     try:
         from .context import host_slot
-        with host_slot(activity.is_cancelled):
-            return run_submission(key, Settings.load(), cancelled=activity.is_cancelled)
+        with activity_guard(), host_slot(cancelled):
+            return run_submission(key, Settings.load(), cancelled=cancelled)
     except Exception as error:
+        if activity.is_cancelled():
+            raise CancelledError('Activity cancellation acknowledged') from None
         raise ApplicationError(type(error).__name__, non_retryable=True) from None
-    finally:
-        stop.set()
-        thread.join(2)

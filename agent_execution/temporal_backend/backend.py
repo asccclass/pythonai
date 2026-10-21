@@ -117,7 +117,8 @@ def invoke(store, messages, *, resume=False):
         except asyncio.CancelledError:
             # Cancelling a client-side wait does not cancel the remote workflow by itself.
             store.cancel(row['id'], owner)
-            await handle.cancel()
+            from .cancellation import dispatch as cancel_workflow
+            await cancel_workflow(store, row, client)
             raise
         finally:
             result.cancel()

@@ -122,6 +122,9 @@ class AgentTaskWorkflowV1:
                 if following['revision'] != cursor['revision']+1:
                     raise ApplicationError('InvalidStepRevision', non_retryable=True)
             except ActivityError as error:
+                from temporalio.exceptions import is_cancelled_exception
+                if is_cancelled_exception(error) and workflow.patched('tp14-propagate-cancellation-v1'):
+                    raise  # Cancellation must not schedule recovery or new I/O.
                 if (isinstance(error.cause, ApplicationError) and error.cause.non_retryable) or recoveries >= STEP_RECOVERY_LIMIT:
                     raise
                 recoveries += 1
