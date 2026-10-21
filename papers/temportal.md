@@ -25,11 +25,11 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批及 TP14 取消／heartbeat／程序清理已完成；TP11 真實 LLM 驗收及 TP15–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP11 真實 LLM 驗收及 TP16–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-21）
+### 目前導入進度（2026-10-22）
 
-本輪完成 TP14 同機唯讀範圍的取消／heartbeat／程序清理；完整驗收見 12.5 及 backend README。TP13.5–13.6 操作審批交付見 12.4。
+本輪完成 TP15 同機唯讀範圍的持久事件、可靠投遞及 memory／profile finalization 去重；完整驗收見 12.6 及 backend README。專案 venv 完整 pytest **1174 passed、9 skipped、95 subtests passed**，1029.94 秒；pip check、compileall、diff check 通過。真實 Temporal Service／Worker、History replay、原生 WebSocket reconnect／ACK 及兩庫故障注入通過；模型與 communication adapters 使用受控替身，真實 LLM／Telegram 送達／桌面／正式部署驗收獨立保留。TP14 取消與清理驗收見 12.5；TP13.5–13.6 操作審批交付見 12.4。
 
 前輪接續 TP13 人工回答：新增 opt-in `human` engine／`AgentTaskWorkflowV2` 與獨立 queue，
 新任務允許 `ask_user`；既有 steps V1 能力與 queue 不變。由既有 runner 保存
@@ -71,7 +71,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP12 | 已實作 root budget contract、恢復限制、retry ownership、deadline 與目前唯讀範圍的取消矩陣；驗收詳見 backend README |
 | TP13 | 人工回答及唯讀操作審批完成：同庫 decision outbox、Timer／Signal、TTL、原入口通知與一次性 consume；V3 整合及驗收見 12.4，寫入仍留 TP17 |
 | TP14 | 已完成目前唯讀範圍的取消 outbox、heartbeat 合作式停止、程序樹清理與 late-result fencing，驗收見 12.5；DAG 父子流程留 TP21–22，寫入／Docker 實機終止留 TP17 |
-| TP15–TP30 | 待辦；串流／finalization 去重、寫入、排程、多 Agent、正式部署及多機尚未交付 |
+| TP15 | 同機持久串流、EventStore seq／ACK 去重、communication outbox 與 memory／profile finalization 去重完成；斷線解除訂閱，明確取消沿用 TP14，驗收見 12.6 |
+| TP16–TP30 | 待辦；封閉 E2E、寫入、retention／刪除、排程、多 Agent、正式部署及多機尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -578,8 +579,7 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 - [x] TP13.5：以 opt-in `approval` engine／V3／獨立 queue 整合 ApprovalStore 原子 decision outbox、既有授權入口與桌面事件通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。只開放同機唯讀工具；寫入仍留 TP17。
 - [x] TP13.6（2026-10-21）：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰、人工回答接審批及端到端測試通過；35 項契約／單元測試、6 項真實 Service／Worker 測試含 V3 History replay。完整 pytest **1107 passed、9 skipped、95 subtests passed**，1069.19 秒；pip check、compileall、diff check 通過。使用受控模型；真實 provider 與桌面實機驗收未因此改標成功，細節見 backend README。
 
-後續依序：TP15 串流與 finalization 去重 →
-TP16 封閉 E2E → TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 排程、DAG 與版本治理
+後續依序：TP16 封閉 E2E → TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
 測試代替。TP02 非 Windows 平台驗證與 TP11 真實 LLM／原始長任務驗收仍獨立保留。
 
@@ -601,12 +601,12 @@ TP16 封閉 E2E → TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 
 publication version 與可信 memory／episode／WebSocket delivery references；不序列化 callback，
 不把事件本文送進 History。純 SQLite、既有無 publication binding 的任務維持原行為。
 
-- [ ] TP15.1：TaskStore 同庫保存具穩定 ID／順序／容量限制的事件 journal；Worker 的 model／tool／evaluation callbacks 可重播，取消、刪除與舊 fence 拒絕追加。
-- [ ] TP15.2：沿用 EventStore seq／ACK，增加跨重試、ACK 後仍有效的事件去重；固定原 task/ref／owner。Worker outbox 重送、WebSocket reconnect 與即時投遞共用事件，不重開模型。
-- [ ] TP15.3：終態與 task+finalization_version intent 同交易；Memory DB 以同一 key 原子寫入 assistant event、episode 狀態及唯一 memory_review job。兩庫間中斷可恢復，不假裝跨庫原子；Worker 重啟與重複 resume 不重複後處理。
-- [ ] TP15.4：前端沿用原 profile 萃取安全規則，但相同 task／輸入只呼叫一次；未確認完成不自動重試。已完成 Temporal 結果不新建 episode、不重複萃取 profile 或排入記憶整理。
-- [ ] TP15.5：斷線僅解除 Temporal 串流訂閱；明確 interrupt／cancel 仍走 TP14。審批／人工等待後的 final 可由 Worker 寫入原可靠 outbox，重連取回。
-- [ ] TP15.6：契約、容量／權限、兩庫故障注入、真實 Service／Worker 與 History replay、WebSocket reconnect／ACK 後去重、完整 pytest／compileall／pip check／diff check 通過並 commit。真實 provider／桌面／部署證據分開。
+- [x] TP15.1：TaskStore 同庫保存具穩定 ID／順序／容量限制的事件 journal；Worker 的 model／tool／evaluation callbacks 可重播，取消、刪除與舊 fence 拒絕追加。
+- [x] TP15.2：沿用 EventStore seq／ACK，增加跨重試、ACK 後仍有效的事件去重；固定原 task/ref／owner。Worker outbox 重送、WebSocket reconnect 與即時投遞共用事件，不重開模型。
+- [x] TP15.3：終態與 task+finalization_version intent 同交易；Memory DB 以同一 key 原子寫入 assistant event、episode 狀態及唯一 memory_review job。兩庫間中斷可恢復，不假裝跨庫原子；Worker 重啟與重複 resume 不重複後處理。
+- [x] TP15.4：前端沿用原 profile 萃取安全規則，但相同 task／輸入只呼叫一次；未確認完成不自動重試。已完成 Temporal 結果不新建 episode、不重複萃取 profile 或排入記憶整理。
+- [x] TP15.5：斷線僅解除 Temporal 串流訂閱；明確 interrupt／cancel 仍走 TP14。審批／人工等待後的 final 可由 Worker 寫入原可靠 outbox，重連取回。
+- [x] TP15.6（2026-10-22）：契約、容量／權限、兩庫故障注入、真實 Service／Worker 與 History replay、WebSocket reconnect／ACK 後去重、完整 pytest／compileall／pip check／diff check 通過並 commit。真實 provider／桌面／部署證據分開。
 
 ## 13. 測試矩陣、驗收與放量
 

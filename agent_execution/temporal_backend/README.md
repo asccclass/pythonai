@@ -124,6 +124,16 @@ profile 萃取仍在原人類輸入階段，沿用身分隔離、secret filter �
 identity markers 保留在原本機 DB，清理／留存治理由 TP18 接續。這仍限同機共享資料權威，
 不表示已完成遠端部署、真實 provider／桌面實機或各平台訊息送達驗收。
 
+TP15 驗收（2026-10-22）：專案 venv 完整 pytest **1174 passed、9 skipped、95 subtests passed**，
+1029.94 秒，紀錄 `temp/temporal-tp15-full-final.log`；僅一項既有 Starlette／AnyIO 棄用警告。
+另串行 TP14／TP15 真實 SDK 整合 **9 passed**，含 History replay；runtime／memory／stream
+回歸 **49 passed、1 skipped**，預算／communication 回歸 **34 passed**。原生 WebSocket
+reconnect／ACK、兩庫提交後中斷、重複 resume、容量滿載恢復、身分與取消 fence 均通過。
+首次完整測試發現既有 admission 測試的 Mock 未提供 idle outbox 輪詢清單，已修正並新增
+忙碌時仍輪詢的斷言，最終完整重跑無失敗。pip check、compileall 與 diff check 通過。
+上述真實 SDK／Service 測試採受控模型；communication 使用測試 adapters，未據此宣稱
+真實 provider／Telegram 送達／桌面／Docker／正式部署通過。
+
 ## TP14：取消與執行清理
 
 既有 `/cancel`、session clear、TaskStore.cancel／cancel_session 與 Store.cancel 會在同一

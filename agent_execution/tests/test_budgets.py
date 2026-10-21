@@ -361,12 +361,14 @@ class BudgetTests(unittest.TestCase):
         regular=NS(command_id='job',text='work')
         store=Mock()
         store.pending_commands.return_value=[regular]
+        store.pending_deliveries.return_value=[]
         runner=Mock(task_store_enabled=False)
         worker=CommunicationWorker(store,{},runner)
         worker._threads=[Mock()]
         with patch.dict(os.environ,{'AGENT_TASK_CONCURRENCY':'1'}):
             self.assertIsNone(worker.process_next())
             store.mark_command_running.assert_not_called()
+            store.pending_deliveries.assert_called_once_with(None)
             control=NS(command_id='status',text='/status',platform='telegram',sender_id='alice',conversation_id='chat',source_message_id=1)
             store.pending_commands.return_value=[regular,control]
             store.query_jobs_status.return_value=[]
