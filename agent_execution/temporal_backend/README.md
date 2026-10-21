@@ -109,6 +109,14 @@ Approval DB 的路徑也持久化綁定，新 Worker 設定不符會拒絕；前
 fence，再盡力撤銷 grant；即使 approval DB 暫時不可用，原任務也不能消耗或執行。
 V3 排空前須保留支援 V3 的 Worker；回滾新任務旗標不遷移存量工作。
 
+TP13.5–13.6 驗證（2026-10-21）：35 項契約／單元測試、6 項真實 SDK／Service／Worker
+測試通過，包含重啟、重複事件、TTL、取消、consume 後故障、人工回答接審批與 V3
+History replay。模型回應使用受控 provider；桌面卡片的 runtime callback 已有回歸測試，
+尚未新增桌面實機或真實 LLM 成功驗收。專案 venv 完整 pytest **1107 passed、9 skipped、
+95 subtests passed**，1069.19 秒；一項既有 Starlette／AnyIO deprecation warning。
+pip check、compileall、diff check 通過。紀錄 `temp/temporal-tp13-approval-full.log` 與
+`temp/temporal-tp13-approval-notify-final.log`（不入 Git）。未修改正式 `.env` 或遷移使用者資料。
+
 ## TP13：人工回答（前輪交付）
 
 設定 `AGENT_TEMPORAL_ENGINE=human` 的新任務綁定 `AgentTaskWorkflowV2`，可使用 `ask_user`。
