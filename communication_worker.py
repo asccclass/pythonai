@@ -84,7 +84,11 @@ class CommunicationWorker:
 
     def _send_reply(self, command: AgentCommand, text: str, is_error: bool = False) -> None:
         if self.store.lifecycle_state(command)!='active':return
-        key = self.store.queue_delivery(command, text, self.store.reply_context(command.source_message_id), is_error)
+        key_id = None
+        if getattr(self.command_runner,'task_store_enabled',False):
+            from agent_execution.temporal_backend.communication_publication import event_key
+            key_id = event_key(command,text)
+        key = self.store.queue_delivery(command, text, self.store.reply_context(command.source_message_id), is_error, event_key=key_id)
         self.deliver_pending(key)
 
     def deliver_pending(self, delivery_id=None):
@@ -106,6 +110,7 @@ class CommunicationWorker:
             return self._process_next()
 
     def _process_next(self) -> AgentCommand | None:
+        self.deliver_pending()
         self.recover_tasks()
         from agent_execution.budgets import numeric
         limit=int(numeric('AGENT_TASK_CONCURRENCY',4))

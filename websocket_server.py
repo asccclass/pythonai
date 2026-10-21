@@ -84,6 +84,10 @@ class Session:
     attachments: tuple = ()
     desktop_requests: dict = field(default_factory=dict)
     waiting_approvals: set = field(default_factory=set)
+    durable_task: bool = False
+    sent_seq: int = 0
+    send_lock: Any = None
+    connection_ready: bool = True
 
     @property
     def scoped_device(self):
@@ -102,32 +106,67 @@ class Session:
             "ts": now_ms(),
             "payload": payload,
         }
-        if type_ in RELIABLE_TYPES:
+        event_key = payload.get('temporal_event_id')
+        if event_key:
+            ref = payload['task_id']
+            message['ref'] = ref
+        if type_ in RELIABLE_TYPES or event_key:
             if self.event_store is not None:
                 try:
-                    message = self.event_store.append(self.owner, message)
+                    message = self.event_store.append(self.owner, message, event_key=event_key)
+                    if message is None:
+                        return {}
                 except CapacityError:
-                    if self.cancel_chat is not None:
+                    if self.cancel_chat is not None and not self.durable_task:
                         self.cancel_chat.set()
                     if self.ws is not None:
                         await self.ws.close(code=4429, reason="Reliable outbox full; ACK required")
                         self.ws = None
                     raise
-                self.seq = message['seq']
+                self.seq = max(self.seq,message['seq'])
             else:
                 if len(self.outbox) >= 200:
                     raise CapacityError('Reliable outbox full; ACK required')
                 self.seq += 1
                 message["seq"] = self.seq
-            self.outbox.append(message)
+            if not any(item.get('seq')==message.get('seq') for item in self.outbox):
+                self.outbox.append(message)
+            if self.event_store is not None:
+                await self.flush()
+                return message
         if self.ws is not None:
             try:
                 await asyncio.wait_for(self.ws.send_text(json.dumps(message, ensure_ascii=False)), timeout=5)
             except Exception:
-                if self.cancel_chat is not None:
+                if self.cancel_chat is not None and not self.durable_task:
                     self.cancel_chat.set()
                 self.ws = None
         return message
+
+    async def flush(self):
+        if self.event_store is None or self.ws is None or not self.connection_ready:
+            return
+        if self.send_lock is None:
+            self.send_lock = asyncio.Lock()
+        async with self.send_lock:
+            connection = self.ws
+            if connection is None:
+                return
+            self.seq, floor, messages = self.event_store.snapshot(self.owner)
+            self.outbox.clear()
+            self.outbox.extend(messages)
+            for message in messages:
+                if message['seq'] <= self.sent_seq or self.ws is not connection:
+                    continue
+                try:
+                    await asyncio.wait_for(connection.send_text(json.dumps(message,ensure_ascii=False)),timeout=5)
+                    self.sent_seq = message['seq']
+                except Exception:
+                    if self.cancel_chat is not None and not self.durable_task:
+                        self.cancel_chat.set()
+                    if self.ws is connection:
+                        self.ws = None
+                    return
 
     def ack(self, seq: int) -> None:
         if self.event_store is not None:
@@ -260,7 +299,14 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
     events = asyncio.Queue(maxsize=128)
     loop = asyncio.get_running_loop()
 
+    detached = [False]
     def emit(kind, payload):
+        if payload.get('temporal_event_id'):
+            session.durable_task = True
+        elif kind in {'model.start','tool.start'}:
+            session.durable_task = False  # An existing SQLite binding still owns legacy cancellation.
+        if session.durable_task and (detached[0] or session.ws is None):
+            return
         if cancelled.is_set() and kind not in {"end", "approval.cancelled"}:
             return
         future = asyncio.run_coroutine_threadsafe(events.put((kind, payload)), loop)
@@ -268,6 +314,9 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
             future.result(timeout=5)
         except Exception:
             future.cancel()
+            if session.durable_task:
+                detached[0] = True
+                return
             cancelled.set()
             raise InterruptedError("WebSocket event consumer stalled")
 
@@ -285,6 +334,8 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
             runtime = session.runtime
             runtime.check_cancelled = cancelled.is_set
             runtime.event_callback = emit
+            from agent_execution.temporal_backend.config import selected_backend
+            session.durable_task = selected_backend()=='temporal' and not user_text.startswith('/')
             from agent_execution.companion.desktop import desktop_bridge, human_desktop_command
             from agent_execution.companion.approval_bridge import approval_bridge
             def wait_approval(approval_id, name, arguments):
@@ -329,7 +380,8 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                             future.cancel()
                             raise InterruptedError("Desktop tool cancelled")
             with execution_scope(source="websocket", identity=identity, session=scoped_session,
-                    project=session.project, conversation=session.conversation_id, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set), \
+                    project=session.project, conversation=session.conversation_id, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set,
+                    event_delivery=({'path':str(session.event_store.path.resolve()),'owner':session.owner,'ref':session.request_id} if session.event_store is not None else None)), \
                     set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop), approval_bridge(wait_approval if 'approval.auto_resume' in session.caps else None):
                 from agent_execution.tasks import dispatch_task_input
                 _log_role_diagnostic("task_dispatch", identity, current_role(), "dispatch_task_input")
@@ -343,9 +395,10 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                     result = dispatch_task_input(user_text,runtime)
                 if result is None:
                     result = run_agent_turn(user_text, runtime, attachments=session.attachments) if session.attachments else run_agent_turn(user_text, runtime)
-            emit("end", {"text": result.reply, "episode_id": result.episode_id,
-                          "suspended": result.suspended, "failed": result.reply.startswith("Error:"),
-                          "emotion": "neutral", "action": "none"})
+                from agent_execution.temporal_backend.runtime_state import frontend_end
+                end = frontend_end({"text":result.reply,"episode_id":result.episode_id,"suspended":result.suspended,
+                    "failed":result.reply.startswith("Error:"),"emotion":"neutral","action":"none"})
+            emit("end",end)
         except Exception as error:
             try:
                 emit("error", {"code": "agent_error", "message": str(error), "retryable": False})
@@ -364,6 +417,8 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                 kind, value = await asyncio.wait_for(events.get(), timeout=.2)
             except asyncio.TimeoutError:
                 if task.done():
+                    if session.durable_task:
+                        break
                     yield "end", {"text": "", "failed": True, "emotion": "neutral", "action": "none"}
                     break
                 continue
@@ -372,7 +427,8 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                 break
         await task
     finally:
-        cancelled.set()
+        if not session.durable_task:
+            cancelled.set()
         # Keep the session busy until synchronous model/tool cleanup has completed.
         await asyncio.shield(task)
 
@@ -381,6 +437,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     session: Session | None = None
+    stream_pump = None
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=5)
         hello = parse_text_message(raw)
@@ -414,7 +471,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 future.set_result({'success': False, 'error': 'Desktop connection replaced'})
         session.desktop_requests.clear()
         session.ws = ws
+        session.connection_ready = False
         session.state['desktop_connection_id'] = new_id()
+        session.send_lock = asyncio.Lock()
         if session.audio_turn:session.audio_turn.cancelled.set()
         session.audio_turn=None
         def runtime_factory():
@@ -431,6 +490,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         session.outbox.clear()
         session.outbox.extend(events)
         resumable = floor <= last_seq <= session.seq
+        replayed_seq = last_seq if resumable else session.seq
         if resumable:
             session.ack(last_seq)
 
@@ -450,7 +510,15 @@ async def ws_endpoint(ws: WebSocket) -> None:
             for message in list(session.outbox):
                 if int(message.get("seq") or 0) > last_seq:
                     await ws.send_text(json.dumps(message, ensure_ascii=False))
+                    replayed_seq = max(replayed_seq,message['seq'])
 
+        session.sent_seq = replayed_seq
+        session.connection_ready = True
+        async def pump():
+            while session.ws is ws:
+                await session.flush()
+                await asyncio.sleep(.2)
+        stream_pump = asyncio.create_task(pump())
         while True:
             incoming = await asyncio.wait_for(ws.receive(), timeout=60)
             if incoming.get("type") == "websocket.disconnect":
@@ -472,12 +540,15 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if session is not None:
             await session.send("error", {"code": "bad_message", "message": "invalid JSON", "retryable": False})
     finally:
+        if stream_pump is not None:
+            stream_pump.cancel()
+            await asyncio.gather(stream_pump,return_exceptions=True)
         if session is not None and session.ws is ws:
             for future, connection in list(session.desktop_requests.values()):
                 if not future.done():
                     future.set_result({"success": False, "error": "Desktop disconnected; result may be uncertain"})
             session.desktop_requests.clear()
-            if session.cancel_chat is not None:
+            if session.cancel_chat is not None and not session.durable_task:
                 session.cancel_chat.set()
             if session.audio_turn:session.audio_turn.cancelled.set();session.audio_turn=None
             session.ws = None
@@ -674,12 +745,14 @@ async def handle_chat(session: Session, text: str, ref: str) -> None:
                 full.append(value["text"])
                 await session.send("chat.delta", value, ref=ref)
             elif kind == "end":
-                await session.send("chat.end", {**dict(value), "interrupted": bool(session.cancel_chat and session.cancel_chat.is_set())}, ref=ref)
+                await session.send("chat.end", {**dict(value), "interrupted": bool(value.get("interrupted") or session.cancel_chat and session.cancel_chat.is_set())}, ref=ref)
                 if session.event_store is not None:
-                    session.event_store.finish_input(session.owner, ref, 'interrupted' if session.cancel_chat and session.cancel_chat.is_set() else 'failed' if value.get('failed') else 'suspended' if value.get('suspended') else 'completed')
+                    session.event_store.finish_input(session.owner, ref, 'uncertain' if value.get('task_state')=='uncertain' else 'interrupted' if value.get('interrupted') or session.cancel_chat and session.cancel_chat.is_set() else 'failed' if value.get('failed') else 'suspended' if value.get('suspended') else 'completed')
             else:
                 await session.send(kind, value, ref=ref)
     except asyncio.CancelledError:
+        if session.durable_task:
+            return  # Subscriber shutdown is not a final result or a task cancellation.
         await session.send("chat.end", {"text": "".join(full), "emotion": "neutral", "action": "none", "interrupted": True}, ref=ref)
     except CapacityError:
         # History remains intact and the request stays uncertain; never repeat effects.

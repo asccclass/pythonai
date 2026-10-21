@@ -41,6 +41,7 @@ def execution_context(store, row, cancelled=None):
     from .ledger import Ledger
     from .operations import operation_scope
     scope = json.loads(row['context'])
+    scope.pop('publication', None)
     store.verify_budget_contract(row)
     if store.workflow_type(row) == APPROVAL_WORKFLOW_NAME:
         from agent_execution.approvals import ApprovalStore

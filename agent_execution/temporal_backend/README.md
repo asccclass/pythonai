@@ -12,7 +12,7 @@
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、逐 token 遠端串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
 
 ## 版本與安裝
 
@@ -75,6 +75,55 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
 
+## TP15：持久串流與 finalization
+
+新受理且由 AgentRuntime 啟動的 Temporal 任務保存 `publication.version=1` 與可信的
+memory／episode／原 delivery references；沿用 bridge／V1／V2／V3，不增加 Workflow
+或啟動入口。原 `.env` 預設、純 SQLite、自訂非 MemoryStore runtime，以及沒有這個
+binding 的舊任務維持原路徑。所有 callback、DB connections 與事件本文只留在執行端。
+
+Worker callback 先寫同 TaskStore 的 `temporal_events`，固定 submission／step／事件 ID
+及單調序號；同一 key 不允許換內容。model.delta 約 2048 字元或 100ms 合併，工具／驗收
+事件保留原事件名稱；已提交的 frames 可重播，未提交的記憶體尾端以最終完整結果為準。
+Workflow History 不保存 tokens 或角色／路徑／私有輸出。事件追加重查 owner lifecycle、
+submission fence 與取消狀態；取消／uncertain 只能發布固定狀態通知，不能發布晚到成功。
+
+WebSocket 仍使用原 seq／ACK；Temporal frames 包含 `task_id`、`temporal_event_id`，
+包含 chat.delta 的所有這類 frame 都可靠投遞。EventStore 保存 identity tombstone，ACK／
+原事件 TTL 到期後也不重新分配 seq；不同內容重用同 ID 拒絕。Worker outbox 複製成功後
+才 ack journal，兩庫之間中斷可重送。原生連線 pump 與即時 callback 共用可靠序列；
+握手 replay 完成前不插入 live frame，斷線／client-loop 關閉只解除訂閱，明確 interrupt、
+`/cancel-task` 與 deadline 仍走 TP14。重新連線會取回原任務事件，不重開模型。
+
+communication／Telegram 沿用 CommunicationStore.queue_delivery；等待與最終通知使用
+同一事件 ID，前端回覆及 Worker reconcile 不會排入兩筆。平台 outbox 的 identity marker
+不隨 delivery TTL 消失；idle command polling 也會發送已排入的結果。傳送結果未知仍為
+uncertain，不自動重送，不以新模型回合修復投遞。provider callbacks／adapters 不進 History。
+
+最終結果與 `temporal_finalizations(task,version)` intent 同 TaskStore transaction 提交。
+Memory DB 以相同 finalization key 在一筆交易完成 assistant event、episode status、唯一
+memory_review job；Memory DB 已 commit 但 TaskStore ack 遺失時，只取回原 job ID。
+不同 DB 不假裝原子；暫時失敗保留 pending，由 metadata retry／同機 Worker reconcile
+續作，不能重新呼叫模型。已註冊的背景記憶 worker 會輪詢 durable pending jobs；若記憶
+服務未執行，工作保留至之後載入／維護。finalize 不直接做遠端萃取、不再消耗 root requests。
+Memory 目標搬移、episode 已刪除、owner 已刪除均拒絕處理；不可據此宣稱 TP18 retention 完成。
+
+profile 萃取仍在原人類輸入階段，沿用身分隔離、secret filter 與版本化 apply；以 task／
+輸入 digest 先預留，已完成取回結果，執行結果未確認不自動再抽取。明確 `/profile` 命令
+維持原行為。重複取得完成結果不新建 episode、不重複記錄 assistant 或排入 review。
+
+| 限額 | 預設 |
+| --- | --- |
+| AGENT_TEMPORAL_EVENT_LIMIT | 100000 frames |
+| AGENT_TEMPORAL_EVENT_BYTES | 64 MiB（含保留 metadata） |
+| 單 frame | 2 MiB |
+| COMPANION_EVENT_KEY_LIMIT／COMM_DELIVERY_KEY_LIMIT | 各 100000 identity markers |
+
+既有 EventStore／communication outbox 容量也仍有效。transport 已滿保留 journal 等 ACK／
+恢復，不重做模型；journal 已滿則停止追加，不繞過容量或對未知效果重跑。新的 journal／
+identity markers 保留在原本機 DB，清理／留存治理由 TP18 接續。這仍限同機共享資料權威，
+不表示已完成遠端部署、真實 provider／桌面實機或各平台訊息送達驗收。
+
 ## TP14：取消與執行清理
 
 既有 `/cancel`、session clear、TaskStore.cancel／cancel_session 與 Store.cancel 會在同一
@@ -132,8 +181,8 @@ steps、human 任務不改派，新 Worker 同時服務四種 queue，並共用 
 審批入口能決定，admin、identity、session 邊界維持原規則。決定後 Worker 會續行／停止
 同一 Workflow；可用 `/resume <task_id>` 取回結果。文字「approved」或模型提供的
 approval ID 不能核准操作。原桌面授權 API 仍使用 ApprovalStore.decide，並補送原 `approval.required` 可靠事件顯示卡片；
-WebSocket 以原 `approval.decide` 協定決定，CLI／Telegram 沿用命令。本輪沒有把
-TP15 的串流／最終通知治理一併宣稱完成。
+WebSocket 以原 `approval.decide` 協定決定，CLI／Telegram 沿用命令。TP13 交付當時未包含
+TP15；目前的串流／最終通知整合見上方 TP15 節。
 
 TaskStore 的 `temporal_approval_waits` 先保存不可變 intent，再於 approval DB 以唯一
 binding 建立 request；決定早到或兩庫間中斷後重試會取回同一 request，不產生新 grant
@@ -188,7 +237,7 @@ deadline 本身到期時沿用 TP12 的保守終止映射。
 答案最多 1 MiB 且只接受文字；shared ledger storage limit 也計入答案與等待 metadata。
 相同答案重送不增加紀錄，變更已決定答案／跨 owner／錯 call ID／取消／刪除中的
 session 均拒絕。多工具回合在 `ask_user` 後立即保存等待，剩餘工具在回答後續行。
-完整串流與記憶／profile finalization 去重仍屬 TP15。
+串流與記憶／profile finalization 去重已由 TP15 接通，範圍見上方 TP15 節。
 
 前輪僅完成人工回答；本輪接續的 ApprovalStore decision outbox、授權通知、撤權重查與
 一次性 consume 故障矩陣見上節。寫入工具仍受 TP17 gate 限制。

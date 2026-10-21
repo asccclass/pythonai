@@ -75,6 +75,11 @@ async def serve():
                         store.workflow_closed(row['id'], row['owner'], status.name)
                 except Exception as error:
                     print(json.dumps({'temporal': 'reconcile_pending', 'error_type': type(error).__name__}), flush=True)
+            try:
+                from .publication import reconcile as publish_pending
+                await asyncio.to_thread(publish_pending,store,settings,queues)
+            except Exception as error:
+                print(json.dumps({'temporal':'publication_pending','error_type':type(error).__name__}),flush=True)
             await asyncio.sleep(5)
     with ThreadPoolExecutor(max_workers=settings.concurrency*2) as executor:
         bridge_worker = Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],

@@ -61,10 +61,25 @@ class EventStore:
                 'SELECT message FROM ws_events WHERE owner=? ORDER BY seq', (owner,))]
             return (row['seq'], row['floor'], messages) if row else (0, 0, [])
 
-    def append(self, owner, message):
+    def append(self, owner, message, *, event_key=None):
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             self.cleanup(conn)
+            fingerprint = None
+            if event_key is not None:
+                import hashlib
+                if not isinstance(event_key,str) or len(event_key)!=64 or any(c not in '0123456789abcdef' for c in event_key):
+                    raise ValueError('Invalid durable event ID')
+                fingerprint = hashlib.sha256(json.dumps({k:message.get(k) for k in ('type','ref','payload')},sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+                conn.execute('CREATE TABLE IF NOT EXISTS ws_event_keys(owner TEXT NOT NULL,event_key TEXT NOT NULL,fingerprint TEXT NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(owner,event_key))')
+                old = conn.execute('SELECT fingerprint,seq FROM ws_event_keys WHERE owner=? AND event_key=?',(owner,event_key)).fetchone()
+                if old:
+                    if old['fingerprint'] != fingerprint:
+                        raise ValueError('Durable event ID reused with different payload')
+                    saved = conn.execute('SELECT message FROM ws_events WHERE owner=? AND seq=?',(owner,old['seq'])).fetchone()
+                    return json.loads(saved[0]) if saved else None
+                if conn.execute('SELECT count(*) FROM ws_event_keys').fetchone()[0] >= positive_limit('COMPANION_EVENT_KEY_LIMIT',100000):
+                    raise CapacityError('Durable event identity capacity reached')
             if not conn.execute('SELECT 1 FROM ws_sessions WHERE owner=?', (owner,)).fetchone():
                 if conn.execute('SELECT COUNT(*) FROM ws_sessions').fetchone()[0] >= positive_limit('COMPANION_MAX_SESSIONS', 10000):
                     raise CapacityError('Companion session capacity reached')
@@ -79,6 +94,12 @@ class EventStore:
                 raise CapacityError('Reliable outbox full; acknowledge events before continuing')
             conn.execute('INSERT INTO ws_events VALUES(?,?,?,?,?)', (owner,seq,data,size,time.time()+positive_limit('COMPANION_EVENT_TTL',86400)))
             conn.execute('UPDATE ws_sessions SET seq=? WHERE owner=?', (seq,owner))
+            if event_key is not None:
+                conn.execute('INSERT INTO ws_event_keys VALUES(?,?,?,?)',(owner,event_key,fingerprint,seq))
+                if message.get('type')=='chat.end':
+                    payload = message['payload']
+                    status = 'uncertain' if payload.get('task_state')=='uncertain' else 'interrupted' if payload.get('interrupted') else 'suspended' if payload.get('suspended') else 'failed' if payload.get('failed') else 'completed'
+                    conn.execute('UPDATE ws_inputs SET status=? WHERE owner=? AND id=?',(status,owner,message.get('ref')))
             return result
 
     def ack(self, owner, seq):

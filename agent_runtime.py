@@ -92,8 +92,10 @@ def invoke_runtime_agent(runtime, messages, episode_id, resume=False):
         if saved:
             kwargs['resume_state'] = saved
         return runtime.run_agent(messages, **kwargs)
-    return durable_invoke(invoke,messages,episode_id,resume=resume,
-        verify_skill=lambda result:verify_skill_result(result,runtime,messages,episode_id))
+    from agent_execution.temporal_backend.publication import runtime_scope
+    with runtime_scope(runtime,episode_id):
+        return durable_invoke(invoke,messages,episode_id,resume=resume,
+            verify_skill=lambda result:verify_skill_result(result,runtime,messages,episode_id))
 
 
 @dataclass(frozen=True)
@@ -123,7 +125,11 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
     refresh_instructions(runtime.messages)
     from agent_execution.workspace_lifecycle import LifecycleStore
     LifecycleStore().ensure_session()
-    from agent_execution.user_profile import prepare_turn, refresh_messages
+    from agent_execution.user_profile import refresh_messages
+    from agent_execution.temporal_backend.runtime_state import replay_turn, prepare_profile as prepare_turn
+    replay = replay_turn(user_input,runtime)
+    if replay is not None:
+        return replay
     profile_reply, runtime.profile_status = prepare_turn(user_input, getattr(runtime, 'profile_extractor', None))
     refresh_messages(runtime.messages, runtime.profile_status)
     if profile_reply is not None:
@@ -178,7 +184,8 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
         if runtime.event_callback:
             runtime.event_callback("tool.result", {"name": "run_skill", "result": str(result)})
         reply = format_skill_reply(result)
-        runtime.messages.append({"role": "assistant", "content": reply})
+        from agent_execution.temporal_backend.runtime_state import append_reply
+        append_reply(runtime,reply)
         log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
         status='failed' if not result.get('success') else 'verified_completed' if result.get('verification',{}).get('verified') else 'completed'
         finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn,status=status)
@@ -267,7 +274,8 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
         raise
 
     episode_status = determine_episode_status(reply, runtime.memory, episode_id)
-    runtime.messages.append({"role": "assistant", "content": reply})
+    from agent_execution.temporal_backend.runtime_state import append_reply
+    append_reply(runtime,reply)
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
 
     finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn, status=episode_status)
@@ -398,6 +406,11 @@ def finish_turn_memory_review(
     skip_laya_for_turn: bool,
     status: str = "completed",
 ) -> None:
+    from agent_execution.temporal_backend.runtime_state import managed, wake_reviews
+    if managed():
+        if status != 'running':
+            wake_reviews(runtime)
+        return
     finish_episode_safely(runtime.memory, episode_id, status=status)
     if not skip_laya_for_turn and runtime.memory_worker is not None:
         runtime.memory_worker.enqueue(
@@ -510,6 +523,10 @@ def log_episode_event(
 ) -> None:
     if memory is None or episode_id is None:
         return
+    if (event_type == 'message' and role == 'assistant') or event_type == 'task_suspended':
+        from agent_execution.temporal_backend.runtime_state import managed
+        if managed():
+            return
     safe_memory_call(
         memory.add_event,
         episode_id,
@@ -567,7 +584,7 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
                            for message in messages if message.get('role') == 'assistant'
                            for call in message.get('tool_calls', []))
         if human_answer and isinstance(answer.get('content'), str) and not answer['content'].startswith('/profile'):
-            from agent_execution.user_profile import prepare_turn
+            from agent_execution.temporal_backend.runtime_state import prepare_profile as prepare_turn
             _, runtime.profile_status = prepare_turn(answer['content'], getattr(runtime, 'profile_extractor', None))
     from agent_execution.policy import current_context
     from agent_execution.tasks import TaskStore, task_owner
@@ -604,7 +621,8 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
         raise
 
     runtime.messages = messages
-    runtime.messages.append({"role": "assistant", "content": reply})
+    from agent_execution.temporal_backend.runtime_state import append_reply
+    append_reply(runtime,reply)
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
     status = determine_episode_status(reply, runtime.memory, episode_id)
     finish_turn_memory_review(runtime, episode_id, False, status=status)

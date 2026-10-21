@@ -31,9 +31,14 @@ def run_submission(key, settings, *, runner=None, cancelled=None):
                 import server
                 from base import workspace_root
                 evaluator = server.TaskEvaluator(workspace_root=workspace_root(), client=server.get_client(), model=server.OLLAMA_MODEL)
-                return server.run_agent(messages, memory=None, resume_state=saved,
-                                        check_cancelled=current_context().check_cancelled,
-                                        task_evaluator=evaluator)
+                from .publication import writer
+                sink = writer(store,row,'bridge')
+                try:
+                    return server.run_agent(messages, memory=None, resume_state=saved,
+                        event_callback=sink, check_cancelled=current_context().check_cancelled,task_evaluator=evaluator)
+                finally:
+                    if sink is not None:
+                        sink.flush()
             reply = durable_invoke(execute, messages, None)
         task = store.tasks.get(row['owner'], row['task_id'])
         state = 'completed' if task['state'] == 'completed' else 'failed'

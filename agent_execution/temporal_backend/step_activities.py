@@ -83,8 +83,14 @@ def advance(payload, kind):
                 if saved is not None:
                     saved['messages'] = messages
                 evaluator = server.TaskEvaluator(workspace_root=workspace_root(), client=server.get_client(), model=server.OLLAMA_MODEL)
-                return server.run_agent(messages, resume_state=saved, task_evaluator=evaluator,
-                    check_cancelled=current_context().check_cancelled, step_controller=StepController(kind))
+                from .publication import writer
+                sink = writer(store,row,f'step:{payload["revision"]}:{kind}')
+                try:
+                    return server.run_agent(messages, resume_state=saved, task_evaluator=evaluator,
+                        event_callback=sink, check_cancelled=current_context().check_cancelled, step_controller=StepController(kind))
+                finally:
+                    if sink is not None:
+                        sink.flush()
             try:
                 durable_invoke(execute, messages, None, resume=True)
             except TaskYield as boundary:
@@ -134,7 +140,10 @@ def recover(payload: dict) -> dict:
 def human(payload: dict) -> dict:
     store, row, steps = authority(payload)
     with execution_context(store, row, cancelled) as ledger:
-        return steps.human(payload, ledger)
+        result = steps.human(payload, ledger)
+        from .publication import waiting
+        waiting(store,row)
+        return result
 
 
 @activity.defn(name=STEP_ACTIVITIES['finalize'], no_thread_cancel_exception=True)
@@ -148,6 +157,8 @@ def finalize(payload: dict) -> dict:
         assert_owner_active(conn, row['owner'])
         steps._row(conn, payload)
     if row['state'] in {'completed', 'failed'} and row['result']:
+        from .publication import finalize as finalize_publication
+        finalize_publication(store,row)
         return {'submission_id': row['id']}
     with execution_context(store, row, cancelled) as ledger:
         snapshot = validate_snapshot(ledger.load(payload['state_ref']))
@@ -165,7 +176,10 @@ def approval(payload: dict) -> dict:
     from .approval_gate import ApprovalGate
     store, row, steps = authority(payload)
     with execution_context(store, row, cancelled) as ledger:
-        return ApprovalGate(store).probe(payload, ledger, steps)
+        result = ApprovalGate(store).probe(payload, ledger, steps)
+        from .publication import waiting
+        waiting(store,row)
+        return result
 
 
 ACTIVITIES = [bootstrap, model, tool, evaluation, recover, finalize, human, approval]

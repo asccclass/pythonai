@@ -8,6 +8,11 @@ from .contracts import READ_TOOLS, STEP_TOOLS, HUMAN_WORKFLOW_NAME, APPROVAL_WOR
 
 
 def restore_result(row, messages):
+    from .store import Store
+    from .publication import finalize, relay
+    store = Store()
+    finalize(store,row)
+    relay(store,row)
     value = json.loads(row['result'])
     if not isinstance(value.get('reply'), str) or not isinstance(value.get('messages'), list):
         raise ValueError('Invalid persisted Temporal result')
@@ -29,6 +34,10 @@ def invoke(store, messages, *, resume=False):
     settings = Settings.load()
     scope = {name: getattr(context, name) for name in ('source', 'identity', 'session', 'conversation', 'project')}
     scope['workspace'] = str(workspace_root())
+    from .publication import manifest
+    publication = manifest()
+    if publication is not None:
+        scope['publication'] = publication
     if settings.engine == 'approval':
         from agent_execution.approvals import ApprovalStore
         scope['approval_db'] = str(ApprovalStore().path.resolve())
@@ -82,7 +91,13 @@ def invoke(store, messages, *, resume=False):
             if store.workflow_type(row) == APPROVAL_WORKFLOW_NAME:
                 from .approval_gate import ApprovalGate
                 gate = ApprovalGate(store)
+            from .publication import relay
+            event_cursor = 0
             while True:
+                try:
+                    event_cursor = relay(store,row,event_cursor)
+                except (InterruptedError, TimeoutError):
+                    pass  # Transport interruption does not invalidate durable Worker events.
                 done, _ = await asyncio.wait({result}, timeout=.2)
                 if done:
                     return result.result()
@@ -91,6 +106,8 @@ def invoke(store, messages, *, resume=False):
                     from agent_execution.approvals import ApprovalStore
                     key = task_row['checkpoint']['approval_wait']['id']
                     if ApprovalStore().decision_state(key, context.identity, context.session) == 'pending':
+                        from .publication import waiting
+                        waiting(store,row)
                         return {'submission_id': row['id'], 'waiting': True}
                 if task_row['state'] == 'suspended' and task_row['phase'] == 'waiting_user':
                     # Only expose a wait after its cursor and outbox slot commit.
@@ -98,6 +115,8 @@ def invoke(store, messages, *, resume=False):
                         wait = conn.execute('SELECT state FROM temporal_human_answers WHERE submission_id=? ORDER BY revision DESC LIMIT 1',
                                             (row['id'],)).fetchone()
                     if wait and wait['state'] == 'waiting':
+                        from .publication import waiting
+                        waiting(store,row)
                         return {'submission_id': row['id'], 'waiting': True}
                 if gate is not None:
                     from agent_execution.approvals import ApprovalStore
@@ -116,10 +135,11 @@ def invoke(store, messages, *, resume=False):
                             pass  # Worker reconcile retains the durable retry.
         except asyncio.CancelledError:
             # Cancelling a client-side wait does not cancel the remote workflow by itself.
-            store.cancel(row['id'], owner)
-            from .cancellation import dispatch as cancel_workflow
-            await cancel_workflow(store, row, client)
-            raise
+            if cancelled():
+                store.cancel(row['id'], owner)
+                from .cancellation import dispatch as cancel_workflow
+                await cancel_workflow(store, row, client)
+            raise  # Client-loop shutdown detaches; only explicit cancellation fences the task.
         finally:
             result.cancel()
             await asyncio.gather(result, return_exceptions=True)

@@ -262,14 +262,21 @@ class BudgetStream:
         self.lock=threading.Lock()
         self.closed=False
         self.interrupted=threading.Event()
+        self.monitor_error=None
         self.deadline=time.monotonic()+min(60,budget.remaining_seconds())
         def monitor():
             while not self.stopped.wait(.05):
-                if time.monotonic()>=self.deadline or (cancelled and cancelled()):
+                try:
+                    stopped=time.monotonic()>=self.deadline or bool(cancelled and cancelled())
+                except Exception as error:
+                    self.monitor_error=error
+                    stopped=True
+                if stopped:
                     self.interrupted.set()
                     self.close()
                     return
-        self.thread=threading.Thread(target=monitor,daemon=True)
+        from contextvars import copy_context
+        self.thread=threading.Thread(target=copy_context().run,args=(monitor,),daemon=True)
         self.thread.start()
 
     def __iter__(self):
@@ -277,12 +284,16 @@ class BudgetStream:
         try:
             for chunk in self.stream:
                 self.budget.check()
+                if self.monitor_error is not None:
+                    raise self.monitor_error
                 if self.closed:
                     raise BudgetExhausted('Model stream deadline/cancellation reached')
                 if getattr(chunk,'usage',None) is not None:
                     usage=chunk.usage
                     self.budget.reconcile(self.key,usage,settle=False)
                 yield chunk
+            if self.monitor_error is not None:
+                raise self.monitor_error
             if self.closed or self.interrupted.is_set() or time.monotonic()>=self.deadline:
                 raise BudgetExhausted('Model stream wall deadline exhausted')
             self.budget.reconcile(self.key,usage)

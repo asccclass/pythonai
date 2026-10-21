@@ -197,6 +197,9 @@ class MemoryBackgroundWorker:
         self.lease = lease
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._review_sources = {}
+        self._review_sources_lock = threading.Lock()
+        self._last_review_poll = 0.0
         if self.async_mode:
             self._thread = threading.Thread(target=self._worker_loop, daemon=True)
             try:
@@ -230,6 +233,9 @@ class MemoryBackgroundWorker:
     ) -> int:
         if memory is None or not hasattr(memory, "pending_memory_jobs"):
             return 0
+        if hasattr(memory,'db_path'):
+            with self._review_sources_lock:
+                self._review_sources[str(memory.db_path.resolve())] = (memory,memory_classifier,semantic_extractor,procedure_matcher)
         jobs = memory.pending_memory_jobs(job_type="memory_review", limit=limit)
         for job in jobs:
             episode_id = job.get("episode_id")
@@ -300,6 +306,15 @@ class MemoryBackgroundWorker:
             try:
                 item = self.queue.get(timeout=0.1)
             except queue.Empty:
+                if time.monotonic()-self._last_review_poll >= 5:
+                    self._last_review_poll = time.monotonic()
+                    with self._review_sources_lock:
+                        sources = list(self._review_sources.values())
+                    for source in sources:
+                        try:
+                            self.enqueue_pending_reviews(*source)
+                        except Exception:
+                            pass  # Durable jobs remain pending; never log private source data.
                 continue
             try:
                 self._process_item(item)

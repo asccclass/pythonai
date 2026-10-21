@@ -441,11 +441,15 @@ class CommunicationStore(LifecycleCommunication):
             connection.commit()
             return int(cursor.lastrowid)
 
-    def queue_delivery(self, command, text, reply_context, is_error=False, *, cleanup_receipt=False):
+    def queue_delivery(self, command, text, reply_context, is_error=False, *, cleanup_receipt=False, event_key=None):
         from agent_execution.delivery import CapacityError, positive_limit
         # Include content in the key: a suspended question and its final reply are separate deliveries.
         digest = hashlib.sha256(text.encode()).hexdigest()
         key = f"{command.command_id}:{'error' if is_error else 'outbound'}:{digest}"
+        if event_key is not None:
+            if not isinstance(event_key,str) or not re.fullmatch('[0-9a-f]{64}',event_key):
+                raise ValueError('Invalid durable communication event ID')
+            key = f'{command.command_id}:temporal:{event_key}'
         with closing(self.connect()) as connection, connection:
             connection.execute('BEGIN IMMEDIATE')
             if self.lifecycle_state(command,connection)!='active':
@@ -453,6 +457,17 @@ class CommunicationStore(LifecycleCommunication):
                 result=json.loads(text)
                 if set(result)!={'operation_id','state'} or result['state'] not in {'deleted','blocked','deleting','preview','completed'} or not re.fullmatch('[0-9a-f]{32}',result['operation_id']):raise PermissionError('Only a minimal cleanup receipt is permitted')
                 reply_context={}
+            if event_key is not None:
+                connection.execute('CREATE TABLE IF NOT EXISTS comm_event_keys(id TEXT PRIMARY KEY,digest TEXT NOT NULL)')
+                fingerprint = hashlib.sha256(json.dumps([text,command.platform,command.sender_id,command.conversation_id,command.project,command.session,bool(is_error)],ensure_ascii=False).encode()).hexdigest()
+                old = connection.execute('SELECT digest FROM comm_event_keys WHERE id=?',(key,)).fetchone()
+                if old:
+                    if old[0]!=fingerprint:
+                        raise ValueError('Communication event reused with different content/owner')
+                    return key
+                if connection.execute('SELECT count(*) FROM comm_event_keys').fetchone()[0]>=positive_limit('COMM_DELIVERY_KEY_LIMIT',100000):
+                    raise CapacityError('Communication event identity capacity reached')
+                connection.execute('INSERT INTO comm_event_keys VALUES(?,?)',(key,fingerprint))
             if connection.execute('SELECT 1 FROM comm_deliveries WHERE id=?', (key,)).fetchone():
                 return key
             if len(text.encode()) > 2*1024*1024 or connection.execute('SELECT COUNT(*) FROM comm_deliveries').fetchone()[0] >= positive_limit('COMM_DELIVERY_LIMIT',10000):

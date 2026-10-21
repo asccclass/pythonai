@@ -15,13 +15,18 @@ def streamed_completion(client, model, messages, tools, emit, cancelled=None):
     stop = threading.Event()
     def monitor():
         while not stop.wait(.05):
-            if cancelled and cancelled():
+            try:
+                stopped = bool(cancelled and cancelled())
+            except Exception:
+                stopped = True
+            if stopped:
                 try:
                     stream.close()
                 except Exception:
                     pass
                 return
-    watcher = threading.Thread(target=monitor, daemon=True)
+    from contextvars import copy_context
+    watcher = threading.Thread(target=copy_context().run, args=(monitor,), daemon=True)
     watcher.start()
     content, calls, finish, size = [], {}, None, 0
     try:

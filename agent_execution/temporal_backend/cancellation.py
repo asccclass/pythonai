@@ -19,6 +19,8 @@ def request(conn, owner, task=None):
     for row in rows:
         fence_operations(conn, owner, row['task_id'])
         conn.execute("UPDATE temporal_submissions SET state='cancelled',updated=? WHERE id=?", (time.time(), row['id']))
+        from .publication import final_intent
+        final_intent(conn,dict(row))
         conn.execute('INSERT OR IGNORE INTO temporal_cancellations(submission_id,delivery) VALUES(?,?)', (row['id'], 'pending'))
 
 

@@ -140,6 +140,9 @@ class Store:
                 raise ValueError('Task record capacity reached')
             if size + len(data.encode()) + len(scope.encode()) > positive_limit('AGENT_TASK_STORAGE_BYTES', 256*1024*1024):
                 raise ValueError('Temporal local storage capacity reached')
+            if context.get('publication') is not None:
+                from .publication import install
+                install(conn)
             key = uuid.uuid4().hex
             workflow_id = 'pythonai/' + digest(owner)[:24] + '/' + key
             if conn.execute('SELECT 1 FROM tasks WHERE owner=? AND id=?', (owner, task)).fetchone():
@@ -150,7 +153,7 @@ class Store:
             from agent_execution.acceptance import load_contract
             conn.execute('INSERT INTO tasks(owner,id,goal,criteria,state,phase,checkpoint,episode,updated) VALUES(?,?,?,?,?,?,?,?,?)',
                          (owner, task, goal[:16000], canonical(load_contract(goal[:16000])),
-                          'pending', 'temporal_pending', canonical({'messages': messages}), None, time.time()))
+                          'pending', 'temporal_pending', canonical({'messages': messages}), (context.get('publication') or {}).get('episode'), time.time()))
             conn.execute('INSERT INTO temporal_submissions(id,owner,task_id,workflow_id,input_digest,input,context,role,address,namespace,queue,state,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                          (key, owner, task, workflow_id, fingerprint, data, scope, role,
                           settings.address, settings.namespace, queue, 'pending', time.time()))
@@ -221,6 +224,8 @@ class Store:
             if changed:
                 from .ledger import fence_operations
                 fence_operations(conn, owner, row['task_id'])
+                from .publication import final_intent
+                final_intent(conn,row)
                 conn.execute("UPDATE tasks SET state='uncertain',reply='Temporal execution ended; inspect checkpoint before recovery',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')",
                              (time.time(), owner, row['task_id']))
 
@@ -271,6 +276,10 @@ class Store:
             if conn.execute("UPDATE temporal_submissions SET state=?,result=?,updated=? WHERE id=? AND fence=? AND state='running'",
                             (state, data, time.time(), key, fence)).rowcount != 1:
                 raise PermissionError('Activity result fenced by cancellation or newer execution')
+            from .publication import final_intent
+            final_intent(conn,row)
+        from .publication import finalize
+        finalize(self,self.get(key))
 
     def cancel(self, key, owner):
         row = self.get(key, owner)

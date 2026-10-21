@@ -223,6 +223,32 @@ class MemoryStore:
             )
             connection.commit()
 
+    def finalize_temporal(self, key, episode_id, reply, state, review=True):
+        """Commit one final assistant event, episode state and review job atomically."""
+        from agent_execution.temporal_backend.store import digest
+        fingerprint = digest([episode_id,reply,state,bool(review)])
+        with closing(self.connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute('CREATE TABLE IF NOT EXISTS temporal_episode_finalizations(key TEXT PRIMARY KEY,episode_id INTEGER NOT NULL,fingerprint TEXT NOT NULL,job_id INTEGER)')
+            old = conn.execute('SELECT * FROM temporal_episode_finalizations WHERE key=?',(key,)).fetchone()
+            if old:
+                if old['fingerprint'] != fingerprint or old['episode_id'] != episode_id:
+                    raise ValueError('Finalization key reused with different result')
+                return old['job_id']
+            episode = conn.execute('SELECT status FROM episodes WHERE id=?',(episode_id,)).fetchone()
+            if not episode or episode[0]=='deleted':
+                raise PermissionError('Finalization episode is missing or deleted')
+            status = 'failed' if state=='failed' else 'verified_completed'
+            if episode[0] in {'rejected','needs_review','failed'}:
+                status = episode[0]
+            conn.execute("INSERT INTO episode_events(episode_id,event_type,role,content,metadata) VALUES(?,'message','assistant',?,?)",(episode_id,reply,json.dumps({'temporal_finalization':key})))
+            conn.execute('UPDATE episodes SET status=?,ended_at=CURRENT_TIMESTAMP WHERE id=?',(status,episode_id))
+            job = None
+            if review:
+                job = conn.execute("INSERT INTO memory_jobs(job_type,episode_id,payload) VALUES('memory_review',?,?)",(episode_id,json.dumps({'temporal_finalization':key}))).lastrowid
+            conn.execute('INSERT INTO temporal_episode_finalizations VALUES(?,?,?,?)',(key,episode_id,fingerprint,job))
+            return job
+
     def add_event(
         self,
         episode_id: int,
