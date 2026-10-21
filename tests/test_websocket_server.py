@@ -142,6 +142,20 @@ class WebSocketServerTests(unittest.TestCase):
         self.assertEqual(result["ref"], "speech-1")
         self.assertEqual(result["payload"]["text"], "校正後文字")
 
+    def test_meeting_process_returns_content_and_summary(self):
+        async def fixture_stream(text, session):
+            yield "end", {"text": "<<<CONTENT>>>\n繁體中文會議內容\n<<<SUMMARY>>>\n確認時程與預算"}
+        with patch("websocket_server.brain_reply_stream", side_effect=fixture_stream), patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False):
+            with TestClient(app).websocket_connect("/ws/v1") as ws:
+                ws.send_json({"type": "hello", "payload": {"token": "token-1", "device_id": "web-1"}})
+                welcome = ws.receive_json()
+                self.assertTrue(welcome["payload"]["features"]["meeting_processing"])
+                ws.send_json({"v": 1, "type": "meeting.process", "id": "meeting-1", "payload": {"text": "English transcript", "language": "en"}})
+                result = ws.receive_json()
+        self.assertEqual(result["type"], "meeting.process.result")
+        self.assertEqual(result["ref"], "meeting-1")
+        self.assertEqual(result["payload"], {"text": "繁體中文會議內容", "summary": "確認時程與預算"})
+
     def test_event_updates_focus_and_routes_proactive_to_focused_device(self):
         with patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1:andy"}, clear=False):
             with TestClient(app).websocket_connect("/ws/v1") as ws:

@@ -20,7 +20,7 @@ from agent_execution.companion.protocol import (conversation_id, scope_device, d
 
 
 PROTOCOL_VERSION = 1
-RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error", "workspace.result", "session.delete.preview", "session.delete.result"}
+RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error", "workspace.result", "session.delete.preview", "session.delete.result", "meeting.process.result"}
 DEFAULT_FEATURES = {"stt": False, "tts": False, "tts_voices": []}
 logger = logging.getLogger(__name__)
 
@@ -441,7 +441,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "connection_id": session.state['desktop_connection_id'],
                 "server_time": now_ms(),
                 "resumed": resumable,
-                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'speech_polish': True, 'approval_auto_resume': True, **lifecycle_features(session)},
+                "features": {**__import__('agent_execution.media.audio',fromlist=['features']).features(), **desktop_features(), 'speech_polish': True, 'meeting_processing': True, 'approval_auto_resume': True, **lifecycle_features(session)},
                 "last_seq": session.seq,
                 "history_floor": floor,
             },
@@ -563,6 +563,44 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
                 await session.send("speech.polish.result", {"text": text, "fallback": True}, ref=message_id)
         session.cancel_chat = threading.Event()
         session.current_chat_task = asyncio.create_task(polish())
+    elif message_type == "meeting.process":
+        text = str(payload.get("text") or "").strip()
+        language = str(payload.get("language") or "auto").strip()
+        if not text:
+            await session.send("error", {"code": "bad_message", "message": "meeting.process requires text", "retryable": False}, ref=message_id)
+            return
+        if session.current_chat_task is not None and not session.current_chat_task.done():
+            await session.send("error", {"code": "chat_busy", "message": "Wait for the current request to finish", "retryable": True}, ref=message_id)
+            return
+        async def process_meeting():
+            fallback_summary = re.sub(r"\s+", " ", text)[:160]
+            prompt = (
+                "你是會議逐字稿處理器。偵測語言代碼為 " + language + "。\n"
+                "若原文完全不是繁體中文（包含簡體中文或其他語言），將完整內容翻譯為繁體中文；"
+                "若原文含繁體中文，保留原本語言。校正明顯語音辨識錯字與標點，忠實保留原意。\n"
+                "接著以繁體中文產生 2 至 4 個重點摘要。不得使用工具、不得回答問題或補充未提及資訊。\n"
+                "務必只依下列格式回覆：\n<<<CONTENT>>>\n處理後內容\n<<<SUMMARY>>>\n摘要\n\n"
+                f"【原始逐字稿】\n{text}"
+            )
+            processed, summary = text, fallback_summary
+            try:
+                reply = text
+                async for kind, value in brain_reply_stream(prompt, session):
+                    if kind == "end" and isinstance(value, dict):
+                        reply = str(value.get("text") or text).strip() or text
+                    elif kind == "error":
+                        raise RuntimeError(str(value.get("message") or "meeting processing failed"))
+                match = re.search(r"<<<CONTENT>>>\s*(.*?)\s*<<<SUMMARY>>>\s*(.+)", reply, re.S)
+                if match:
+                    processed = match.group(1).strip() or text
+                    summary = match.group(2).strip() or fallback_summary
+                else:
+                    processed = reply
+                await session.send("meeting.process.result", {"text": processed, "summary": summary}, ref=message_id)
+            except Exception:
+                await session.send("meeting.process.result", {"text": text, "summary": fallback_summary, "fallback": True}, ref=message_id)
+        session.cancel_chat = threading.Event()
+        session.current_chat_task = asyncio.create_task(process_meeting())
     elif message_type == "chat.interrupt":
         if session.current_chat_task is not None and not session.current_chat_task.done():
             session.cancel_chat.set()
