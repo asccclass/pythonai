@@ -608,6 +608,20 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 - [x] TP15.5：斷線僅解除 Temporal 串流訂閱；明確 interrupt／cancel 仍走 TP14。審批／人工等待後的 final 可由 Worker 寫入原可靠 outbox，重連取回。
 - [x] TP15.6（2026-10-22）：契約、容量／權限、兩庫故障注入、真實 Service／Worker 與 History replay、WebSocket reconnect／ACK 後去重、完整 pytest／compileall／pip check／diff check 通過並 commit。真實 provider／桌面／部署證據分開。
 
+### 12.7 TP16 封閉唯讀試用與隔離 E2E
+
+以既有四種 engine 與三種啟動入口為基礎，不啟用正式設定，不遷移舊任務。
+試用 allowlist 為可選部署限制，使用可信 task owner 的 SHA-256；未設定保持既有
+顯式 temporal opt-in 相容，空清單停止新的 Temporal 受理。這是路由限制，不授予權限，
+亦不是取消已受理任務；後者仍沿用固定 backend、原 budget 與 TP14。
+
+- [ ] TP16.1：新增嚴格、限量的 owner allowlist 與唯讀 preflight 診斷；不接受萬用字元、錯誤 JSON 或身分／專案混用。
+- [ ] TP16.2：新任務才套用試用路由，未納入者走既有 SQLite；既有 binding 不切換。未受理的 SQLite 不建立 Temporal schema／profile guard；已受理後的 RPC 失敗不回退。
+- [ ] TP16.3：WebSocket 斷線語意與 profile guard 使用相同受理判定，保留既有角色與唯讀工具限制。
+- [ ] TP16.4：隔離真實 Service／Worker E2E 覆蓋原「建立 llm-wiki 結構」要求的唯讀拒絕及「閱讀 HarnessRouter 並說明原理」；驗證有限請求、重取完成結果、Worker 重啟及 History replay。唯讀階段不宣稱已建立 wiki。
+- [ ] TP16.5：獨立 opt-in 真實 provider 驗收，記錄成功／逾時／失敗及 request 數，不以受控模型替代；正式使用者產物不變。
+- [ ] TP16.6：相關回歸、完整專案 venv pytest、pip check、compileall、diff check 通過，文件區分受控／外部驗收並建立 commit。
+
 ## 13. 測試矩陣、驗收與放量
 
 ### 13.1 必須新增的回歸
