@@ -625,6 +625,19 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 - [x] TP16.5（2026-10-22）：沿用現有設定重驗，TCP／`/models` 恢復且設定模型在清單中。真實 provider／Service／Worker **2 passed**，44.27 秒；wiki 要求 1 筆請求後於工具 I/O 前被唯讀權限拒絕，未建立產物；HarnessRouter 3 筆含驗收的請求完成，實際抓取 1 次。History replay、新 Worker 取回完成結果／拒絕未知狀態恢復及 request／deadline 不變通過。先前連線逾時紀錄保留於 backend README，不重送正式任務、不修改原使用者產物。
 - [x] TP16.6（2026-10-22）：最終完整專案 venv pytest **1201 passed、11 skipped、95 subtests passed**，971.86 秒；pip check、compileall、diff check 通過。相關 index／allowlist／WebSocket 回歸 **60 passed、5 subtests passed**；真實 Service／Worker 的兩個受控案例通過，含停收後取回結果／拒絕未知恢復及 History replay。修正既有 LSP 測試取消時鐘早於前置 hook 的時序競態，僅修改測試；正式取消行為不變。TP16.5 已由本輪獨立 live 測試補驗通過；初次外部逾時與本機回歸結果仍分別記錄，交付建立對應 commit。
 
+### 12.8 TP17 寫入保護
+
+第一批僅開放同機 `create_directory`／`write_file`／`edit_file`，沿用 approval V3
+逐次人類審批；shell／測試命令／刪除／Git／外部服務副作用不因此開放。
+新任務需顯式 file-write 設定、owner 試用清單與 admin 受理；存量協定與唯讀任務不升權。
+
+- [ ] TP17.1：版本化寫入能力綁定 submission；目前角色、workspace／lifecycle、allowlist、root budget 每次 I/O 仍重新核對。
+- [ ] TP17.2：審批固定參數及檔案／父路徑前置狀態、預期結果 digest；拒絕路徑逃逸、連結、變更目標與過大內容。沿用一次 consume，不重新核發舊 grant。
+- [ ] TP17.3：既有 policy dispatcher 內執行受限檔案 adapter，保留生命週期登記；寫檔採同目錄 staging／原子 replace，核對實際後態，再由原 ledger 提交結果及 evidence。
+- [ ] TP17.4：結果已提交重用；consume／寫入／結果提交間中斷為 uncertain，禁止盲重做。沿用人類 /resolve／/steps 新增同 owner 的觀測核對與稽核，不改寫原預算、不宣稱任務驗收完成、不自動恢復。
+- [ ] TP17.5：既有 TaskEvaluator／程式測試要求／reviewer／審批不能繞過；對尚未開放的測試命令與其他副作用明確失敗。取消／撤權／刪除 fence 仍有效。
+- [ ] TP17.6：真實 Service／Worker、檔案 I/O、審批與 crash 注入／History replay，配合契約、容量與隔離測試；完整 venv pytest／pip check／compileall／diff check 通過、文件記錄範圍並 commit。真實 provider／Docker／桌面與正式部署證據分開。
+
 ## 13. 測試矩陣、驗收與放量
 
 ### 13.1 必須新增的回歸
