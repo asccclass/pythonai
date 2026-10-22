@@ -128,14 +128,30 @@ skip 為獨立真實 provider 案例。index／allowlist／WebSocket 回歸 **60
 0.5 秒時鐘早於前置 hook，可能在進入 LSP 前就被正確拒絕；改由 LSP 程序呼叫開始計時，
 並斷言確實呼叫，最終完整重跑無失敗。正式取消邏輯與允許的例外均未放寬。
 
-2026-10-22 外部紀錄：獨立 15 秒探測為 `APITimeoutError`，1 筆請求，無 HTTP status。
+2026-10-22 初次外部紀錄（後續補驗見下文）：獨立 15 秒探測為 `APITimeoutError`，1 筆請求，無 HTTP status。
 兩個真實案例各 3 筆請求，均由 deadline 取消，0 次工具執行、沒有 wiki 產物。
 live 測試 **1 passed（wiki 停止安全性）、1 failed（HarnessRouter 未完成內容）**，
 159.17 秒；紀錄 `temp/temporal-tp16-provider-probe.log`、
 `temp/temporal-tp16-trial-live.log`。額外唯讀診斷的 TCP 連線為 `TimeoutError`，`/models` 為 `APITimeoutError → ConnectTimeout`，
 未取得 HTTP 回應，紀錄 `temp/temporal-tp16-provider-diagnostic.log`；尚不能定位遠端服務
 或網路設備的根因。這不證明 provider 可用，也未完成真實內容驗收。
-TP16.5／TP11 真實內容驗收保持待辦，封閉試用暫不放量，寫入能力仍留 TP17。
+初次連線失敗時曾保留 TP16.5／TP11 外部驗收待辦，以下為連線恢復後的獨立補驗。
+
+2026-10-22 補驗：沿用現有設定，TCP 連線與 `/models` 成功，設定模型在清單中；
+紀錄 `temp/temporal-tp16-provider-recheck.log`。專案 venv 執行原 opt-in live 測試
+**2 passed、2 deselected**，44.27 秒，紀錄 `temp/temporal-tp16-trial-live-recheck.log`。
+這次使用真實 provider 與真實 HarnessRouter URL，沒有替換模型回應或來源內容：
+
+- wiki：1 筆模型請求，寫入要求在工具 I/O 前被唯讀權限拒絕；沿用 `uncertain`
+  停止，0 次工具執行、沒有 wiki 產物，禁止手動重跑未知狀態。
+- HarnessRouter：任務 completed、回覆與實際工具結果均含 UHP，3 筆含驗收的請求，
+  `fetch_url` 實際執行 1 次。新 Worker 在停止新受理後取回相同結果，不增加請求／抓取。
+- 兩個 History replay 均通過，History 不含原始 goal；重啟後的 submission ID、
+  request 計數與原 deadline 不變，未知狀態仍拒絕恢復，不回退 SQLite。
+
+TP16.5 與 TP16 的封閉唯讀驗收完成；不將 wiki 的權限拒絕宣稱為建立成功。
+TP11.7 原始長任務完整產物仍獨立追蹤，寫入能力留 TP17，正式部署留 TP26、放量留 TP27。
+本次僅更新文件，程式版本沿用上列完整回歸結果；未重跑全套、未改 provider 設定或正式資料。
 
 ## TP15：持久串流與 finalization
 
