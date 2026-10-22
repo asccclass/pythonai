@@ -20,12 +20,14 @@ def inspect():
         sdk = importlib.metadata.version('temporalio')
     except importlib.metadata.PackageNotFoundError:
         sdk = None
+    from .admission import summary
     settings = Settings.load()
     return {'backend': selected_backend(), 'sdk_version': sdk,
             'address': settings.address, 'namespace': settings.namespace,
             'mode': {'bridge': 'read_only_bridge', 'steps': 'read_only_steps',
                      'human': 'read_only_human_steps', 'approval': 'read_only_approval_steps'}[settings.engine], 'connected': False,
             'new_submission_engine': settings.engine,
+            'trial_admission': summary(),
             'operation_limits': operation_limits(),
             'backup_inventory': {name: {'path': str(path.resolve()), 'exists': path.exists()}
                                  for name, path in paths.items()},

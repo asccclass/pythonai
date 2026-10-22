@@ -334,8 +334,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
             runtime = session.runtime
             runtime.check_cancelled = cancelled.is_set
             runtime.event_callback = emit
-            from agent_execution.temporal_backend.config import selected_backend
-            session.durable_task = selected_backend()=='temporal' and not user_text.startswith('/')
+            from agent_execution.temporal_backend.router import backend_for_task
             from agent_execution.companion.desktop import desktop_bridge, human_desktop_command
             from agent_execution.companion.approval_bridge import approval_bridge
             def wait_approval(approval_id, name, arguments):
@@ -383,6 +382,7 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                     project=session.project, conversation=session.conversation_id, task_id=session.request_id, workspace=project_workspace(session.project), check_cancelled=cancelled.is_set,
                     event_delivery=({'path':str(session.event_store.path.resolve()),'owner':session.owner,'ref':session.request_id} if session.event_store is not None else None)), \
                     set_current_role(get_user_role(identity)), auto_approve_command_runs(), desktop_bridge(request_desktop), approval_bridge(wait_approval if 'approval.auto_resume' in session.caps else None):
+                session.durable_task = not user_text.startswith('/') and backend_for_task()=='temporal'
                 from agent_execution.tasks import dispatch_task_input
                 _log_role_diagnostic("task_dispatch", identity, current_role(), "dispatch_task_input")
                 desktop_result = human_desktop_command(user_text)

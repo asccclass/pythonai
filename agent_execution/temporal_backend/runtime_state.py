@@ -27,10 +27,10 @@ def managed():
 
 def prepare_profile(text, extractor):
     from agent_execution.user_profile import prepare_turn
-    from .config import selected_backend
+    from .router import backend_for_task
     context = current_context()
     # Commands remain explicit; a legacy binding never gains a Temporal guard.
-    if not context.task_id or text.startswith('/profile') or (existing() is None and selected_backend() != 'temporal'):
+    if not context.task_id or text.startswith('/profile') or (existing() is None and backend_for_task(context) != 'temporal'):
         return prepare_turn(text,extractor)
     tasks = TaskStore()
     with closing(tasks.connect()) as conn:

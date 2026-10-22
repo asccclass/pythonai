@@ -21,30 +21,41 @@ def assert_claim_backend(conn, owner, task):
             raise PermissionError('Temporal task cannot be claimed by a legacy executor')
 
 
-def route(messages, *, resume=False, skill=False):
+def backend_for_task(context=None):
+    """Read fixed bindings first; rollout changes affect only new tasks."""
+    from contextlib import closing
     from agent_execution.policy import current_context
     from agent_execution.tasks import TaskStore, task_owner
-    from .config import selected_backend
+    from .admission import new_backend
+    context = current_context() if context is None else context
+    owner = task_owner(context)
+    if context.task_id is not None:
+        with closing(TaskStore().connect()) as conn:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_bindings'").fetchone():
+                row = conn.execute('SELECT backend FROM execution_bindings WHERE owner=? AND task_id=?',
+                                   (owner, context.task_id)).fetchone()
+                if row:
+                    return row[0]
+            if conn.execute('SELECT 1 FROM tasks WHERE owner=? AND id=?', (owner, context.task_id)).fetchone():
+                return 'sqlite'
+    return new_backend(owner)
+
+
+def route(messages, *, resume=False, skill=False):
+    from agent_execution.policy import current_context
+    from agent_execution.tasks import task_owner
     from .store import Store
     context = current_context()
     if context.task_id is None:
-        if selected_backend() == 'temporal':
+        if backend_for_task(context) == 'temporal':
             raise ValueError('Temporal requires a durable task ID; use a managed entrypoint')
         return None
     owner, task = task_owner(context), context.task_id
     if _activity.get() == (owner, task):
         return None
-    requested = selected_backend()
+    requested = backend_for_task(context)
     if requested == 'sqlite':
-        from contextlib import closing
-        # Disabled installations must not migrate optional schemas or create bindings.
-        # A pre-existing legacy task is pinned by its TaskStore row when enabling later.
-        with closing(TaskStore().connect()) as conn:
-            if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_bindings'").fetchone():
-                return None
-            existing = conn.execute('SELECT backend FROM execution_bindings WHERE owner=? AND task_id=?', (owner, task)).fetchone()
-            if existing is None or existing[0] == 'sqlite':
-                return None
+        return None
     store = Store()
     backend = store.bind(owner, task, requested)
     if backend == 'sqlite':

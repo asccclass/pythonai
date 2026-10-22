@@ -101,7 +101,8 @@ class Store:
                 raise ValueError('Execution binding capacity reached')
             # Existing legacy work is never silently migrated by an environment variable.
             exists = conn.execute('SELECT 1 FROM tasks WHERE owner=? AND id=?', (owner, task)).fetchone()
-            backend = 'sqlite' if exists else requested
+            from .admission import new_backend
+            backend = 'sqlite' if exists else new_backend(owner, requested)
             conn.execute('INSERT INTO execution_bindings VALUES(?,?,?)', (owner, task, backend))
             return backend
 

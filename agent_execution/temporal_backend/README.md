@@ -60,7 +60,7 @@ $env:AGENT_EXECUTION_BACKEND = 'temporal'
 
 - 連線或 StartWorkflow 結果未知：保留 outbox 與 task ID，先啟動相同 DB／namespace 的 Worker reconcile。不得換 task ID 重新執行來「修復」。
 - Worker 在 Activity 開始後中斷：M0 等待 Temporal 終止狀態並核對原 TaskStore checkpoint；逐步模式按下節的確認邊界恢復，不能自動重放未知操作。
-- 取消：既有 TaskStore cancellation 會被 Worker 的執行檢查攔下。client wait 結束／取消也會要求遠端取消；已發出的 provider 請求無法因此保證未收費。
+- 取消：既有 TaskStore cancellation 會被 Worker 的執行檢查攔下。斷線／client wait 結束只解除訂閱，明確取消才要求遠端取消；已發出的 provider 請求無法因此保證未收費。
 - M0 不會重置 request/token/cost/deadline；現有 600 秒 wall-clock 包含排隊與等待。
 - 工作目錄／角色變更：Worker 重新核對，拒絕搬移或提升權限。不同 source 不可冒用 local 身分。
 - UI 顯示 Workflow Running 不保證有進展；用 Temporal UI、Worker poller、task phase、submission state 與 checkpoint 共同診斷。M0 尚無新的 HTTP readiness endpoint。
@@ -74,6 +74,68 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 ```
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
+
+## TP16：限定 owner 的封閉唯讀試用
+
+`AGENT_EXECUTION_BACKEND=temporal` 仍須顯式設定。可再設定
+`AGENT_TEMPORAL_TRIAL_OWNERS` 為最多 1024 個唯一、小寫 SHA-256 的 JSON 陣列，
+將新任務限制在可信的 source／identity／project／session。未設定保持原有顯式 opt-in
+相容；`[]` 停止新增 Temporal 任務。未知格式、空字串、萬用字元或重複 key 均拒絕受理，
+不以設定失敗回退執行。這不是角色授權，不能擴充唯讀工具或繞過目前權限。
+
+例如為已認證的 WebSocket 身分／裝置計算範圍（不讀取 DB、不開啟連線）：
+
+```powershell
+$trialOwnerKeys = .\venv\Scripts\python.exe -c "import json; from agent_execution.policy import ExecutionContext; from agent_execution.tasks import task_owner; from agent_execution.temporal_backend.admission import owner_key; print(json.dumps([owner_key(task_owner(ExecutionContext(source='websocket',identity='websocket:alice',project='default',session='default:device')))]))"
+$env:AGENT_TEMPORAL_TRIAL_OWNERS = $trialOwnerKeys
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.preflight
+```
+
+preflight 僅顯示模式與數量，不顯示身分或 allowlist，也不建立 DB。設定要來自受信任的
+部署程序，不能從訊息 payload 取得。未納入的新任務維持原 SQLite 功能；這個清單不是
+整個產品的寫入封鎖。原生 WebSocket 與 profile guard 共用任務後端判定，排除任務的
+斷線取消仍為原 SQLite 行為，且不建立可選 Temporal schema／profile ledger。
+
+已存在的 binding 或 legacy task 優先於新受理政策：關閉試用、清空 allowlist 或修改新任務
+預設均不改派已受理任務。暫停新受理不會取消在途工作，需明確使用 TP14 取消入口。
+Worker 仍以已存的 scope、當前角色、原 root budget 與 workspace 重建執行權威。
+StartWorkflow／RPC 結果未知不回退 SQLite，不換 ID 或補充配額。
+
+隔離 E2E 位於 `tests/test_trial_integration.py`，使用真實 loopback Service／SDK／Worker。
+受控模型刻意重複要求讀取，驗證跨 Activity 的 turn-control 狀態、讀取重用、History replay、
+新 Worker 取回完成結果，以及停收後 backend／deadline／request 計數不變。
+wiki 建立要求在工具 I/O 前被唯讀權限拒絕；沿用既有保守 `uncertain` 停止並拒絕手動
+重跑，不宣稱已建立 wiki。受控 HarnessRouter 案例使用明確標示的測試來源，與真實 URL
+／provider 驗收分開。
+
+獨立執行真實 provider（沿用本機設定，小預算／隔離 workspace，不改正式使用者產物）：
+
+```powershell
+$env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
+$env:PYTHONAI_TEMPORAL_LIVE = '1'
+.\venv\Scripts\python.exe -m pytest agent_execution\temporal_backend\tests\test_trial_integration.py -k live -v -s
+Remove-Item Env:PYTHONAI_TEMPORAL_LIVE
+```
+
+每例固定 8 筆 request／75 秒 root deadline，單次 provider timeout 15 秒、SDK 隱藏 retry
+為零；runner 的既有有限 retry／backoff 仍受根 deadline 約束。預設完整測試跳過這兩項
+外部驗收，不能把 skip 或有界逾時當成內容完成。
+
+TP16 本機驗收（2026-10-22）：最終專案 venv 完整 pytest **1201 passed、11 skipped、95 subtests passed**，
+971.86 秒，紀錄 `temp/temporal-tp16-full-final.log`；包含上述兩個受控 E2E，新增兩個
+skip 為獨立真實 provider 案例。index／allowlist／WebSocket 回歸 **60 passed、5 subtests passed**，
+31.15 秒；pip check、compileall、diff check 通過。首次完整測試發現既有 LSP 取消測試的
+0.5 秒時鐘早於前置 hook，可能在進入 LSP 前就被正確拒絕；改由 LSP 程序呼叫開始計時，
+並斷言確實呼叫，最終完整重跑無失敗。正式取消邏輯與允許的例外均未放寬。
+
+2026-10-22 外部紀錄：獨立 15 秒探測為 `APITimeoutError`，1 筆請求，無 HTTP status。
+兩個真實案例各 3 筆請求，均由 deadline 取消，0 次工具執行、沒有 wiki 產物。
+live 測試 **1 passed（wiki 停止安全性）、1 failed（HarnessRouter 未完成內容）**，
+159.17 秒；紀錄 `temp/temporal-tp16-provider-probe.log`、
+`temp/temporal-tp16-trial-live.log`。額外唯讀診斷的 TCP 連線為 `TimeoutError`，`/models` 為 `APITimeoutError → ConnectTimeout`，
+未取得 HTTP 回應，紀錄 `temp/temporal-tp16-provider-diagnostic.log`；尚不能定位遠端服務
+或網路設備的根因。這不證明 provider 可用，也未完成真實內容驗收。
+TP16.5／TP11 真實內容驗收保持待辦，封閉試用暫不放量，寫入能力仍留 TP17。
 
 ## TP15：持久串流與 finalization
 

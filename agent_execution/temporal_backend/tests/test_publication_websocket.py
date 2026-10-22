@@ -95,8 +95,13 @@ def test_durable_key_capacity_rolls_back_sequence(tmp_path,monkeypatch):
     assert store.snapshot('owner')[:2]==(1,1)
 
 
-def test_disconnect_detaches_temporal_brain_and_duplicate_input_does_not_execute(monkeypatch):
+@pytest.mark.parametrize('excluded',[False,True])
+def test_disconnect_detaches_temporal_brain_and_duplicate_input_does_not_execute(monkeypatch,excluded):
     monkeypatch.setenv('AGENT_EXECUTION_BACKEND','temporal')
+    if excluded:
+        monkeypatch.setenv('AGENT_TEMPORAL_TRIAL_OWNERS','[]')
+    else:
+        monkeypatch.delenv('AGENT_TEMPORAL_TRIAL_OWNERS',raising=False)
     from agent_runtime import AgentTurnResult
     entered,release = threading.Event(),threading.Event()
     calls = []
@@ -116,12 +121,18 @@ def test_disconnect_detaches_temporal_brain_and_duplicate_input_does_not_execute
                     assert ws.receive_json()['type']=='chat.start'
                     assert entered.wait(3)
                 wait_for(lambda:session.ws is None)
-                assert not session.cancel_chat.is_set()
+                if excluded:
+                    wait_for(session.cancel_chat.is_set)
+                else:
+                    assert not session.cancel_chat.is_set()
             finally:
                 release.set()
             wait_for(lambda:session.current_chat_task.done())
             with client.websocket_connect('/ws/v1') as ws:
                 hello(ws)
+                if excluded:
+                    for frame in session.event_store.snapshot(session.owner)[2]:
+                        assert ws.receive_json()['seq']==frame['seq']
                 ws.send_json({'type':'chat.send','id':'stable-request','payload':{'text':'controlled input'}})
                 result = ws.receive_json()
                 assert result['type']=='notify' and result['payload']['request_id']=='stable-request'
