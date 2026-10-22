@@ -198,8 +198,19 @@ class IndexTests(unittest.TestCase):
         with self.assertRaises(ValueError):CodeIndex().navigate('sample.py',1,100)
 
     def test_cancelled_lsp_request_exits_without_results(self):
-        self.configure_lsp('hang',5);deadline=time.monotonic()+0.5
-        with execution_scope(check_cancelled=lambda:time.monotonic()>deadline),self.assertRaises((ValueError,InterruptedError)):go_to_definition('sample.ts',6,19)
+        from agent_execution.code_index.navigation import run_process
+        self.configure_lsp('hang',5)
+        deadline=[None]
+        def start_lsp(*args,**kwargs):
+            # Cancel the LSP request, rather than racing the policy/hook setup.
+            deadline[0]=time.monotonic()+0.5
+            return run_process(*args,**kwargs)
+        def cancelled():
+            return deadline[0] is not None and time.monotonic()>deadline[0]
+        with patch('agent_execution.code_index.navigation.run_process',side_effect=start_lsp) as process:
+            with execution_scope(check_cancelled=cancelled),self.assertRaises((ValueError,InterruptedError)):
+                go_to_definition('sample.ts',6,19)
+        process.assert_called_once()
 
     def test_repeatable_quality_and_latency_benchmark(self):
         from agent_execution.code_index.benchmark import run_benchmark
