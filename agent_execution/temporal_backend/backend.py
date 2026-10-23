@@ -11,13 +11,15 @@ def restore_result(row, messages):
     from .store import Store
     from .publication import finalize, relay
     store = Store()
-    finalize(store,row)
-    relay(store,row)
-    value = json.loads(row['result'])
-    if not isinstance(value.get('reply'), str) or not isinstance(value.get('messages'), list):
-        raise ValueError('Invalid persisted Temporal result')
-    messages[:] = value['messages']
-    return value['reply']
+    from .references import reference
+    with reference(store,row):
+        finalize(store,row)
+        relay(store,row)
+        value = json.loads(row['result'])
+        if not isinstance(value.get('reply'), str) or not isinstance(value.get('messages'), list):
+            raise ValueError('Invalid persisted Temporal result')
+        messages[:] = value['messages']
+        return value['reply']
 
 
 def invoke(store, messages, *, resume=False):

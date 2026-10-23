@@ -80,6 +80,11 @@ async def serve():
                 await asyncio.to_thread(publish_pending,store,settings,queues)
             except Exception as error:
                 print(json.dumps({'temporal':'publication_pending','error_type':type(error).__name__}),flush=True)
+            try:
+                from .erasure import reconcile as erase_pending
+                await erase_pending(store,settings,queues)
+            except Exception as error:
+                print(json.dumps({'temporal':'erasure_pending','error_type':type(error).__name__}),flush=True)
             await asyncio.sleep(5)
     with ThreadPoolExecutor(max_workers=settings.concurrency*2) as executor:
         bridge_worker = Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],

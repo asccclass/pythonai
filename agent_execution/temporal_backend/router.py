@@ -15,6 +15,8 @@ def activity_scope(owner, task):
 
 
 def assert_claim_backend(conn, owner, task):
+    from .retention import assert_not_erased
+    assert_not_erased(conn,owner,task)
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_bindings'").fetchone():
         row = conn.execute('SELECT backend FROM execution_bindings WHERE owner=? AND task_id=?', (owner, task)).fetchone()
         if row and row[0] == 'temporal' and _activity.get() != (owner, task):
@@ -31,6 +33,8 @@ def backend_for_task(context=None):
     owner = task_owner(context)
     if context.task_id is not None:
         with closing(TaskStore().connect()) as conn:
+            from .retention import assert_not_erased
+            assert_not_erased(conn,owner,context.task_id)
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_bindings'").fetchone():
                 row = conn.execute('SELECT backend FROM execution_bindings WHERE owner=? AND task_id=?',
                                    (owner, context.task_id)).fetchone()

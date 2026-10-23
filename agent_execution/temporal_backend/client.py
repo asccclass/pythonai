@@ -16,7 +16,7 @@ async def connect(settings):
     return await asyncio.wait_for(Client.connect(settings.address, namespace=settings.namespace), timeout=10)
 
 
-async def dispatch(store, row, client):
+async def _dispatch(store, row, client):
     from temporalio.exceptions import WorkflowAlreadyStartedError
     from temporalio.common import WorkflowIDReusePolicy
     from agent_execution.tasks import assert_owner_active
@@ -40,7 +40,7 @@ async def dispatch(store, row, client):
             await client.start_workflow(
                 store.workflow_type(row), {'schema_version': SCHEMA_VERSION, 'submission_id': row['id']},
                 id=row['workflow_id'], task_queue=row['queue'],
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE, rpc_timeout=timedelta(seconds=10),
                 execution_timeout=timedelta(seconds=max(.001, execution_seconds)))
         except WorkflowAlreadyStartedError:
             # Only our persisted opaque workflow ID is used, never a caller-supplied ID.
@@ -50,6 +50,12 @@ async def dispatch(store, row, client):
         raise
     store.dispatched(row['id'])
     return client.get_workflow_handle(row['workflow_id'])
+
+
+async def dispatch(store,row,client):
+    from .references import reference
+    with reference(store,row):
+        return await _dispatch(store,row,client)
 
 
 class LoopBridge:

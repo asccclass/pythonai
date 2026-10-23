@@ -175,10 +175,14 @@ def relay(store, row, after=0):
     callback = getattr(value[0],'event_callback',None) if value else None
     if callback is None:
         return after
-    for event in events(store,row,after):
-        if event['kind'] != 'end':
-            callback(event['kind'],json.loads(event['payload']))
-        after = event['seq']
+    pending = events(store,row,after)
+    if pending:
+        from .references import reference
+        with reference(store,row):
+            for event in pending:
+                if event['kind'] != 'end':
+                    callback(event['kind'],json.loads(event['payload']))
+                after = event['seq']
     return after
 
 
@@ -222,7 +226,9 @@ def publication_scope(store, row):
         with closing(store.tasks.connect()) as conn:
             assert_owner_active(conn,row['owner'])
         LifecycleStore().ensure_session()
-        yield
+        from .references import reference
+        with reference(store,row):
+            yield
 
 
 def finalize(store, row):

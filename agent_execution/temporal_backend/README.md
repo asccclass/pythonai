@@ -12,7 +12,7 @@
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
 
 ## 版本與安裝
 
@@ -75,6 +75,75 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
 
+## TP18：同機 erasure、retention 與 artifact GC
+
+沿用人類入口的 `/session-delete preview`／`confirm <plan-id>`／`status|resume <plan-id>`，
+以及原 workspace HTTP／communication 刪除流程；沒有新增模型可呼叫的刪除工具。
+預覽另固定 Temporal submission ID 與狀態 digest，目標在確認前改變必須重新預覽。
+仍需先取消／處理原 active task、lease、transport、schedule、memory worker 與 build blockers。
+
+確認後，在原 lifecycle tombstone 的同一 TaskStore transaction 建立 erasure intent、
+雜湊 task fence，將 submission 改為 `erasing`，並封鎖 started／unknown operation。
+取消／關閉遠端 Workflow 不能解除此 fence。實際檔案清理前，僅從持久紀錄讀取可信
+loopback address、namespace、host queue 與固定 Workflow ID：
+session 刪除要求 cancel／terminate 原執行；一般 retention 則等待遠端自然關閉。
+只對核對過的閉合 run 發出 DeleteWorkflowExecution，接著確認 History describe 與
+visibility query 均查不到。服務離線、RPC 結果未知或索引尚未反映刪除時保留 pending，
+原 frozen files／artifacts 仍在；恢復後接續同一 intent，不啟動原模型或工具。
+
+Activity、StartWorkflow dispatch、publication／relay 與完成結果取回皆保存短期持久
+reference。清理等待原程序放行；Windows 以 PID 加 process creation time 核對，
+程序仍活著時不因時間過期而猜測安全。程序真的退出後可清除殘留 reference。
+目前寫入 commit 的 fence 與取消檢查仍有效，晚到結果與 profile preparation cache 不能重新寫回 TaskStore。
+所有參與程序應先更新到此版本；混合舊 Worker 的版本治理仍屬 TP24。
+
+原 frozen filesystem 計畫完成後，erasure finalize 清除同 task 的 input/result、
+artifacts、operation ledger、continuations、人工回答、審批／decision outbox、
+stream events、file-write journal／人工觀測、profile preparation 與預算資料。
+ApprovalStore 目標搬移會阻擋清理，跨 DB 中斷可重入。保留最小雜湊 task tombstone、
+opaque submission/session ID、處置收據；原 task ID 不能再走 Temporal 或 legacy claim。
+這些 fence 不自動到期／逐出；達容量上限會拒絕新增清理，需明確維運處理，
+避免因清理 tombstone 讓舊請求復活。它們是最小去重紀錄，並非對身分匿名化的保證。
+
+已經由原計畫完成的舊 session 刪除，可由新 Worker 依 completed operation／outbox
+核對授權後補做 Temporal 清理，不復活 session。新 session 的 pending erasure
+由 Worker reconcile；原檔案刪除計畫仍使用 `/session-delete resume <plan-id>` 接續。
+刪除結果的 `temporal` 欄位及本機 `temporal_erased_tasks`／`temporal_erasures`
+保存版本化處置收據：namespace retention 秒數、archival 設定、History／visibility
+查無紀錄的時間。**archival 與備份一律標記 external_policy_required**；
+此功能不刪外部歸檔／備份，也不宣稱磁碟、SQLite WAL 或儲存快照已經安全抹除。
+
+一般 retention 預設只預覽，不新增背景 TTL 排程、不刪程式檔案／retained／共用目錄，
+也不代替 conversation memory、identity profile 與 transport outbox 的各自留存政策。
+可信本機 admin operator 可依 TP16 的 owner hash 指定範圍：
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.retention_cli --owner-hash <sha256> --days 30 --limit 100
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.retention_cli --owner-hash <sha256> --days 30 --limit 100 --apply
+```
+
+`--days` 為 1..3650（預設 30），`--limit` 為 1..100。dry-run 使用 read-only SQLite，
+不建表、不連 Temporal。apply 在寫入 transaction 中重選候選並固定 fence；
+只接受到期 completed／failed／cancelled、沒有活躍 reference、unknown operation、
+未完人工等待／profile extraction／finalization／可靠投遞的任務。
+已消耗且 ledger completed 的 approved 操作可清理；未消耗審批仍保留。
+CLI 回報 `pending` 表示尚未完成，重跑同一範圍或相同 DB／namespace 的 Worker
+可接續；不會重做模型／工具或重新受理舊 task ID。
+retention 不掃描刪除 staging orphan；這些檔案只隨原人類批准的 frozen temporary
+workspace 刪除計畫處理，保留／共用目錄仍保留。
+
+驗收（2026-10-23）：專案 venv 完整 pytest **1286 passed、12 skipped、95 subtests passed**，
+1148.42 秒；新增 TP18 的 **35 項契約／單元測試及 3 項隔離真實 Service 測試**均通過。
+Service 案例確認本機 Activity 仍存活時保留 frozen files／artifacts、晚到結果拒絕、
+History／visibility 查無紀錄、服務離線後重啟接續，以及 retention CLI 的 pending／重入。
+保留 retained 目錄與一般 retention 的程式檔案，舊 task ID 不復活，新 task 仍可受理。
+跨 DB 中斷、程序直接退出、跨 owner、容量、舊刪除計畫補清理及錯誤 receipt 均有覆蓋。
+pip check、compileall、diff check 通過；只有既有 Starlette／AnyIO deprecation warning。
+紀錄為 `temp/temporal-tp18-full.log`、`temp/temporal-tp18-verified.log`、
+`temp/temporal-tp18-retention-final.log`，不入 Git。真實 Service 使用隔離 loopback service、
+DB 與 workspace；未修改正式設定、未操作使用者任務，未呼叫真實 LLM。
+archival／備份／正式部署與非 Windows 破壞性清理仍需獨立外部驗收。
+
 ## TP17：審批綁定的同機檔案寫入
 
 預設仍只讀。第一批僅開放 `create_directory`、`write_file`、`edit_file`；
@@ -99,7 +168,7 @@ adapter 另外核對精確 consumed grant。變更目標或父目錄、撤權、
 提交 result／evidence。**檔案系統與 SQLite 並非共同原子交易**；
 consume 後、實際副作用後、ledger 提交前的中斷均保守停止為 unknown／uncertain，
 不重新核發 grant、不盲重做。這也不是對惡意外部程序同時換路徑的原子隔離保證。
-一般退出會刪除 staging；突然終止留下的 orphan 與留存清理由 TP18 接續。
+一般退出會刪除 staging；突然終止留下的 orphan 只隨 TP18 的已批准 frozen workspace 刪除計畫清理，一般 retention 不掃檔。
 
 `/steps <task_id>` 對新寫入任務回傳 steps 與 file_writes，列出 operation ID、
 工具、路徑、effect_observed 及 human_observation。相同 owner 的目前 admin 可核對
@@ -255,7 +324,7 @@ memory_review job；Memory DB 已 commit 但 TaskStore ack 遺失時，只取回
 不同 DB 不假裝原子；暫時失敗保留 pending，由 metadata retry／同機 Worker reconcile
 續作，不能重新呼叫模型。已註冊的背景記憶 worker 會輪詢 durable pending jobs；若記憶
 服務未執行，工作保留至之後載入／維護。finalize 不直接做遠端萃取、不再消耗 root requests。
-Memory 目標搬移、episode 已刪除、owner 已刪除均拒絕處理；不可據此宣稱 TP18 retention 完成。
+Memory 目標搬移、episode 已刪除、owner 已刪除均拒絕處理；本節證明 finalization 去重，TP18 erasure／retention 見上節。
 
 profile 萃取仍在原人類輸入階段，沿用身分隔離、secret filter 與版本化 apply；以 task／
 輸入 digest 先預留，已完成取回結果，執行結果未確認不自動再抽取。明確 `/profile` 命令
@@ -270,7 +339,7 @@ profile 萃取仍在原人類輸入階段，沿用身分隔離、secret filter �
 
 既有 EventStore／communication outbox 容量也仍有效。transport 已滿保留 journal 等 ACK／
 恢復，不重做模型；journal 已滿則停止追加，不繞過容量或對未知效果重跑。新的 journal／
-identity markers 保留在原本機 DB，清理／留存治理由 TP18 接續。這仍限同機共享資料權威，
+identity markers 保留在原本機 DB 作最小去重；TP18 接入 session 內容清除與 execution retention，transport 身分 marker 仍沿用各自政策。這仍限同機共享資料權威，
 不表示已完成遠端部署、真實 provider／桌面實機或各平台訊息送達驗收。
 
 TP15 驗收（2026-10-22）：專案 venv 完整 pytest **1174 passed、9 skipped、95 subtests passed**，
@@ -523,7 +592,7 @@ Starlette／AnyIO deprecation warning 一項。
 儲存 ADR：TP10 的小型 JSON 結果先使用 SQLite BLOB，讓結果、evidence 與 operation
 完成狀態可原子提交，避免檔案 rename 與 DB commit 間留下分離狀態。引用不含絕對路徑。
 這細化了規劃原先的本機檔案 artifact store；大型附件／圖片、多機共享、retention 與
-完整刪除整合仍由 TP18／TP29 等階段完成。資料仍屬同機可信儲存，應納入原 DB 備份與存取控制。
+同機刪除／execution retention 已由 TP18 接入，詳見上節；TP29 多機仍未交付。資料仍屬同機可信儲存，應納入原 DB 備份與存取控制。
 
 可選容量設定（不改變 root model budget）：
 

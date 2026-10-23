@@ -60,6 +60,11 @@ def prepare_profile(text, extractor):
     # Reserve before provider I/O. An interrupted/unknown call is never reminted.
     result = prepare_turn(text,extractor)
     with closing(tasks.connect()) as conn, conn:
+        conn.execute('BEGIN IMMEDIATE')
+        from .retention import assert_not_erased
+        from agent_execution.tasks import assert_owner_active
+        assert_owner_active(conn,owner)
+        assert_not_erased(conn,owner,context.task_id)
         conn.execute("UPDATE temporal_profile_inputs SET state='completed',result=? WHERE owner=? AND task_id=? AND input_key=?",(json.dumps(result,ensure_ascii=False),owner,context.task_id,key))
     return result
 

@@ -91,6 +91,8 @@ class Store:
         with closing(self.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             assert_owner_active(conn, owner)
+            from .retention import assert_not_erased
+            assert_not_erased(conn,owner,task)
             row = conn.execute('SELECT backend FROM execution_bindings WHERE owner=? AND task_id=?', (owner, task)).fetchone()
             if row:
                 return row['backend']
@@ -121,6 +123,8 @@ class Store:
         with closing(self.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             assert_owner_active(conn, owner)
+            from .retention import assert_not_erased
+            assert_not_erased(conn,owner,task)
             binding = conn.execute('SELECT backend FROM execution_bindings WHERE owner=? AND task_id=?', (owner, task)).fetchone()
             if binding is None or binding[0] != 'temporal':
                 raise ValueError('Task is not bound to Temporal')

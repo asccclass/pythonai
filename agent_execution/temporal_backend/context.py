@@ -66,8 +66,15 @@ def execution_context(store, row, cancelled=None):
     if scope.get('communication_db'):
         scope['communication_db'] = Path(scope['communication_db'])
     scope['task_id'] = row['task_id']
-    scope['check_cancelled'] = lambda: bool(cancelled and cancelled()) or store.get(row['id'])['state'] == 'cancelled'
+    def stopped():
+        try:
+            return bool(cancelled and cancelled()) or store.get(row['id'])['state'] in {'cancelled','erasing'}
+        except KeyError:
+            return True
+    scope['check_cancelled'] = stopped
     with ExitStack() as stack:
+        from .references import reference
+        stack.enter_context(reference(store,row))
         stack.enter_context(set_current_role(role))
         stack.enter_context(execution_scope(**scope))
         if task_owner(current_context()) != row['owner']:

@@ -61,6 +61,10 @@ def check_items(store,plan,conn):
     from .erasure import schedules
     if plan['action']=='delete_session' and schedules(owners)!=plan['payload'].get('schedules',[]):
         raise ValueError('Schedules changed; preview again')
+    if plan['action']=='delete_session':
+        from agent_execution.temporal_backend.retention import preview
+        if preview(conn,owners)!=plan['payload'].get('temporal',[]):
+            raise ValueError('Temporal targets changed; preview again')
     for kept in plan['payload']['kept']:
         row=store.get(kept['id'],conn)
         refs=sorted(r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],)))
@@ -99,6 +103,8 @@ def execute(store,key,approval):
         conn.execute("UPDATE wl_plans SET state='executing' WHERE id=?",(key,))
         if plan['action']=='delete_session':
             conn.execute("UPDATE wl_sessions SET state='deleting' WHERE id=?",(session_key(),))
+            from agent_execution.temporal_backend.retention import prepare_session
+            prepare_session(conn,session_key())
             conn.execute("INSERT INTO wl_outbox VALUES(?,?,'pending')",(session_key(),json.dumps({'plan_id':key})))
     return resume(store,key)
 
@@ -125,6 +131,8 @@ def resume(store,key):
             from .erasure import disable_schedules,external_blockers,schedules,transports
             with closing(store.connect()) as conn:
                 owners=[r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(plan['session'],))]
+            from agent_execution.temporal_backend.erasure import guard_session
+            guard_session(store,plan['session'])
             from communication_store import CommunicationStore
             for owner,path in transports(owners,store.path):CommunicationStore(path).begin_session_deletion(owner)
             if plan['state']!='completed':

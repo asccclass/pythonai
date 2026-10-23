@@ -114,13 +114,21 @@ def erase_schedules(owners):
 def finalize(store,key,runtime=None,event_store=None):
     plan=store.plan(key)
     if plan['action']!='delete_session':raise ValueError('Not a session deletion')
+    def result():
+        from agent_execution.temporal_backend.erasure import session_receipts
+        receipts = session_receipts(store,plan['session'])
+        value = {'operation_id':key,'state':'deleted'}
+        if receipts:value['temporal']=receipts
+        return value
     with closing(store.connect()) as conn:
         operation=conn.execute('SELECT state FROM wl_operations WHERE id=?',(key,)).fetchone()
         if not operation or operation[0]!='completed':raise ValueError('Filesystem cleanup is not complete')
         outbox=conn.execute('SELECT state FROM wl_outbox WHERE session=?',(plan['session'],)).fetchone()
-        if outbox and outbox[0]=='completed':return {'operation_id':key,'state':'deleted'}
+        if outbox and outbox[0]=='completed':return result()
         owners=[r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(plan['session'],))]
         records={owner:[dict(r) for r in conn.execute('SELECT id,episode FROM tasks WHERE owner=?',(owner,))] for owner in owners}
+    from agent_execution.temporal_backend.erasure import guard_session
+    guard_session(store,plan['session'])
     if external_blockers(owners,store.path):raise ValueError('A transport, schedule or memory worker is still active; cancel/wait before erasure')
     from communication_store import CommunicationStore
     for owner,path in transports(owners,store.path):CommunicationStore(path).erase_session(owner)
@@ -151,12 +159,19 @@ def finalize(store,key,runtime=None,event_store=None):
         approvals=ApprovalStore()
         with closing(approvals.connect()) as conn,conn:
             conn.execute("UPDATE approvals SET state='expired',arguments='{}' WHERE identity=? AND session=?",(user,session))
+    with closing(store.connect()) as conn:
+        has_temporal = 'temporal_submissions' in tables(conn)
+    if has_temporal:
+        from agent_execution.temporal_backend.erasure import finish_session
+        from agent_execution.temporal_backend.store import Store
+        finish_session(Store(store.path),plan['session'])
     with closing(store.connect()) as conn,conn:
         conn.execute('BEGIN IMMEDIATE')
         names=tables(conn)
         for owner in owners:
             conn.execute("UPDATE tasks SET goal='',criteria='{}',checkpoint='{}',reply='',episode=NULL WHERE owner=?",(owner,))
             conn.execute("UPDATE task_steps SET input='{}',result=NULL WHERE owner=?",(owner,))
+            if 'temporal_profile_inputs' in names:conn.execute('DELETE FROM temporal_profile_inputs WHERE owner=?',(owner,))
             if 'delivery_artifacts' in names:conn.execute("UPDATE delivery_artifacts SET payload='{}',state='deleted' WHERE owner=?",(owner,))
             if 'agent_nodes' in names:
                 conn.execute("UPDATE agent_nodes SET goal='',payload='{}',result='' WHERE owner=?",(owner,))
@@ -165,4 +180,4 @@ def finalize(store,key,runtime=None,event_store=None):
         conn.execute("UPDATE wl_outbox SET state='completed' WHERE session=?",(plan['session'],))
         conn.execute('INSERT OR IGNORE INTO wl_audit VALUES(?,?,?,?,?,?,?)',(key,plan['principal'],plan['session'],'deleted',sum(r['files'] for r in plan['payload']['items']),sum(r['bytes'] for r in plan['payload']['items']),time.time()))
     if runtime is not None:runtime.messages=[m for m in runtime.messages if m.get('role')=='system']
-    return {'operation_id':key,'state':'deleted'}
+    return result()
