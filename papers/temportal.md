@@ -643,6 +643,20 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 
 驗收（2026-10-23）：完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check、compileall、diff check 通過。真實 Service／Worker 的受控 provider 故障矩陣、Worker 重啟與 History replay，以及獨立子 Python 在實際寫入後退出的測試通過；同時修正前端等待事件使用舊 fence 的問題。真實 provider 獨立驗收 **1 passed**，18.22 秒，在隔離 workspace 建立 7 個 llm-wiki 子目錄與 README，3 筆模型／驗收請求、2 次精確審批，取回結果不增加請求或改寫檔案。這不等於 TP11.7 原始長任務完整產物驗收；shell／測試命令／Docker／桌面與正式部署仍未開放或未實機驗收。未修改正式設定或使用者資料。詳細操作與證據見 backend README；下一項 TP18 retention／刪除。
 
+### 12.9 TP18 retention／刪除
+
+沿用原人類確認的 session／workspace frozen plan；不新增模型可呼叫的刪除工具。
+一般 retention 預設只預覽，僅由可信本機 operator 指定 owner hash、期限與數量後顯式套用；
+不自動清除活躍、未知效果或仍需重播／投遞的資料，不刪保留／共用程式目錄。
+遠端 History 的處置與 archival／備份分列證據，不宣稱本機清理等於全域立即抹除。
+
+- [ ] TP18.1：在既有 lifecycle tombstone 同一交易建立 Temporal erasure intent 與任務 fence；SQLite-only 路徑不安裝 optional schema。
+- [ ] TP18.2：以持久 reference 保護本機 Activity／dispatch／publication；服務離線、仍在執行或關閉結果未知時保留可重入狀態與原 frozen files。
+- [ ] TP18.3：只使用持久可信 target 關閉 Workflow、核對遠端狀態及 History 處置；保存 namespace retention／archival／備份邊界的收據，未知 RPC 不誤標完成。
+- [ ] TP18.4：接入原 erasure finalize；清除 owner/task scoped artifacts、continuations、等待／審批 outbox、串流／file-write／profile 紀錄，保存最小雜湊 tombstone，阻止舊任務與晚到結果復活。
+- [ ] TP18.5：提供有界 dry-run／apply retention 與候選重查，保護活躍／未知／未完成發布及共用資料；staging orphan 只隨已批准的 frozen workspace 刪除計畫清理，不盲掃刪檔。
+- [ ] TP18.6：隔離真實 Service／Worker、重啟、離線／未知結果／跨 owner／late result／容量測試，完整 venv 回歸與驗證通過，更新文件並 commit；正式資料／archival／備份證據分開保留。
+
 ## 13. 測試矩陣、驗收與放量
 
 ### 13.1 必須新增的回歸
