@@ -20,6 +20,7 @@ READ_TOOLS = frozenset({'read_file', 'list_files', 'fetch_url', 'git_status', 'g
                         'search_codebase', 'code_symbols', 'go_to_definition',
                         'find_references', 'workspace_info'})
 STEP_TOOLS = READ_TOOLS | {'ask_user'}
+FILE_WRITE_TOOLS = frozenset({'create_directory','write_file','edit_file'})
 
 
 def validate_envelope(value):

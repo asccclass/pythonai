@@ -428,12 +428,19 @@ def dispatch_task_input(text, runtime, attachments=None):
             if command == '/cancel-task':
                 return AgentTurnResult('Task cancelled' if store.cancel(owner,key) else 'Task already finished',row['episode'])
             if command == '/steps':
-                return AgentTurnResult(json.dumps(store.steps(owner,key),ensure_ascii=False),row['episode'])
+                from .temporal_backend.write_resolution import entries
+                writes = entries(store,owner,key)
+                data = store.steps(owner,key) if writes is None else {'steps':store.steps(owner,key),'file_writes':writes}
+                return AgentTurnResult(json.dumps(data,ensure_ascii=False),row['episode'])
             if command == '/resolve':
                 if current_role() != 'admin':
                     raise PermissionError('Side-effect resolution requires admin role')
                 if len(parts) != 4:
                     raise ValueError('Usage: /resolve <task_id> <tool_call_id> <observed_result>')
+                from .temporal_backend.write_resolution import record
+                with execution_scope(task_id=key):
+                    if record(store,owner,key,parts[2],parts[3]):
+                        return AgentTurnResult('Human filesystem observation saved. Task remains fenced; no tool was repeated or task resumed.',row['episode'])
                 store.resolve(owner,key,parts[2],parts[3])
                 return AgentTurnResult('Human result saved. Use /resume to continue; the tool will not be repeated.',row['episode'])
             with execution_scope(task_id=key):

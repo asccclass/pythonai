@@ -222,7 +222,8 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
         with execution_scope(tool_hook_managed=None):
             try:
                 _audit_tool_execution(name)
-                result=function(**values)
+                from .temporal_backend.file_writes import execute_bound
+                result=execute_bound(name,values,function)
             except Exception as error:
                 if manager is not None:
                     from .results import ToolResult

@@ -41,7 +41,14 @@ def invoke(store, messages, *, resume=False):
     if settings.engine == 'approval':
         from agent_execution.approvals import ApprovalStore
         scope['approval_db'] = str(ApprovalStore().path.resolve())
-    tools = STEP_TOOLS if settings.engine in {'human', 'approval'} else READ_TOOLS
+    previous = store.for_task(owner,task)
+    if settings.file_writes and previous is None:
+        if current_role()!='admin':
+            raise PermissionError('File-write admission requires admin role')
+        scope['file_writes'] = 1
+    from .file_writes import capabilities
+    kind = APPROVAL_WORKFLOW_NAME if settings.engine=='approval' else HUMAN_WORKFLOW_NAME if settings.engine=='human' else None
+    tools = capabilities(scope,kind)
     scope['allowed_tools'] = sorted(tools if context.allowed_tools is None else tools & context.allowed_tools)
     if context.communication_db:
         scope['communication_db'] = str(context.communication_db.resolve())
@@ -107,7 +114,7 @@ def invoke(store, messages, *, resume=False):
                     key = task_row['checkpoint']['approval_wait']['id']
                     if ApprovalStore().decision_state(key, context.identity, context.session) == 'pending':
                         from .publication import waiting
-                        waiting(store,row)
+                        waiting(store,store.get(row['id']))
                         return {'submission_id': row['id'], 'waiting': True}
                 if task_row['state'] == 'suspended' and task_row['phase'] == 'waiting_user':
                     # Only expose a wait after its cursor and outbox slot commit.
@@ -116,7 +123,7 @@ def invoke(store, messages, *, resume=False):
                                             (row['id'],)).fetchone()
                     if wait and wait['state'] == 'waiting':
                         from .publication import waiting
-                        waiting(store,row)
+                        waiting(store,store.get(row['id']))
                         return {'submission_id': row['id'], 'waiting': True}
                 if gate is not None:
                     from agent_execution.approvals import ApprovalStore

@@ -26,6 +26,7 @@ class Settings:
     namespace: str
     concurrency: int = 2
     engine: str = 'bridge'
+    file_writes: bool = False
 
     @classmethod
     def load(cls):
@@ -44,4 +45,11 @@ class Settings:
         engine = os.environ.get('AGENT_TEMPORAL_ENGINE', 'bridge')
         if engine not in {'bridge', 'steps', 'human', 'approval'}:
             raise ValueError('AGENT_TEMPORAL_ENGINE must be bridge, steps, human or approval')
-        return cls(address, namespace, concurrency, engine)
+        writes = os.environ.get('AGENT_TEMPORAL_FILE_WRITES','0')
+        if writes not in {'0','1'}:
+            raise ValueError('AGENT_TEMPORAL_FILE_WRITES must be 0 or 1')
+        if writes=='1':
+            from .admission import trial_owners
+            if engine!='approval' or trial_owners() is None:
+                raise ValueError('File writes require approval engine and explicit trial owners')
+        return cls(address, namespace, concurrency, engine, writes=='1')

@@ -42,6 +42,9 @@ def execution_context(store, row, cancelled=None):
     from .operations import operation_scope
     scope = json.loads(row['context'])
     scope.pop('publication', None)
+    from .file_writes import capabilities
+    tools = capabilities(scope,store.workflow_type(row))
+    scope.pop('file_writes',None)
     store.verify_budget_contract(row)
     if store.workflow_type(row) == APPROVAL_WORKFLOW_NAME:
         from agent_execution.approvals import ApprovalStore
@@ -59,7 +62,6 @@ def execution_context(store, row, cancelled=None):
     if Path(scope['workspace']).resolve() != configured:
         raise PermissionError('Workspace configuration changed; relocation refused')
     scope['workspace'] = configured
-    tools = STEP_TOOLS if store.workflow_type(row) in {HUMAN_WORKFLOW_NAME, APPROVAL_WORKFLOW_NAME} else READ_TOOLS
     scope['allowed_tools'] = frozenset(scope['allowed_tools']) & tools
     if scope.get('communication_db'):
         scope['communication_db'] = Path(scope['communication_db'])

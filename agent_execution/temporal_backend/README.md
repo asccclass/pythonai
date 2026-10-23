@@ -1,18 +1,18 @@
-# Temporal 可選後端：唯讀橋接、逐步流程與操作紀錄
+# Temporal 可選後端：逐步流程、操作紀錄與審批寫入
 
-依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
+依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
 
 ## 已實作邊界
 
 - 預設仍為 sqlite；optional SDK lazy import。新任務固定 backend，舊任務不因環境設定而改引擎。
 - 同一 TaskStore SQLite transaction 建立 task、submission 與來源 fingerprint，outbox 可由 Worker 啟動後 reconcile。
 - Workflow History 僅放版本、opaque submission ID、有限控制欄位與 artifact reference，輸入／結果仍在同機可信 SQLite；沒有明文對話／絕對路徑進入 History。
-- 固定同 DB host queue；只接受 loopback Temporal 服務。Worker 重建角色、workspace、profile 與根預算，限制 READ_TOOLS（human V2 另允許 ask_user）。M0 整段 Activity 最多執行一次；逐步模式的 model／tool／evaluation Activity 各最多一次。
+- 固定同 DB host queue；只接受 loopback Temporal 服務。Worker 重建角色、workspace、profile 與根預算，預設限制 READ_TOOLS（human V2／approval V3 另允許 ask_user；TP17 顯式寫入任務再增加三個檔案工具）。M0 整段 Activity 最多執行一次；逐步模式的 model／tool／evaluation Activity 各最多一次。
 - 直接 legacy claim 不可取得已綁 Temporal 任務；已開始 Activity 不可再次取得，取消後不能發布晚到結果。
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。只對新的唯讀測試任務開啟 Temporal；不能用設定旗標假裝寫入能力已完成。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除遠端 History。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
 
 ## 版本與安裝
 
@@ -74,6 +74,77 @@ $env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
 ```
 
 未設定測試 CLI 時，真實服務測試 skip；其餘去重／角色／配置等測試仍可執行。無 SDK 時純資料與 legacy import 測試可執行，SDK 測試 skip。測試使用臨時 loopback port、隔離 DB 與 workspace，不操作使用者任務。History replay 與真實模型回應分別驗證，不相互替代。
+
+## TP17：審批綁定的同機檔案寫入
+
+預設仍只讀。第一批僅開放 `create_directory`、`write_file`、`edit_file`；
+前端仍需 `AGENT_EXECUTION_BACKEND=temporal`；另在前端與 Worker 的程序設定 `AGENT_TEMPORAL_ENGINE=approval`、
+`AGENT_TEMPORAL_FILE_WRITES=1`，以及 TP16 顯式 owner allowlist。
+只能由目前 admin 受理新任務，能力以整數版本 1 固定於 submission。
+旗標關閉不升級／降級既有任務；停止新增可沿用 `AGENT_TEMPORAL_TRIAL_OWNERS=[]`。
+沿用 V3 Workflow／queue，不修改正式設定或搬移任務。
+
+每個檔案工具仍需人類逐次核准。審批綁定工具參數、目標／父路徑 identity、
+檔案前態 hash／大小／mtime／mode，以及預期後態 digest。執行經原 policy dispatcher、
+當前角色／allowlist／lifecycle／root budget 檢查及一次性 consume；
+adapter 另外核對精確 consumed grant。變更目標或父目錄、撤權、取消與刪除 fence
+均阻止後續寫入。內容使用 UTF-8 與本機換行；檔案必須位於獨立程式目錄，
+拒絕絕對／逃逸／私有路徑、符號連結、junction、硬連結、Windows 保留名稱及 ADS。
+上限為單檔 2 MiB、目錄批次 100 筆、路徑深度 32／長度 1024 字元、plan 64 KiB；
+仍受原輸入、artifact、ledger 與總預算上限限制。
+
+寫檔使用同目錄 staging、fsync、原子 replace，保留原檔案 mode；
+沿用程式目錄登記與 build 生命周期。commit 前在 TaskStore 寫入 transaction 中再次
+核對 fence／預算／角色及前態，寫入後核對實際結果並保存觀測，再由原 ledger
+提交 result／evidence。**檔案系統與 SQLite 並非共同原子交易**；
+consume 後、實際副作用後、ledger 提交前的中斷均保守停止為 unknown／uncertain，
+不重新核發 grant、不盲重做。這也不是對惡意外部程序同時換路徑的原子隔離保證。
+一般退出會刪除 staging；突然終止留下的 orphan 與留存清理由 TP18 接續。
+
+`/steps <task_id>` 對新寫入任務回傳 steps 與 file_writes，列出 operation ID、
+工具、路徑、effect_observed 及 human_observation。相同 owner 的目前 admin 可核對
+已 fenced 的 uncertain／cancelled／failed 操作，使用：
+
+```text
+/resolve <task_id> <operation_id> {"status":"matches_expected","note":"人工核對檔案內容與預期一致"}
+/resolve <task_id> <operation_id> {"status":"matches_before","note":"人工核對仍與寫入前一致"}
+```
+
+系統重新讀取實際檔案並核對宣告，保存不可改寫的 actor／session／plan digest／觀測。
+JSON 上限 16 KiB、note 1..4000 字元。這是當下檔案觀測，不能證明過去從未產生
+副作用；不改任務終態、不重置預算、不續行，也不代表產品驗收完成。
+`temporal_file_writes`、`temporal_write_resolutions` 留於本機可信 DB，計入 ledger 容量。
+
+既有 TaskEvaluator／程式測試要求／reviewer／approval 仍有效。
+shell、測試命令、刪除、Git 與外部服務寫入未開放；
+需要執行程式測試的 code task 不能僅憑寫檔成功宣稱驗收通過。
+Docker、桌面、跨平台及正式部署仍需另行驗收。
+
+驗收（2026-10-23）：
+
+- 真實 Service／Worker、受控 provider：正常完成、consume 後失聯、檔案 replace 後結果未提交、
+  projection 回覆遺失、持久串流審批／finalization；Worker 重啟、History replay、
+  實際檔案與請求次數／原 deadline 不變。修正前端審批／人工回答等待事件使用舊 fence 的問題。
+- 隔離子 Python 程序於實際檔案寫入後 `os._exit(73)`，原操作保持 running／uncertain、
+  grant consumed，拒絕重放；人工觀測保存後仍不恢復。
+- 真實 provider 沿用既有設定：隔離 llm-wiki 的 7 個子目錄與 README 確實建立，
+  **1 passed，18.22 秒，3 筆模型／驗收請求、2 次精確審批**；完成結果取回、
+  History replay 與預算不變通過。未執行使用者正式 wiki 任務；
+  TP11.7 原始長任務完整產物仍獨立追蹤。
+- 專案 venv 完整 pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；
+  pip check、compileall、diff check 通過。只有既有 Starlette／AnyIO deprecation warning。
+  真實 provider 測試預設 skip，以上獨立 live 結果分開記錄；最終紀錄為
+  `temp/temporal-tp17-full.log` 與 `temp/temporal-tp17-live.log`。live 預設獨立 opt-in：
+  `PYTHONAI_TEMPORAL_WRITE_LIVE=1` 配合測試 CLI 執行
+  `tests/test_file_writes_live.py`。隔離 log 位於 `temp/temporal-tp17-*.log`，不入 Git。
+
+先設定已驗證的測試 CLI 與本機 provider，再單獨執行 live 驗收：
+
+```powershell
+$env:PYTHONAI_TEMPORAL_WRITE_LIVE = '1'
+.\venv\Scripts\python.exe -m pytest -v -s agent_execution\temporal_backend\tests\test_file_writes_live.py
+Remove-Item Env:PYTHONAI_TEMPORAL_WRITE_LIVE
+```
 
 ## TP16：限定 owner 的封閉唯讀試用
 
@@ -150,7 +221,7 @@ live 測試 **1 passed（wiki 停止安全性）、1 failed（HarnessRouter 未�
   request 計數與原 deadline 不變，未知狀態仍拒絕恢復，不回退 SQLite。
 
 TP16.5 與 TP16 的封閉唯讀驗收完成；不將 wiki 的權限拒絕宣稱為建立成功。
-TP11.7 原始長任務完整產物仍獨立追蹤，寫入能力留 TP17，正式部署留 TP26、放量留 TP27。
+TP11.7 原始長任務完整產物仍獨立追蹤；TP17 首批檔案寫入驗收見上節，正式部署留 TP26、放量留 TP27。
 本次僅更新文件，程式版本沿用上列完整回歸結果；未重跑全套、未改 provider 設定或正式資料。
 
 ## TP15：持久串流與 finalization
@@ -243,7 +314,7 @@ heartbeat 失效、timeout 或 checker 例外都會進 finally 清理程序樹�
 已結束。這不能強制撤回已送出的遠端 HTTP／模型請求；不合作的同步程式仍需等待其自身
 timeout，未知效果保留 uncertain，late result 不發布，root budget 不重置。
 目前同機唯讀產品流程沒有 Child Workflow；DAG 父子流程及 Parent Close Policy 的實作／
-孤兒清理由 TP21–22 交付，寫入工具與 Docker 實機終止證據仍留 TP17。
+孤兒清理由 TP21–22 交付；TP17 首批檔案工具不啟動命令，Docker 實機子程序樹終止仍未驗收。
 
 TP14 專項驗證（2026-10-21）：取消 outbox 契約 14 項、liveness／程序清理 5 項、
 真實 SDK／Service／Worker 整合 5 項通過。包括舊取消 History（保留 recover）的相容 replay、
@@ -261,7 +332,7 @@ pip check、compileall、diff check 通過。一項既有 Starlette／AnyIO depr
 
 新任務設定 `AGENT_TEMPORAL_ENGINE=approval` 時固定綁定 `AgentTaskWorkflowV3` 與
 `-steps-readonly-v3` queue。此模式對模型要求的每個唯讀工具先請求審批，`ask_user`
-仍使用 V2 的文字回答流程；不開放寫入、skill、scheduler 或 coordinator。現有 bridge、
+仍使用 V2 的文字回答流程；預設不開放寫入，TP17 需另行顯式受理。skill、scheduler 與 coordinator 仍未開放。現有 bridge、
 steps、human 任務不改派，新 Worker 同時服務四種 queue，並共用 host 併發限制。
 
 審批在工具的 PRE hooks／I/O 之前建立。問題透過原 suspended 回覆顯示工具與參數、
@@ -377,7 +448,7 @@ Checkpoint 同時固定 iteration、provider retry 與 evaluation retry 上限�
 | Temporal `FAILED`／`TIMED_OUT`／`TERMINATED` | 投影 `uncertain`，等待證據核對 |
 
 人工回答／審批等待已於 TP13 接通，共用取消與現有唯讀程序清理由 TP14 擴充；
-子 Workflow 傳播留 TP21–22，寫入與 Docker 實機終止仍留 TP17。TP12 不將正在執行的外部請求宣稱為可強制撤回；它只停止後續步驟並拒絕
+子 Workflow 傳播留 TP21–22；TP17 首批檔案寫入故障矩陣見上節，Docker 實機終止仍未驗收。TP12 不將正在執行的外部請求宣稱為可強制撤回；它只停止後續步驟並拒絕
 過期結果發布。
 
 TP12 驗證（2026-10-18）：完整 pytest **1016 passed、9 skipped、95 subtests passed**，

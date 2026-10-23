@@ -133,6 +133,11 @@ class Store:
                 if saved_budget is not None and saved_budget['contract'] != budget_contract:
                     raise PermissionError('Root budget contract changed')
                 return dict(old)
+            from .file_writes import capabilities
+            from .contracts import APPROVAL_WORKFLOW_NAME
+            capabilities(context,APPROVAL_WORKFLOW_NAME if settings.engine=='approval' else None)
+            if context.get('file_writes') is not None and (not settings.file_writes or role!='admin'):
+                raise PermissionError('File-write submission is not explicitly authorized')
             self.tasks.capacity(conn, len(data.encode()) + len(scope.encode()))
             # Bound the new store as well as the legacy checkpoint capacity.
             size = conn.execute('SELECT COALESCE(SUM(length(CAST(input AS BLOB))+length(CAST(context AS BLOB))+length(CAST(COALESCE(result,\'\') AS BLOB))),0) FROM temporal_submissions').fetchone()[0]

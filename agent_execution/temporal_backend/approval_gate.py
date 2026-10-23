@@ -12,11 +12,14 @@ from .ledger import OperationUncertain
 from .store import Store, canonical, digest
 
 
-def payload(name, arguments):
+def payload(name, arguments, plan=None):
     clean = dict(arguments)
     for field in ('trusted_asset_roots', 'memory', 'episode_id'):
         clean.pop(field, None)
-    return {'tool': name, 'arguments': json.loads(approval_canonical(clean))}
+    value = {'tool': name, 'arguments': json.loads(approval_canonical(clean))}
+    if plan is not None:
+        value['file_precondition'] = plan
+    return value
 
 
 class ApprovalGate:
@@ -38,6 +41,9 @@ class ApprovalGate:
         if cursor['submission_id'] != ledger.key or cursor['next_kind'] != 'tool' or self.store.workflow_type(row) != APPROVAL_WORKFLOW_NAME:
             raise PermissionError('Approval gate requires this V3 tool cursor')
         snapshot = validate_snapshot(ledger.load(cursor['state_ref']))
+        from .file_writes import for_cursor, capabilities
+        plan = for_cursor(ledger,snapshot)
+        tools = capabilities(json.loads(row['context']),self.store.workflow_type(row))
         contract = self.store.verify_budget_contract(row)
         with closing(self.store.tasks.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -61,17 +67,18 @@ class ApprovalGate:
                 return {'cursor': cursor, 'ready': True, 'expires': 0}
             context = current_context()
             from permissions import check_tool_permission
-            if name not in READ_TOOLS or not check_tool_permission(name) or name not in context.allowed_tools:
+            if name not in tools or not check_tool_permission(name) or name not in context.allowed_tools:
                 raise PermissionError('Tool is not authorized for V3')
             arguments = json.loads(call['function']['arguments'])
             if not isinstance(arguments, dict):
                 raise ValueError('Tool arguments must be an object')
-            data = payload(name, arguments)
+            data = payload(name, arguments, plan)
             operation = f"model:{snapshot['checkpoint']['iteration']}:tool:{call['id']}"
             target = {'submission_id': ledger.key, 'queue': row['queue'], 'operation_id': operation,
                       'owner': ledger.owner, 'task_id': ledger.task}
             binding = binding_data(target)
-            action = f"{context.project}:temporal_read:{ledger.key}:{operation}"
+            category = "temporal_file_write" if plan is not None else "temporal_read"
+            action = f"{context.project}:{category}:{ledger.key}:{operation}"
             if contract is None:
                 raise PermissionError('Approval requires a pinned root deadline')
             old = conn.execute('SELECT * FROM temporal_approval_waits WHERE submission_id=? AND revision=?',
@@ -175,14 +182,20 @@ def authorize(ledger, operation, name, arguments):
     from agent_execution.budgets import active_budget
     from permissions import current_role, get_user_role, set_current_role, check_tool_permission
     context = current_context()
+    from .file_writes import capabilities, load, verify
+    from .contracts import FILE_WRITE_TOOLS
+    tools = capabilities(json.loads(row['context']),ledger.store.workflow_type(row))
+    plan = load(ledger,operation,name,arguments) if name in FILE_WRITE_TOOLS else None
+    if plan is not None:
+        verify(plan)
     role = current_role()
     if context.identity != 'local':
         levels = {'viewer': 0, 'operator': 1, 'admin': 2}
         role = min((role, get_user_role(context.identity)), key=lambda v: levels.get(v, -1))
     with set_current_role(role):
-        if name not in READ_TOOLS or not check_tool_permission(name) or name not in context.allowed_tools:
+        if name not in tools or not check_tool_permission(name) or name not in context.allowed_tools:
             raise PermissionError('Role or tool capability changed before approval consumption')
-        _validate_paths(arguments, (), False)
+        _validate_paths(arguments, (), plan is not None)
     active_budget().check()
     with closing(ledger.store.tasks.connect()) as conn:
         ledger._scope(conn)
@@ -191,18 +204,44 @@ def authorize(ledger, operation, name, arguments):
         op = conn.execute('SELECT state FROM operation_ledger WHERE owner=? AND task_id=? AND step_id=?',
                           (ledger.owner, ledger.task, operation)).fetchone()
         if (not grant or grant['state'] != 'approved' or grant['expires'] <= time.time()
-                or not op or op['state'] != 'running' or grant['fingerprint'] != digest(payload(name, arguments))):
+                or not op or op['state'] != 'running' or grant['fingerprint'] != digest(payload(name, arguments, plan))):
             raise PermissionError('No exact approved operation at this execution boundary')
     approvals = ApprovalStore()
     if str(approvals.path.resolve()) != json.loads(row['context']).get('approval_db'):
         raise PermissionError('Approval database configuration changed')
     approvals.consume(grant['approval_id'], context.identity, context.session, grant['action'],
-                            payload(name, arguments), binding=json.loads(grant['binding']))
+                            payload(name, arguments, plan), binding=json.loads(grant['binding']))
     # Consumption is irreversible. A crash/fence after here must never mint a
     # replacement grant or replay the unknown operation.
     active_budget().check()
     with closing(ledger.store.tasks.connect()) as conn:
         ledger._scope(conn)
+
+
+
+def assert_consumed(ledger,operation,name,arguments,plan):
+    """The file adapter independently requires the exact irreversible grant."""
+    from agent_execution.policy import current_context
+    from .approval_outbox import get_binding
+    context = current_context()
+    row = ledger.store.get(ledger.key)
+    expected = payload(name,arguments,plan)
+    with closing(ledger.store.tasks.connect()) as conn:
+        grant = conn.execute('SELECT * FROM temporal_approval_waits WHERE submission_id=? AND operation_id=?',
+                             (ledger.key,operation)).fetchone()
+        if not grant or grant['fingerprint']!=digest(expected):
+            raise PermissionError('File adapter requires an exact consumed approval')
+    approvals = ApprovalStore()
+    if str(approvals.path.resolve())!=json.loads(row['context']).get('approval_db'):
+        raise PermissionError('Approval database configuration changed')
+    with closing(approvals.connect()) as conn:
+        approval = conn.execute('SELECT * FROM approvals WHERE id=?',(grant['approval_id'],)).fetchone()
+        if (not approval or approval['state']!='consumed' or approval['identity']!=context.identity
+                or approval['session']!=context.session or approval['action']!=grant['action']
+                or approval['arguments']!=approval_canonical(expected) or approval['digest']!=digest(expected)
+                or get_binding(conn,grant['approval_id'])!=grant['binding']):
+            raise PermissionError('File adapter requires an exact consumed approval')
+
 
 def cancel_waits(store, row):
     """Best-effort grant retirement; task/submission fences are authoritative."""

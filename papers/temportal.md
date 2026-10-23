@@ -25,11 +25,13 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP11.7 原始長任務完整產物及 TP17–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP11.7 原始長任務完整產物及 TP18–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-22）
+### 目前導入進度（2026-10-23）
 
-本輪沿用現有 provider 設定完成 TP16.5：TCP／`/models` 已恢復，真實 Service／Worker 的兩個案例 **2 passed**，44.27 秒。Wiki 寫入要求在 1 筆請求後被唯讀權限拒絕，0 次工具 I/O；HarnessRouter 以 3 筆含驗收的請求完成，實際抓取 1 次。History replay、新 Worker 取回完成結果／拒絕未知狀態恢復、request 與 deadline 不變均通過，驗收見 12.7 及 backend README。此前同一程式版本的完整 venv 回歸 **1201 passed、11 skipped、95 subtests passed**，971.86 秒；兩個 live 案例當時按 opt-in gate skip，已由本輪獨立補驗，全套回歸與獨立 live 測試分開記錄。本輪只更新驗收文件，未修改程式、provider 設定或正式資料。TP16 封閉唯讀範圍完成；寫入留 TP17，正式放量留 TP27，TP11.7 原始長任務完整產物仍獨立追蹤。
+本輪完成 TP17 首批同機檔案寫入：新任務以顯式旗標／owner 清單／admin 綁定 V3 審批能力，固定前後態、一次 consume、同目錄原子 replace、未知效果禁止重跑及人工觀測稽核。真實 provider 在隔離 workspace 建立 7 個 wiki 子目錄與 README，**1 passed**，18.22 秒，3 筆模型／驗收請求與 2 次審批；不改使用者正式設定／資料。完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check／compileall／diff check 通過。全套回歸與獨立 live 測試分開記錄，驗收詳見 12.8 及 backend README。TP18 retention／刪除為下一項；TP11.7 原始長任務完整產物及其他副作用能力仍獨立追蹤。
+
+前輪沿用現有 provider 設定完成 TP16.5：TCP／`/models` 已恢復，真實 Service／Worker 的兩個案例 **2 passed**，44.27 秒。Wiki 寫入要求在 1 筆請求後被唯讀權限拒絕，0 次工具 I/O；HarnessRouter 以 3 筆含驗收的請求完成，實際抓取 1 次。History replay、新 Worker 取回完成結果／拒絕未知狀態恢復、request 與 deadline 不變均通過，驗收見 12.7 及 backend README。此前同一程式版本的完整 venv 回歸 **1201 passed、11 skipped、95 subtests passed**，971.86 秒；兩個 live 案例當時按 opt-in gate skip，已由本輪獨立補驗，全套回歸與獨立 live 測試分開記錄。該輪只更新驗收文件，未修改程式、provider 設定或正式資料。TP16 封閉唯讀範圍完成；TP17 首批檔案寫入見 12.8，正式放量留 TP27，TP11.7 原始長任務完整產物仍獨立追蹤。
 
 前輪完成 TP15 同機唯讀範圍的持久事件、可靠投遞及 memory／profile finalization 去重；完整驗收見 12.6 及 backend README。專案 venv 完整 pytest **1174 passed、9 skipped、95 subtests passed**，1029.94 秒；pip check、compileall、diff check 通過。真實 Temporal Service／Worker、History replay、原生 WebSocket reconnect／ACK 及兩庫故障注入通過；模型與 communication adapters 使用受控替身，真實 LLM／Telegram 送達／桌面／正式部署驗收獨立保留。TP14 取消與清理驗收見 12.5；TP13.5–13.6 操作審批交付見 12.4。
 
@@ -69,13 +71,14 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP08 | Windows 唯讀橋接已接通並完成真實 Service + Worker + 受控模型工具回合、重送、History replay、重啟取回結果；當時真實 provider 逾時紀錄保留，TP10 本輪另已通過隔離小型真實 LLM 唯讀回合 |
 | TP09 | 已抽出共用 model/tool/evaluation steps；SQLite runner 與 Temporal 唯讀 Activity 使用同一實作，保留外層 hooks／checkpoint／重試與預算；驗收紀錄見 backend README |
 | TP10 | 已實作版本化 operation ledger、canonical digest、雙層 fence、原子 result/evidence 引用與完整性檢查；接入唯讀 Activity 的 model/tool/evaluation，共用結果不重跑，未知結果保守阻擋；詳見 backend README |
-| TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過，真實 LLM 本輪逾時待驗收 |
+| TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過；TP16／TP17 已有獨立真實 provider 補驗，原始長任務完整產物仍待驗收 |
 | TP12 | 已實作 root budget contract、恢復限制、retry ownership、deadline 與目前唯讀範圍的取消矩陣；驗收詳見 backend README |
 | TP13 | 人工回答及唯讀操作審批完成：同庫 decision outbox、Timer／Signal、TTL、原入口通知與一次性 consume；V3 整合及驗收見 12.4，寫入仍留 TP17 |
-| TP14 | 已完成目前唯讀範圍的取消 outbox、heartbeat 合作式停止、程序樹清理與 late-result fencing，驗收見 12.5；DAG 父子流程留 TP21–22，寫入／Docker 實機終止留 TP17 |
+| TP14 | 已完成目前唯讀範圍的取消 outbox、heartbeat 合作式停止、程序樹清理與 late-result fencing，驗收見 12.5；DAG 父子流程留 TP21–22，TP17 首批檔案工具不啟動命令，Docker 實機終止仍未驗收 |
 | TP15 | 同機持久串流、EventStore seq／ACK 去重、communication outbox 與 memory／profile finalization 去重完成；斷線解除訂閱，明確取消沿用 TP14，驗收見 12.6 |
 | TP16 | owner allowlist、共用新任務受理、唯讀隔離 E2E 及完整回歸完成；TP16.5 真實 provider 補驗 2 passed，封閉唯讀範圍完成，見 12.7 |
-| TP17–TP30 | 待辦；寫入、retention／刪除、排程、多 Agent、正式部署及多機尚未交付 |
+| TP17 | 首批同機 create_directory／write_file／edit_file 審批寫入、前後態核對、未知效果不重試與人工觀測已實作；驗收見 12.8 |
+| TP18–TP30 | 待辦；retention／刪除、排程、多 Agent、正式部署、多機及其他副作用能力尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -582,7 +585,7 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 - [x] TP13.5：以 opt-in `approval` engine／V3／獨立 queue 整合 ApprovalStore 原子 decision outbox、既有授權入口與桌面事件通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。只開放同機唯讀工具；寫入仍留 TP17。
 - [x] TP13.6（2026-10-21）：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰、人工回答接審批及端到端測試通過；35 項契約／單元測試、6 項真實 Service／Worker 測試含 V3 History replay。完整 pytest **1107 passed、9 skipped、95 subtests passed**，1069.19 秒；pip check、compileall、diff check 通過。使用受控模型；真實 provider 與桌面實機驗收未因此改標成功，細節見 backend README。
 
-後續依序：TP17 寫入保護 → TP18 retention／刪除。TP19–TP24 排程、DAG 與版本治理
+後續依序：TP18 retention／刪除；TP17 首批檔案寫入驗收見 12.8。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
 測試代替。TP02 非 Windows 平台驗證與 TP11.7 原始長任務完整產物驗收仍獨立保留；真實 provider 唯讀補驗見 12.7。
 
@@ -631,12 +634,14 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 逐次人類審批；shell／測試命令／刪除／Git／外部服務副作用不因此開放。
 新任務需顯式 file-write 設定、owner 試用清單與 admin 受理；存量協定與唯讀任務不升權。
 
-- [ ] TP17.1：版本化寫入能力綁定 submission；目前角色、workspace／lifecycle、allowlist、root budget 每次 I/O 仍重新核對。
-- [ ] TP17.2：審批固定參數及檔案／父路徑前置狀態、預期結果 digest；拒絕路徑逃逸、連結、變更目標與過大內容。沿用一次 consume，不重新核發舊 grant。
-- [ ] TP17.3：既有 policy dispatcher 內執行受限檔案 adapter，保留生命週期登記；寫檔採同目錄 staging／原子 replace，核對實際後態，再由原 ledger 提交結果及 evidence。
-- [ ] TP17.4：結果已提交重用；consume／寫入／結果提交間中斷為 uncertain，禁止盲重做。沿用人類 /resolve／/steps 新增同 owner 的觀測核對與稽核，不改寫原預算、不宣稱任務驗收完成、不自動恢復。
-- [ ] TP17.5：既有 TaskEvaluator／程式測試要求／reviewer／審批不能繞過；對尚未開放的測試命令與其他副作用明確失敗。取消／撤權／刪除 fence 仍有效。
-- [ ] TP17.6：真實 Service／Worker、檔案 I/O、審批與 crash 注入／History replay，配合契約、容量與隔離測試；完整 venv pytest／pip check／compileall／diff check 通過、文件記錄範圍並 commit。真實 provider／Docker／桌面與正式部署證據分開。
+- [x] TP17.1：版本化寫入能力綁定 submission；目前角色、workspace／lifecycle、allowlist、root budget 每次 I/O 仍重新核對。
+- [x] TP17.2：審批固定參數及檔案／父路徑前置狀態、預期結果 digest；拒絕路徑逃逸、連結、變更目標與過大內容。沿用一次 consume，不重新核發舊 grant。
+- [x] TP17.3：既有 policy dispatcher 內執行受限檔案 adapter，保留生命週期登記；寫檔採同目錄 staging／原子 replace，核對實際後態，再由原 ledger 提交結果及 evidence。
+- [x] TP17.4：結果已提交重用；consume／寫入／結果提交間中斷為 uncertain，禁止盲重做。沿用人類 /resolve／/steps 新增同 owner 的觀測核對與稽核，不改寫原預算、不宣稱任務驗收完成、不自動恢復。
+- [x] TP17.5：既有 TaskEvaluator／程式測試要求／reviewer／審批不能繞過；對尚未開放的測試命令與其他副作用明確失敗。取消／撤權／刪除 fence 仍有效。
+- [x] TP17.6：真實 Service／Worker、檔案 I/O、審批與 crash 注入／History replay，配合契約、容量與隔離測試；完整 venv pytest／pip check／compileall／diff check 通過、文件記錄範圍並 commit。真實 provider／Docker／桌面與正式部署證據分開。
+
+驗收（2026-10-23）：完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check、compileall、diff check 通過。真實 Service／Worker 的受控 provider 故障矩陣、Worker 重啟與 History replay，以及獨立子 Python 在實際寫入後退出的測試通過；同時修正前端等待事件使用舊 fence 的問題。真實 provider 獨立驗收 **1 passed**，18.22 秒，在隔離 workspace 建立 7 個 llm-wiki 子目錄與 README，3 筆模型／驗收請求、2 次精確審批，取回結果不增加請求或改寫檔案。這不等於 TP11.7 原始長任務完整產物驗收；shell／測試命令／Docker／桌面與正式部署仍未開放或未實機驗收。未修改正式設定或使用者資料。詳細操作與證據見 backend README；下一項 TP18 retention／刪除。
 
 ## 13. 測試矩陣、驗收與放量
 

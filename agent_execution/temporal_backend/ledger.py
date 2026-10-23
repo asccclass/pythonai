@@ -130,6 +130,10 @@ class Ledger:
             used += conn.execute("SELECT COALESCE(SUM(length(CAST(COALESCE(answer,'') AS BLOB))+1024),0) FROM temporal_human_answers").fetchone()[0]
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_approval_waits'").fetchone():
             used += conn.execute("SELECT COALESCE(SUM(length(CAST(payload AS BLOB))+length(CAST(binding AS BLOB))+2048),0) FROM temporal_approval_waits").fetchone()[0]
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_file_writes'").fetchone():
+            used += conn.execute("SELECT COALESCE(SUM(length(CAST(plan AS BLOB))+length(CAST(COALESCE(observation,'') AS BLOB))+2048),0) FROM temporal_file_writes").fetchone()[0]
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_write_resolutions'").fetchone():
+            used += conn.execute("SELECT COALESCE(SUM(length(CAST(data AS BLOB))+2048),0) FROM temporal_write_resolutions").fetchone()[0]
         if used + extra > positive_limit('AGENT_TEMPORAL_LEDGER_STORAGE_BYTES', 256*1024*1024):
             raise CapacityError('Temporal operation storage capacity reached')
 

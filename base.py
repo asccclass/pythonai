@@ -450,6 +450,10 @@ def run_tool_with_context(tool_call, memory=None, episode_id: int | None = None)
                 return ToolResult(True,str(output))
             return output
     except Exception as error:
+        from agent_execution.temporal_backend.operations import _tool_operation
+        from agent_execution.temporal_backend.contracts import FILE_WRITE_TOOLS
+        if name in FILE_WRITE_TOOLS and _tool_operation.get() is not None:
+            raise  # Unknown protected writes must reach the ledger; never become retryable text.
         return f"Error: {error}"
 
 
