@@ -26,6 +26,10 @@ async def serve():
     from agent_execution.approvals import ApprovalStore
     gate, approvals = ApprovalGate(store), ApprovalStore()
     client = await connect(settings)
+    from .schedules import Schedules, reconcile as schedule_reconcile
+    from .schedule_workflow import ScheduleOccurrence
+    from .schedule_activities import ACTIVITIES as SCHEDULE_ACTIVITIES
+    schedules = Schedules(tasks=store)
     queues = {store.queue, store.queue_for('steps'), store.queue_for('human'), store.queue_for('approval')}
     async def reconcile():
         while True:
@@ -86,6 +90,13 @@ async def serve():
             except Exception as error:
                 print(json.dumps({'temporal':'erasure_pending','error_type':type(error).__name__}),flush=True)
             await asyncio.sleep(5)
+    async def reconcile_schedules():
+        while True:
+            try:
+                await schedule_reconcile(schedules,client)
+            except Exception as error:
+                print(json.dumps({'temporal':'schedule_pending','error_type':type(error).__name__}),flush=True)
+            await asyncio.sleep(5)
     with ThreadPoolExecutor(max_workers=settings.concurrency*2) as executor:
         bridge_worker = Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],
                         activities=[execute_readonly], activity_executor=executor,
@@ -104,18 +115,25 @@ async def serve():
                                  max_concurrent_activities=settings.concurrency,
                                  graceful_shutdown_timeout=timedelta(seconds=15))
         print(json.dumps({'temporal': 'worker_configured', 'namespace': settings.namespace,
-                          'queues': sorted(queues), 'os': host_environment()['os'], 'mode': 'bridge_and_readonly_steps_v1_v2_v3'}), flush=True)
+                          'queues': sorted(queues), 'schedule_queue': schedules.queue,
+                          'os': host_environment()['os'], 'mode': 'bridge_and_readonly_steps_v1_v2_v3'}), flush=True)
         async with AsyncExitStack() as stack:
+            await stack.enter_async_context(Worker(client,task_queue=schedules.queue,
+                workflows=[ScheduleOccurrence],activities=SCHEDULE_ACTIVITIES,
+                max_concurrent_activities=settings.concurrency,
+                graceful_shutdown_timeout=timedelta(seconds=15)))
             await stack.enter_async_context(bridge_worker)
             await stack.enter_async_context(steps_worker)
             await stack.enter_async_context(human_worker)
             await stack.enter_async_context(approval_worker)
             reconciler = asyncio.create_task(reconcile())
+            schedule_reconciler = asyncio.create_task(reconcile_schedules())
             try:
                 await asyncio.Future()
             finally:
                 reconciler.cancel()
-                await asyncio.gather(reconciler, return_exceptions=True)
+                schedule_reconciler.cancel()
+                await asyncio.gather(reconciler, schedule_reconciler, return_exceptions=True)
 
 
 def main():

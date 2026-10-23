@@ -60,8 +60,16 @@ def schedule_snapshot(conn,owners):
     if 'scheduled_jobs' not in tables(conn):return []
     result=[]
     for owner in owners:
-        for row in conn.execute('SELECT id,name,owner,context,cron_expression,job_type,job_payload FROM scheduled_jobs WHERE owner=? AND is_enabled=1',(owner,)):
+        native = 'temporal_schedule_bindings' in tables(conn)
+        query = 'SELECT id,name,owner,context,cron_expression,job_type,job_payload FROM scheduled_jobs WHERE owner=? AND (is_enabled=1'
+        query += ' OR id IN (SELECT job_id FROM temporal_schedule_bindings))' if native else ')'
+        for row in conn.execute(query,(owner,)):
             value=dict(row)
+            if native:
+                binding=conn.execute('SELECT address,namespace,queue,overlap FROM temporal_schedule_bindings WHERE job_id=?',(row['id'],)).fetchone()
+                if binding:
+                    value['temporal']=list(binding)
+                    value['configuration']=list(conn.execute('SELECT timezone,timeout,max_runs FROM scheduled_jobs WHERE id=?',(row['id'],)).fetchone())
             result.append({'id':value['id'],'name':value['name'],'digest':hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()})
     return sorted(result,key=lambda item:item['id'])
 

@@ -69,7 +69,8 @@ class SchedulerStore:
             defaults={'owner_role':"TEXT NOT NULL DEFAULT 'admin'",'owner_identity':"TEXT NOT NULL DEFAULT 'local'",
                 'owner':'TEXT','context':'TEXT','timezone':"TEXT NOT NULL DEFAULT 'UTC'",'timeout': 'REAL NOT NULL DEFAULT 60',
                 'max_runs':'INTEGER NOT NULL DEFAULT 1000','run_count':'INTEGER NOT NULL DEFAULT 0',
-                'retry_count':'INTEGER NOT NULL DEFAULT 0','last_digest':'TEXT','history':"TEXT NOT NULL DEFAULT '[]'"}
+                'retry_count':'INTEGER NOT NULL DEFAULT 0','last_digest':'TEXT','history':"TEXT NOT NULL DEFAULT '[]'",
+                'execution_backend':"TEXT NOT NULL DEFAULT 'sqlite'"}
             for name,definition in defaults.items():
                 if name not in columns:conn.execute(f'ALTER TABLE scheduled_jobs ADD COLUMN {name} {definition}')
             # Legacy remote jobs lack a trustworthy source/session: quarantine them.
@@ -89,15 +90,16 @@ class SchedulerStore:
         conn=sqlite3.connect(self.db_path,timeout=10);conn.row_factory=sqlite3.Row;return conn
 
     @policy_tool('schedule_job')
-    def add_job(self,name,cron_expression,job_type,job_payload,description='',timezone='Asia/Taipei',timeout=60,max_runs=1000):
+    def add_job(self,name,cron_expression,job_type,job_payload,description='',timezone='Asia/Taipei',timeout=60,max_runs=1000,execution_backend='sqlite'):
+        if execution_backend not in {'sqlite','temporal'}:raise ValueError('Unknown schedule backend')
         serialized,due=validate_job(name,cron_expression,job_type,job_payload,timezone,timeout,max_runs,description)
         context=current_context();key=uuid.uuid4().hex
         scope={k:getattr(context,k) for k in ('source','identity','project','session','conversation','lifecycle_owner')};scope['workspace']=str(resolve_path('.'))
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT count(*) FROM scheduled_jobs').fetchone()[0]>=1000:raise ValueError('Schedule capacity reached')
-            conn.execute('INSERT INTO scheduled_jobs(id,name,description,cron_expression,job_type,job_payload,next_run_at,owner_role,owner_identity,owner,context,timezone,timeout,max_runs) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (key,name,description,cron_expression,job_type,serialized,due,current_role(),context.identity,task_owner(context),json.dumps(scope),timezone,timeout,max_runs))
+            conn.execute('INSERT INTO scheduled_jobs(id,name,description,cron_expression,job_type,job_payload,next_run_at,owner_role,owner_identity,owner,context,timezone,timeout,max_runs,execution_backend) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (key,name,description,cron_expression,job_type,serialized,due,current_role(),context.identity,task_owner(context),json.dumps(scope),timezone,timeout,max_runs,execution_backend))
         return key
 
     def list_jobs(self):
@@ -108,6 +110,8 @@ class SchedulerStore:
         with closing(self.connect()) as conn,conn:
             changed=conn.execute('UPDATE scheduled_jobs SET is_enabled=0 WHERE id=? AND owner=?',(key,task_owner(current_context()))).rowcount==1
             if changed:
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_schedule_bindings'").fetchone():
+                    conn.execute('UPDATE temporal_schedule_bindings SET revision=revision+1 WHERE job_id=?',(key,))
                 conn.execute('INSERT OR IGNORE INTO schedule_notification_delivery SELECT id,\'cancelled\',NULL,0,NULL,NULL FROM schedule_notifications WHERE job_id=? AND owner=?',
                     (key,task_owner(current_context())))
             return changed
@@ -120,7 +124,7 @@ class SchedulerStore:
 
     def get_due_jobs(self):
         with closing(self.connect()) as conn:
-            return [dict(row) for row in conn.execute('SELECT * FROM scheduled_jobs WHERE is_enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 100',(now_utc().isoformat(),))]
+            return [dict(row) for row in conn.execute("SELECT * FROM scheduled_jobs WHERE execution_backend='sqlite' AND is_enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 100",(now_utc().isoformat(),))]
 
     def acquire_lock(self,job_id,locked_by,timeout_seconds=10):
         if type(timeout_seconds) is not int or not 1<=timeout_seconds<=300:raise ValueError('Invalid lease duration')
@@ -149,7 +153,7 @@ class SchedulerStore:
     def claim_due(self,job,token):
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
-            row=conn.execute('SELECT * FROM scheduled_jobs WHERE id=? AND is_enabled=1 AND next_run_at=? AND next_run_at<=?',
+            row=conn.execute("SELECT * FROM scheduled_jobs WHERE execution_backend='sqlite' AND id=? AND is_enabled=1 AND next_run_at=? AND next_run_at<=?",
                 (job['id'],job['next_run_at'],now_utc().isoformat())).fetchone()
             if not row:return None
             lock=conn.execute('SELECT * FROM scheduled_job_locks WHERE job_id=?',(job['id'],)).fetchone()

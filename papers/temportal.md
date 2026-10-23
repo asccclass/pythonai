@@ -25,11 +25,13 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP11.7 原始長任務完整產物及 TP19–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence 已完成；TP11.7 原始長任務完整產物及 TP20–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-23）
 
-本輪接續 TP18：將 Temporal 刪除接入原人類確認的 frozen lifecycle 計畫，持久 reference 保護仍在執行的本機程序；核對遠端閉合及 History／visibility 查無紀錄後，才清除同 task 的執行內容與 artifacts。保留最小雜湊 fence 防復活；有界 retention CLI 預設 dry-run，不掃描刪除程式檔案。隔離 Service 的刪除／離線恢復／CLI 重入驗證通過。完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check／compileall／diff check 通過。archival／備份分列 external_policy_required，不宣稱已抹除正式資料，詳見 12.9 及 backend README。
+本輪 TP19 新排程 CRUD、owner／時區／overlap／max_runs 契約及唯讀 occurrence 已實作；新增 35 項契約測試、5 項隔離真實 Service 測試；完整 venv pytest **1326 passed、12 skipped、95 subtests passed**，1299.93 秒，pip check／compileall／diff check 通過。新增排程預設 paused，舊排程切換留給 TP20；執行與操作方式見 12.10。
+
+前輪完成 TP18：將 Temporal 刪除接入原人類確認的 frozen lifecycle 計畫，持久 reference 保護仍在執行的本機程序；核對遠端閉合及 History／visibility 查無紀錄後，才清除同 task 的執行內容與 artifacts。保留最小雜湊 fence 防復活；有界 retention CLI 預設 dry-run，不掃描刪除程式檔案。隔離 Service 的刪除／離線恢復／CLI 重入驗證通過。完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check／compileall／diff check 通過。archival／備份分列 external_policy_required，不宣稱已抹除正式資料，詳見 12.9 及 backend README。
 
 前輪完成 TP17 首批同機檔案寫入：新任務以顯式旗標／owner 清單／admin 綁定 V3 審批能力，固定前後態、一次 consume、同目錄原子 replace、未知效果禁止重跑及人工觀測稽核。真實 provider 在隔離 workspace 建立 7 個 wiki 子目錄與 README，**1 passed**，18.22 秒，3 筆模型／驗收請求與 2 次審批；不改使用者正式設定／資料。完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check／compileall／diff check 通過。全套回歸與獨立 live 測試分開記錄，驗收詳見 12.8 及 backend README。TP18 retention／刪除接續見 12.9；TP11.7 原始長任務完整產物及其他副作用能力仍獨立追蹤。
 
@@ -81,7 +83,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP16 | owner allowlist、共用新任務受理、唯讀隔離 E2E 及完整回歸完成；TP16.5 真實 provider 補驗 2 passed，封閉唯讀範圍完成，見 12.7 |
 | TP17 | 首批同機 create_directory／write_file／edit_file 審批寫入、前後態核對、未知效果不重試與人工觀測已實作；驗收見 12.8 |
 | TP18 | 同機 erasure fence、遠端閉合與 History／visibility 核對、scoped payload 清除及有界 retention CLI 已實作；驗收見 12.9 |
-| TP19–TP30 | 待辦；排程、多 Agent、正式部署、多機及其他副作用能力尚未交付 |
+| TP19 | 新排程 owner-scoped CRUD、時區、SKIP／BUFFER_ONE、max_runs、獨立唯讀 task 與 erasure 整合；驗收見 12.10 |
+| TP20–TP30 | 待辦；舊排程遷移、多 Agent、正式部署、多機及其他副作用能力尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -350,7 +353,7 @@ MVP 優先 Signal + outbox，若 UI 需要同步確認「Workflow 已接受回�
 
 以 Temporal Schedule 對應現有 scheduled job，每次 occurrence 啟動新的 task Workflow。沿用原 job owner、時區、max_runs、notification 設定及執行類型驗證；啟動 Activity 前再次核對使用者目前權限。Schedules 的重疊與補跑須明確設定，不直接用 Workflow cron 代替全部現有行為。[S11]
 
-建議預設：watch 採 `SKIP` 避免舊觀察累積；需保留最近一次執行需求的任務評估 `BUFFER_ONE`；有寫檔／發布副作用的任務不得開 `ALLOW_ALL`。時區沿用儲存值，只有新建且未指定時依產品規範選 Asia/Taipei；不把所有既有 UTC job 改成台北時區。
+建議預設：watch 採 `SKIP` 避免舊觀察累積；需保留一次待跑需求的任務評估 `BUFFER_ONE`（保留第一個待跑需求，後續重疊觸發略過，並非只保留最新需求）；有寫檔／發布副作用的任務不得開 `ALLOW_ALL`。時區沿用儲存值，只有新建且未指定時依產品規範選 Asia/Taipei；不把所有既有 UTC job 改成台北時區。
 
 逐筆遷移程序：
 
@@ -588,7 +591,7 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 - [x] TP13.5：以 opt-in `approval` engine／V3／獨立 queue 整合 ApprovalStore 原子 decision outbox、既有授權入口與桌面事件通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。只開放同機唯讀工具；寫入仍留 TP17。
 - [x] TP13.6（2026-10-21）：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰、人工回答接審批及端到端測試通過；35 項契約／單元測試、6 項真實 Service／Worker 測試含 V3 History replay。完整 pytest **1107 passed、9 skipped、95 subtests passed**，1069.19 秒；pip check、compileall、diff check 通過。使用受控模型；真實 provider 與桌面實機驗收未因此改標成功，細節見 backend README。
 
-後續依序：TP19 排程整合；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
+後續依序：TP20 舊排程切換；TP19 新排程整合見 12.10；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
 測試代替。TP02 非 Windows 平台驗證與 TP11.7 原始長任務完整產物驗收仍獨立保留；真實 provider 唯讀補驗見 12.7。
 
@@ -660,7 +663,28 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 - [x] TP18.5：提供有界 dry-run／apply retention 與候選重查，保護活躍／未知／未完成發布及共用資料；staging orphan 只隨已批准的 frozen workspace 刪除計畫清理，不盲掃刪檔。
 - [x] TP18.6：隔離真實 Service／Worker、重啟、離線／未知結果／跨 owner／late result／容量測試，完整 venv 回歸與驗證通過，更新文件並 commit；正式資料／archival／備份證據分開保留。
 
-驗收（2026-10-23）：新增 35 項契約／單元測試及 3 項隔離真實 Service 測試，完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check、compileall、diff check 通過。真實 Service 證明本機 Activity 持有 reference 時保留 frozen files／artifacts、晚到結果拒絕、History／visibility 查無紀錄、離線重啟續作及 CLI pending／重入；retained 目錄、其他 owner 與一般 retention 的程式檔案保留。程序直接退出、跨 DB 中斷、錯誤 receipt、最小 tombstone 防復活與舊人類確認計畫補清理均通過。未修改正式設定或使用者資料，未呼叫真實 LLM；archival／備份仍分列 external_policy_required，非 Windows 破壞性清理及正式部署未實機驗收。操作方式與最終 logs 見 backend README；下一項 TP19 Schedule CRUD bridge。
+驗收（2026-10-23）：新增 35 項契約／單元測試及 3 項隔離真實 Service 測試，完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check、compileall、diff check 通過。真實 Service 證明本機 Activity 持有 reference 時保留 frozen files／artifacts、晚到結果拒絕、History／visibility 查無紀錄、離線重啟續作及 CLI pending／重入；retained 目錄、其他 owner 與一般 retention 的程式檔案保留。程序直接退出、跨 DB 中斷、錯誤 receipt、最小 tombstone 防復活與舊人類確認計畫補清理均通過。未修改正式設定或使用者資料，未呼叫真實 LLM；archival／備份仍分列 external_policy_required，非 Windows 破壞性清理及正式部署未實機驗收。操作方式與最終 logs 見 backend README；TP19 Schedule CRUD bridge 接續見 12.10。
+
+### 12.10 TP19 Schedule CRUD bridge
+
+本輪只建立新的 Temporal Schedule，不將既有 scheduled job 自動轉引擎。管理入口為可信本機
+`agent_execution.temporal_backend.schedule_cli` 與恢復原 execution_scope 的 Python bridge；
+不新增對外伺服器或繞過人類確認的模型工具。各 owner 只能讀取／管理自己的排程。
+
+- [x] TP19.1：create／list／update／pause／resume／cancel 與持久 desired/applied revision；新建預設 paused，未知 RPC 保留 pending，Worker 有界重入，cancel 不可 revive。
+- [x] TP19.2：沿用五欄 cron、IANA timezone，新建預設 Asia/Taipei，儲存 UTC 不改寫；watch 固定 SKIP，agent 允許 SKIP／BUFFER_ONE，拒絕 ALLOW_ALL。Service 最小 catchup 為 10 秒，最多接受一個近期分鐘觸發；不提供歷史 backfill。
+- [x] TP19.3：原 owner／session／workspace／當前 admin／trial allowlist 與原工具上限重新核對；只受理唯讀 agent/watch 與 bounded prompt，不開放 skill、script、command、檔案寫入或 coordinator delegation。
+- [x] TP19.4：opaque occurrence reference、穩定獨立 task ID、immutable root deadline 與一次計數；metadata retry 不增加 run_count 或另建任務。max_runs 不 reset；pause 保留已受理任務，cancel fencing 已受理任務，取消的已受理 occurrence 仍計一次。
+- [x] TP19.5：原有 notification queue／路由／meaningful-change 去重；watch 連續等待到 run limit 轉 needs_input。未投影完的 task 結果不可 retention；SQLite claim 明確排除 Temporal jobs。
+- [x] TP19.6：排程 DB／host queue 綁定、無活程序不自動失效的 RPC／metadata lock；session frozen plan 包含 paused native schedules，刪除確認 Schedule NOT_FOUND 與 wrapper History／visibility NOT_FOUND 後才清理，保留雜湊收據。
+- [x] TP19.7：隔離真實 Service／Worker、History replay、離線恢復、overlap／max_runs／erasure，完整 venv 回歸與驗證通過後 commit。
+
+驗收（2026-10-23）：完整 venv pytest **1326 passed、12 skipped、95 subtests passed**，1299.93 秒，只有既有 Starlette／AnyIO deprecation warning。35 項新契約測試與 5 項隔離真實 Service 測試全部通過，涵蓋 CRUD、離線重入、SKIP／BUFFER_ONE、max_runs、History replay、session erasure 與委派拒絕；pip check、compileall、diff check 通過。最終紀錄 `temp/temporal-tp19-full.log`（不入 Git）。未重跑真實 LLM、未修改正式設定或使用者資料。此階段沿用 bridge 的共用 server runner 與唯讀工具；排程 metadata Activity
+最多三次、執行模型／工具的 Activity 仍最多一次。排程 timeout 固定在 occurrence 預留時刻，
+不因重試而延長，且不得提高既有根預算。已送出的 provider 請求仍不能保證撤回。
+Worker／Service 未恢復、仍有 transfer task、未知 RPC 或 visibility lag 時，刪除保持 pending，
+保留 frozen files；archival／備份仍屬 external_policy_required。
+下一項 TP20 才處理舊排程 dry-run／cutover／rollback、DST 與明確補跑評估。
 
 ## 13. 測試矩陣、驗收與放量
 

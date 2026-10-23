@@ -94,6 +94,9 @@ def queue_deleted_sessions(conn):
             conn.execute("UPDATE temporal_erasures SET reason='deleted_session' WHERE session=? AND state!='local_done'",(session,))
 
 def eligible(conn,row,before):
+    from .schedules import task_pending
+    if task_pending(conn,row['id']):
+        return False
     if row['state'] not in {'completed','failed','cancelled'} or row['updated']>=before:
         return False
     names = tables(conn)

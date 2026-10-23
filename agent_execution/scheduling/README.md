@@ -6,6 +6,12 @@ runs each occurrence in the private `worker.py` subprocess through the native
 process-tree runner. The worker restores the original execution context and
 rechecks remote privileges. Uncertain writes stop for human review.
 
+The default backend remains SQLite. New opt-in Temporal schedules use the trusted
+`agent_execution.temporal_backend.schedule_cli` / `Schedules` bridge; see
+`../temporal_backend/README.md` (TP19). Legacy claims explicitly exclude Temporal
+rows. Existing jobs are not migrated, and native schedules currently accept only
+read-only agent/watch payloads.
+
 Configuration: `SCHEDULER_DB_PATH` (default communication/scheduler.db), five-field
 cron and IANA timezone (new jobs default Asia/Taipei), timeout 1..300 seconds,
 max_runs 1..1000. The CLI and manage_schedule tool expose owner-scoped list,
@@ -32,6 +38,6 @@ Telegram long polling also starts the scheduler and dispatches after each poll;
 notification latency includes the configured polling timeout. Failed notification
 storage reports a diagnostic without terminating the primary communication loop.
 
-Tests: `python -m pytest agent_execution/tests/test_scheduling.py tests/test_scheduler.py`.
+Tests (Windows): `.\venv\Scripts\python.exe -m pytest agent_execution/tests/test_scheduling.py tests/test_scheduler.py`.
 They cover real worker/script execution and termination, concurrency, fencing,
 Taipei timing, ownership, legacy migration, approvals and notification deduplication.

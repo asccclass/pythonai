@@ -1,6 +1,6 @@
 # Temporal 可選後端：逐步流程、操作紀錄與審批寫入
 
-依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
+依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入；TP19 提供新排程 CRUD 與唯讀 occurrence。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
 
 ## 已實作邊界
 
@@ -12,7 +12,57 @@
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、V1／V2 approval resume、排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、舊排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
+
+## TP19：新排程 CRUD 與唯讀 occurrence
+
+`schedule_cli` 是本機 operator 管理入口，沿用原 execution_scope 的 Python `Schedules` bridge
+也可供既有入口整合。它不是新的 Web/API 服務，也未註冊成模型工具。所有 get/list/change 以
+原 owner 隔離；管理需要 admin。新排程預設 paused，明確 resume 才開啟。
+前端與 Worker 必須共用 `AGENT_TASK_DB`、`SCHEDULER_DB_PATH`、workspace、roles 與 namespace；
+排程 DB 絕對路徑與 task DB 的 host queue 已綁定，變更配置會拒絕執行／清理。
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli create --name "唯讀觀察" --cron "*/5 * * * *" --kind watch --prompt "檢查指定專案狀態，依 watch JSON 契約回報" --max-runs 12
+# 將輸出的 id 代入以下命令。
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli list
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli resume --id <id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli update --id <id> --timezone UTC --cron "0 9 * * *"
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli pause --id <id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli cancel --id <id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_cli notifications
+```
+
+- create 回傳持久 id；sync 成功 exit 0，未知／離線回傳 `sync=pending`、exit 2。
+  不要重複 create；以同 id 的 `sync --id <id>` 或原 Worker reconcile 完成。list 的
+  `revision/applied` 是本機 desired/applied 狀態；直接在 Temporal UI 的外部變更不會被當成本機授權。
+- 只受理 `agent/watch`、`{"prompt":"..."}`，沿用名稱／payload／五欄 cron／IANA 時區／
+  timeout 1..300 秒／max_runs 1..1000 驗證。新建時區預設 Asia/Taipei；既有 UTC 維持 UTC。
+  agent/watch 的工具為 READ_TOOLS 與原 scope 工具清單的交集，忽略全域 file-write opt-in；
+  skill、script、command、發布、寫檔及 coordinator delegation 尚未開放。
+- watch 固定 SKIP；agent 支援 `--overlap BUFFER_ONE`，最多保留第一個待跑需求，後續重疊需求略過。
+  不受理 ALLOW_ALL／historical backfill。真實 Server 將 catchup 最小值正規化為 **10 秒**，
+  因此五欄 cron 最多接受一個近期分鐘觸發，不能宣稱絕對零補跑。
+- 每次原生觸發是 reference-only occurrence Workflow，再啟動固定 owner 的獨立 task Workflow。
+  prompt／結果只留本機；History 不含原文。metadata Activity 最多三次，固定 occurrence/task ID
+  與一次 run_count；執行模型／工具仍用原共用 runner、Activity 最多一次，沒有另一套模型引擎。
+- 接受 occurrence 時才計一次，即使之後取消／失敗仍計數；Activity retry 不增加，
+  不能調整 max_runs 低於既有 run_count。抵達上限需先明確提高 max_runs 才可 resume；
+  更新上限不重置計數。pause 停止新受理並保留已受理任務；cancel 不可 revive，
+  fencing 已受理任務，Worker 投遞取消。排程 timeout 於預留時刻固定且不延長根 deadline。
+- 原 notification queue、跨平台路由與去重保持；本機/API/WebSocket 可查詢，
+  communication 只向原對話與已配置 adapter 投遞，仍重查 role／sender allowlist。
+  watch 等待直到次數上限轉 needs_input；無法判定／失敗的 occurrence 停止排程並要求檢查。
+- legacy SchedulerStore claim 明確排除 temporal rows，無 binding 的中斷預留也不會轉回 SQLite。
+  舊 jobs 不遷移；TP20 再做 dry-run、cutover、rollback 與 DST／停機補跑案例。
+- session 刪除沿用原 frozen preview／確認，包含 paused native schedules。先 tombstone owner、
+  刪除 native Schedule、關閉／刪除 wrapper History 並核對 visibility，再清理 task／本機內容；
+  保存最小雜湊 receipt。offline、活躍 metadata／Activity、transfer task 或 index lag
+  都保持 pending 並保留檔案。須恢復相同 Service **及 Worker**；archival／備份仍需外部政策處置。
+  排程尚未消耗的 task 結果不可先 retention；本輪沒有排程層自動 GC。
+
+TP19 驗收（2026-10-23）：新增 **35 項契約測試、5 項隔離真實 Service 測試**；完整 venv pytest **1326 passed、12 skipped、95 subtests passed**，1299.93 秒，只有既有 Starlette／AnyIO deprecation warning。`pip check`、compileall、diff check 通過。最後紀錄 `temp/temporal-tp19-full.log`（不入 Git），35 項契約獨立驗證為 `temp/temporal-tp19-unit-final.log`，真實 Service 獨立驗證為 `temp/temporal-tp19-service-final.log`。真實 provider 付費驗收未重跑；受控 runner 不代表正式模型／平台通知
+或生產部署已驗收。測試服務與資料均隔離，未修改正式 .env 或使用者排程。
 
 ## 版本與安裝
 

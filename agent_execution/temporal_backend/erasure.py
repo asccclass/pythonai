@@ -225,6 +225,8 @@ def guard_session(store,session):
         from .retention import prepare_session
         prepare_session(conn,session)
     from .store import Store
+    from .schedule_erasure import guard as guard_schedules
+    guard_schedules(Store(store.path),session)
     ensure_session(Store(store.path),session)
 
 
@@ -239,3 +241,5 @@ def finish_session(store,session):
     ensure_session(store,session)
     for job in pending(store,session):
         purge(store,job['submission_id'])
+    from .schedule_erasure import scrub
+    scrub(store,session)
