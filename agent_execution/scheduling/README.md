@@ -9,8 +9,11 @@ rechecks remote privileges. Uncertain writes stop for human review.
 The default backend remains SQLite. New opt-in Temporal schedules use the trusted
 `agent_execution.temporal_backend.schedule_cli` / `Schedules` bridge; see
 `../temporal_backend/README.md` (TP19). Legacy claims explicitly exclude Temporal
-rows. Existing jobs are not migrated, and native schedules currently accept only
-read-only agent/watch payloads.
+rows; native desired enable is stored separately and the legacy is_enabled stays
+false. Existing read-only agent/watch jobs can explicitly preview, stage, cut over
+and roll back with schedule_migration_cli (TP20). No automatic migration or
+historical backfill is performed; active/uncertain jobs remain fenced. See the
+backend README for source digests, UTC fences and restartable pending intents.
 
 Configuration: `SCHEDULER_DB_PATH` (default communication/scheduler.db), five-field
 cron and IANA timezone (new jobs default Asia/Taipei), timeout 1..300 seconds,

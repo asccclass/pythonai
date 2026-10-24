@@ -65,6 +65,7 @@ class SchedulerStore:
               state TEXT NOT NULL,output TEXT NOT NULL,created REAL NOT NULL);
               CREATE TABLE IF NOT EXISTS schedule_notification_delivery(id TEXT PRIMARY KEY,status TEXT NOT NULL,token TEXT,
               expires REAL,error_type TEXT,completed REAL);''')
+            conn.execute('BEGIN IMMEDIATE')
             columns={row['name'] for row in conn.execute('PRAGMA table_info(scheduled_jobs)')}
             defaults={'owner_role':"TEXT NOT NULL DEFAULT 'admin'",'owner_identity':"TEXT NOT NULL DEFAULT 'local'",
                 'owner':'TEXT','context':'TEXT','timezone':"TEXT NOT NULL DEFAULT 'UTC'",'timeout': 'REAL NOT NULL DEFAULT 60',
@@ -73,6 +74,12 @@ class SchedulerStore:
                 'execution_backend':"TEXT NOT NULL DEFAULT 'sqlite'"}
             for name,definition in defaults.items():
                 if name not in columns:conn.execute(f'ALTER TABLE scheduled_jobs ADD COLUMN {name} {definition}')
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_schedule_bindings'").fetchone():
+                binding_columns={r['name'] for r in conn.execute('PRAGMA table_info(temporal_schedule_bindings)')}
+                if 'enabled' not in binding_columns:
+                    conn.execute('ALTER TABLE temporal_schedule_bindings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 0')
+                    conn.execute('UPDATE temporal_schedule_bindings SET enabled=(SELECT is_enabled FROM scheduled_jobs WHERE id=job_id)')
+                conn.execute("UPDATE scheduled_jobs SET is_enabled=0 WHERE execution_backend='temporal'")
             # Legacy remote jobs lack a trustworthy source/session: quarantine them.
             for row in conn.execute("SELECT id,owner_identity FROM scheduled_jobs WHERE owner IS NULL AND owner_identity!='local'").fetchall():
                 identity=row['owner_identity']
@@ -98,8 +105,8 @@ class SchedulerStore:
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT count(*) FROM scheduled_jobs').fetchone()[0]>=1000:raise ValueError('Schedule capacity reached')
-            conn.execute('INSERT INTO scheduled_jobs(id,name,description,cron_expression,job_type,job_payload,next_run_at,owner_role,owner_identity,owner,context,timezone,timeout,max_runs,execution_backend) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (key,name,description,cron_expression,job_type,serialized,due,current_role(),context.identity,task_owner(context),json.dumps(scope),timezone,timeout,max_runs,execution_backend))
+            conn.execute('INSERT INTO scheduled_jobs(id,name,description,cron_expression,job_type,job_payload,next_run_at,owner_role,owner_identity,owner,context,timezone,timeout,max_runs,execution_backend,is_enabled) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (key,name,description,cron_expression,job_type,serialized,due,current_role(),context.identity,task_owner(context),json.dumps(scope),timezone,timeout,max_runs,execution_backend,int(execution_backend=='sqlite')))
         return key
 
     def list_jobs(self):
@@ -110,8 +117,10 @@ class SchedulerStore:
         with closing(self.connect()) as conn,conn:
             changed=conn.execute('UPDATE scheduled_jobs SET is_enabled=0 WHERE id=? AND owner=?',(key,task_owner(current_context()))).rowcount==1
             if changed:
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_schedule_migrations'").fetchone():
+                    conn.execute('UPDATE temporal_schedule_migrations SET restore_enabled=0 WHERE job_id=?',(key,))
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_schedule_bindings'").fetchone():
-                    conn.execute('UPDATE temporal_schedule_bindings SET revision=revision+1 WHERE job_id=?',(key,))
+                    conn.execute('UPDATE temporal_schedule_bindings SET enabled=0,revision=revision+1 WHERE job_id=?',(key,))
                 conn.execute('INSERT OR IGNORE INTO schedule_notification_delivery SELECT id,\'cancelled\',NULL,0,NULL,NULL FROM schedule_notifications WHERE job_id=? AND owner=?',
                     (key,task_owner(current_context())))
             return changed
@@ -166,6 +175,9 @@ class SchedulerStore:
                     self.notify(conn,dict(row),'needs_input','Previous run is uncertain; inspect before creating a replacement job')
                     conn.execute('DELETE FROM scheduled_job_locks WHERE job_id=?',(job['id'],));return None
             if conn.execute('SELECT count(*) FROM scheduled_job_runs').fetchone()[0]>=10000:raise ValueError('Schedule run capacity reached')
+            from agent_execution.temporal_backend.schedule_migration import admit_legacy
+            if not admit_legacy(conn,dict(row)):
+                return None
             conn.execute('INSERT INTO scheduled_job_locks VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET locked_by=excluded.locked_by,expires_at=excluded.expires_at',
                 (job['id'],token,time.time(),time.time()+10))
             key=uuid.uuid4().hex

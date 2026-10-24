@@ -1,6 +1,6 @@
 # Temporal 可選後端：逐步流程、操作紀錄與審批寫入
 
-依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入；TP19 提供新排程 CRUD 與唯讀 occurrence。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
+依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入；TP19 提供新排程 CRUD 與唯讀 occurrence；TP20 提供逐筆舊唯讀排程遷移／切換／回滾。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
 
 ## 已實作邊界
 
@@ -12,7 +12,7 @@
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、V1／V2 approval resume、舊排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、舊副作用排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
 
 ## TP19：新排程 CRUD 與唯讀 occurrence
 
@@ -54,7 +54,7 @@
   communication 只向原對話與已配置 adapter 投遞，仍重查 role／sender allowlist。
   watch 等待直到次數上限轉 needs_input；無法判定／失敗的 occurrence 停止排程並要求檢查。
 - legacy SchedulerStore claim 明確排除 temporal rows，無 binding 的中斷預留也不會轉回 SQLite。
-  舊 jobs 不遷移；TP20 再做 dry-run、cutover、rollback 與 DST／停機補跑案例。
+  舊 jobs 不自動遷移；TP20 顯式 dry-run、cutover、rollback 與 DST／停機驗收見下節。
 - session 刪除沿用原 frozen preview／確認，包含 paused native schedules。先 tombstone owner、
   刪除 native Schedule、關閉／刪除 wrapper History 並核對 visibility，再清理 task／本機內容；
   保存最小雜湊 receipt。offline、活躍 metadata／Activity、transfer task 或 index lag
@@ -63,6 +63,54 @@
 
 TP19 驗收（2026-10-23）：新增 **35 項契約測試、5 項隔離真實 Service 測試**；完整 venv pytest **1326 passed、12 skipped、95 subtests passed**，1299.93 秒，只有既有 Starlette／AnyIO deprecation warning。`pip check`、compileall、diff check 通過。最後紀錄 `temp/temporal-tp19-full.log`（不入 Git），35 項契約獨立驗證為 `temp/temporal-tp19-unit-final.log`，真實 Service 獨立驗證為 `temp/temporal-tp19-service-final.log`。真實 provider 付費驗收未重跑；受控 runner 不代表正式模型／平台通知
 或生產部署已驗收。測試服務與資料均隔離，未修改正式 .env 或使用者排程。
+
+## TP20：舊排程 dry-run／切換／回滾
+
+`schedule_migration_cli` 是可信本機 operator 入口；Python `Migration` API 可沿用原
+execution_scope 管理 API／WebSocket／communication owner。CLI 沿用本機 owner，
+不能冒用另一個 session。需要當前及原 owner admin、相同 workspace／TaskStore／排程 DB；
+新切換仍受 trial allowlist 限制。回滾不因 trial 關閉而被阻擋，但仍重查角色及 session tombstone。
+
+只遷移 TP19 支援的唯讀 agent/watch、精確 `{"prompt":"..."}` payload。
+skill／script／command／寫入／coordinator 留在 SQLite。預設不變更任何既有 job；
+必須逐筆 preview、stage、cutover，沒有批次自動遷移或歷史 backfill。
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_migration_cli preview --id <legacy-id>
+# 審閱 owner hash、payload digest、原 next_run、run_count、timezone、next_10，代入 source_digest。
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_migration_cli stage --id <legacy-id> --digest <source_digest>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_migration_cli cutover --id <legacy-id>
+# 離線／未知 RPC exit 2：保持相同 id 與 intent，恢復 Service 及 Worker 後續作。
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_migration_cli reconcile --id <legacy-id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.schedule_migration_cli rollback --id <legacy-id>
+```
+
+- preview 只以 SQLite read-only mode 讀取，不建立 schema、不載入 SDK、不連 Service，
+  不輸出 prompt 原文。`--at <aware ISO time>` 只用於預覽，不是補跑命令。
+  實際 stage 保存完整原設定、owner、原 UTC next_run、計數、payload digest 與 generation；
+  來源任一變動需重新 preview/stage。活躍 lease、running／uncertain legacy run 不可遷移。
+- stage 建立 paused Native Schedule，legacy 繼續持有；用真實
+  ListScheduleMatchingTimes 比對未來 10 個 UTC 時刻，含 DST gap／fold。
+  不存在的當地時間略過，重複當地時間保留兩個不同 UTC 時刻；不符則保持 paused。
+- cutover 原子設為 transition／停用 legacy，之後才啟用 native。activating 重入時刷新
+  未來至少一分鐘的 start_at／本機 barrier，拒絕切換前與停機期間的舊觸發。
+  SQLite 與 native 共用 (job_id, UTC slot) 唯一 fence，metadata retry 不另計數。
+  已受理的未知結果不會自動換引擎重跑；max_runs、既有歷史與 immutable root budget 不歸零。
+- 原 `scheduled_jobs.is_enabled` 對 native 永遠為 0，可阻擋舊版 query；
+  native desired enable 存在 binding，請由原生管理入口查詢。
+  進入 transition 後拒絕一般 native CRUD，使用同一 migration intent 續作。
+- rollback 先停止新受理、pause native，等待本機 occurrence、task、live reference、
+  operation ledger 及遠端 Workflow 關閉；未知／uncertain 保留 pending。
+  刪除 Native Schedule 並核對 NOT_FOUND／applied revision，才恢復 SQLite。
+  取現在與最後已受理 UTC slot 的較晚者，選嚴格在其後的下一次 cron，不補歷史。
+  人工停用、native pause、watch 完成／needs_input 與次數上限不會因回滾復活。
+  已完成 task／預算／通知仍沿用原資料，observation digest 保持 legacy 格式，
+  相同觀察跨引擎不重發；retired binding 阻擋舊 Worker 重建 native。
+- Worker 只續作明確 cutting_over／activating／rolling_back intents，staged 不自動切換。
+  Session 刪除沿用 TP18 frozen plan；遠端及原任務清理驗證後，移除遷移原文 snapshot
+  與 UTC fences，只留原雜湊收據。不是排程層自動 GC，fence 上限 100000 筆時拒絕新受理。
+
+TP20 詳細驗收見 `papers/temportal.md` 12.11。新增 **35 項契約、6 項真實 Service 測試**全部通過；完整 venv 首輪 **1366 passed、12 skipped、1 failed、95 subtests passed**（1658.42 秒）。未改動的 Go scaffold 首輪未取得 passing case，整個 results 檔重驗 **19 passed**（33.22 秒），未重現，未確認根因，首輪不記為全綠。另有 Starlette／AnyIO 及 Tkinter 解構 warnings（3）。pip check、compileall、diff check 通過。紀錄 `temp/temporal-tp20-full.log`、`temp/temporal-tp20-results-recheck.log`、`temp/temporal-tp20-unit-final.log` 不入 Git。未呼叫付費 provider、未修改正式設定／使用者排程；受控 runner／scheduled timestamp 不代表正式模型、平台通知或已等待真實分鐘 cron 驗收。
 
 ## 版本與安裝
 

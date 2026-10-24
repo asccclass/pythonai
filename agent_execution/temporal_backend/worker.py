@@ -94,6 +94,8 @@ async def serve():
         while True:
             try:
                 await schedule_reconcile(schedules,client)
+                from .schedule_migration import reconcile as migrate_schedules
+                await migrate_schedules(schedules,client)
             except Exception as error:
                 print(json.dumps({'temporal':'schedule_pending','error_type':type(error).__name__}),flush=True)
             await asyncio.sleep(5)

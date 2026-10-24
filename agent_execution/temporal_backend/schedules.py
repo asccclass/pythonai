@@ -1,7 +1,7 @@
 """Owner-scoped native Schedule bridge. SQLite is the authority; RPCs reconcile it."""
 from contextlib import closing, contextmanager, nullcontext
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, datetime
 import asyncio
 import json
 from pathlib import Path
@@ -47,6 +47,15 @@ class Schedules:
                 CREATE TABLE IF NOT EXISTS temporal_erased_schedules(
                     token TEXT PRIMARY KEY, receipt TEXT NOT NULL);
             """)
+            conn.execute('BEGIN IMMEDIATE')
+            columns={r['name'] for r in conn.execute('PRAGMA table_info(temporal_schedule_bindings)')}
+            if 'enabled' not in columns:
+                conn.execute('ALTER TABLE temporal_schedule_bindings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 0')
+                conn.execute('UPDATE temporal_schedule_bindings SET enabled=(SELECT is_enabled FROM scheduled_jobs WHERE id=job_id)')
+            for column,definition in [('retired','INTEGER NOT NULL DEFAULT 0'),('start_at','TEXT')]:
+                if column not in columns:conn.execute('ALTER TABLE temporal_schedule_bindings ADD COLUMN '+column+' '+definition)
+            # Also fence schedulers which loaded the pre-TP19 claim query.
+            conn.execute("UPDATE scheduled_jobs SET is_enabled=0 WHERE execution_backend='temporal'")
 
     @property
     def queue(self):
@@ -54,11 +63,13 @@ class Schedules:
 
     def _row(self, key, conn):
         row = conn.execute("""SELECT j.*, b.address,b.namespace,b.queue,b.overlap,b.cancelled,
-            b.revision,b.applied,b.remote_deleted FROM scheduled_jobs j
+            b.revision,b.applied,b.remote_deleted,b.enabled,b.retired,b.start_at FROM scheduled_jobs j
             JOIN temporal_schedule_bindings b ON b.job_id=j.id WHERE j.id=?""", (key,)).fetchone()
         if row is None:
             raise KeyError('Temporal schedule not found')
-        return dict(row)
+        value=dict(row)
+        value['is_enabled']=value['enabled']
+        return value
 
     def get(self, key):
         with closing(self.scheduler.connect()) as conn:
@@ -137,16 +148,18 @@ class Schedules:
         key = self.scheduler.add_job(name, cron, kind, payload, timezone=timezone,
             timeout=timeout, max_runs=max_runs, execution_backend='temporal')
         with closing(self.scheduler.connect()) as conn, conn:
-            conn.execute('UPDATE scheduled_jobs SET is_enabled=? WHERE id=?', (int(not paused),key))
+            conn.execute('UPDATE scheduled_jobs SET is_enabled=0 WHERE id=?', (key,))
             conn.execute('UPDATE scheduled_jobs SET context=? WHERE id=?',(canonical(scope),key))
-            conn.execute('INSERT INTO temporal_schedule_bindings(job_id,address,namespace,queue,overlap,updated) VALUES(?,?,?,?,?,?)',
-                (key,settings.address,settings.namespace,self.queue,overlap,time.time()))
+            conn.execute('INSERT INTO temporal_schedule_bindings(job_id,address,namespace,queue,overlap,enabled,updated) VALUES(?,?,?,?,?,?,?)',
+                (key,settings.address,settings.namespace,self.queue,overlap,int(not paused),time.time()))
         return key
 
     def change(self, key, action, **values):
         if current_role() != 'admin':
             raise PermissionError('Schedule management requires admin')
         row = self.get(key)
+        from .schedule_migration import editable
+        editable(self,row)
         if action not in {'update','pause','resume','cancel'}:
             raise ValueError('Unknown Schedule operation')
         if values and (action != 'update' or set(values)-{'cron','timezone','max_runs','timeout','overlap'}):
@@ -172,10 +185,10 @@ class Schedules:
             if current['revision'] != row['revision'] or current['run_count'] != row['run_count']:
                 raise ValueError('Schedule changed; reload before updating')
             enabled = 0 if action in {'pause','cancel'} else 1 if action=='resume' else row['is_enabled']
-            conn.execute('UPDATE scheduled_jobs SET cron_expression=?,timezone=?,max_runs=?,timeout=?,is_enabled=?,next_run_at=? WHERE id=?',
-                (cron,zone,maximum,timeout,enabled,next_time(cron,zone),key))
-            conn.execute('UPDATE temporal_schedule_bindings SET overlap=?,cancelled=?,revision=revision+1,updated=? WHERE job_id=?',
-                (overlap,int(action=='cancel'),time.time(),key))
+            conn.execute('UPDATE scheduled_jobs SET cron_expression=?,timezone=?,max_runs=?,timeout=?,next_run_at=? WHERE id=?',
+                (cron,zone,maximum,timeout,next_time(cron,zone),key))
+            conn.execute('UPDATE temporal_schedule_bindings SET overlap=?,enabled=?,cancelled=?,revision=revision+1,updated=? WHERE job_id=?',
+                (overlap,enabled,int(action=='cancel'),time.time(),key))
         if action == 'cancel':
             with closing(self.scheduler.connect()) as conn,conn:
                 conn.execute("INSERT OR IGNORE INTO schedule_notification_delivery SELECT id,'cancelled',NULL,0,NULL,NULL FROM schedule_notifications WHERE job_id=?",(key,))
@@ -193,7 +206,8 @@ class Schedules:
             ScheduleActionStartWorkflow(WORKFLOW, {'schedule_id':row['id']},
                 id=self.remote_id(row), task_queue=self.queue,
                 execution_timeout=timedelta(seconds=row['timeout']+60)),
-            ScheduleSpec(cron_expressions=[row['cron_expression']],time_zone_name=row['timezone']),
+            ScheduleSpec(cron_expressions=[row['cron_expression']],time_zone_name=row['timezone'],
+                start_at=datetime.fromisoformat(row['start_at']) if row.get('start_at') else None),
             SchedulePolicy(overlap=ScheduleOverlapPolicy[row['overlap']],
                 catchup_window=timedelta(seconds=10),pause_on_failure=True),
             ScheduleState(paused=not bool(row['is_enabled']),note='PythonAI owner-scoped Schedule'))
@@ -238,8 +252,8 @@ class Schedules:
         if client.namespace != row['namespace']:
             raise PermissionError('Wrong Schedule namespace')
         handle = client.get_schedule_handle(self.remote_id(row))
-        if row['cancelled']:
-            await asyncio.to_thread(self.cancel_tasks,key)
+        if row['cancelled'] or row['retired']:
+            if row['cancelled']:await asyncio.to_thread(self.cancel_tasks,key)
             try:
                 await handle.delete(rpc_timeout=RPC_TIMEOUT)
             except RPCError as error:
@@ -272,7 +286,7 @@ class Schedules:
             await handle.update(update,rpc_timeout=RPC_TIMEOUT)
         with closing(self.scheduler.connect()) as conn, conn:
             conn.execute('UPDATE temporal_schedule_bindings SET applied=?,remote_deleted=?,updated=? WHERE job_id=? AND revision=?',
-                (row['revision'],int(bool(row['cancelled'])),time.time(),key,row['revision']))
+                (row['revision'],int(bool(row['cancelled'] or row['retired'])),time.time(),key,row['revision']))
 
     def cancel_tasks(self,key):
         with closing(self.scheduler.connect()) as conn,conn:
@@ -323,6 +337,9 @@ class Schedules:
             conn.execute('BEGIN IMMEDIATE')
             row = self._row(key,conn)
             old = conn.execute('SELECT * FROM temporal_schedule_occurrences WHERE id=?',(token,)).fetchone()
+            from .schedule_migration import admit_native
+            if not admit_native(conn,row,workflow_id,token,bool(old)):
+                return {'done':True}
             if row['cancelled']:
                 raise PermissionError('Schedule cancelled')
             if not old:
@@ -334,8 +351,7 @@ class Schedules:
                     (token,key,workflow_id,task,time.time()+row['timeout'],time.time()))
                 conn.execute('UPDATE scheduled_jobs SET run_count=run_count+1 WHERE id=?',(key,))
                 if row['run_count']+1>=row['max_runs']:
-                    conn.execute('UPDATE scheduled_jobs SET is_enabled=0 WHERE id=?',(key,))
-                    conn.execute('UPDATE temporal_schedule_bindings SET revision=revision+1 WHERE job_id=?',(key,))
+                    conn.execute('UPDATE temporal_schedule_bindings SET enabled=0,revision=revision+1 WHERE job_id=?',(key,))
             deadline=conn.execute('SELECT deadline FROM temporal_schedule_occurrences WHERE id=?',(token,)).fetchone()[0]
         # Deterministic task identity closes a crash between the two databases.
         existing = self.tasks.for_task(row['owner'],task)
@@ -412,13 +428,21 @@ class Schedules:
                 conn.execute('UPDATE temporal_schedule_occurrences SET state=? WHERE id=?',(state,occurrence['id']))
             evidence = (error+'\n'+text).strip()[:65536]
             fingerprint = digest([state,evidence])
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_schedule_migrations'").fetchone() and conn.execute(
+                    'SELECT 1 FROM temporal_schedule_migrations WHERE job_id=?',(row['id'],)).fetchone():
+                # A migrated job retains the legacy observation digest across both engines.
+                import hashlib
+                observation=text+('\n'+error[:1000] if state in {'failed','needs_input','uncertain'} else '')
+                fingerprint=hashlib.sha256((state+'\n'+observation).encode()).hexdigest()
             if fingerprint!=current['last_digest'] and (current['last_digest'] is not None or state!='waiting'):
                 self.scheduler.notify(conn,current,state,evidence)
             stop = state not in {'completed','waiting'} or (current['job_type']=='watch' and state=='completed') or current['run_count']>=current['max_runs']
+            if stop and conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_schedule_migrations'").fetchone():
+                conn.execute('UPDATE temporal_schedule_migrations SET restore_enabled=0 WHERE job_id=?',(row['id'],))
             history = (json.loads(current['history'])+[{'state':state,'summary':text[:4096]}])[-4:]
-            conn.execute('UPDATE scheduled_jobs SET last_digest=?,history=?,is_enabled=? WHERE id=?',
-                (fingerprint,canonical(history),int(current['is_enabled'] and not stop),row['id']))
-            conn.execute('UPDATE temporal_schedule_bindings SET revision=revision+1,updated=? WHERE job_id=?',(time.time(),row['id']))
+            conn.execute('UPDATE scheduled_jobs SET last_digest=?,history=? WHERE id=?',
+                (fingerprint,canonical(history),row['id']))
+            conn.execute('UPDATE temporal_schedule_bindings SET enabled=?,revision=revision+1,updated=? WHERE job_id=?',(int(current['is_enabled'] and not stop),time.time(),row['id']))
 
 
 async def reconcile(schedules,client):

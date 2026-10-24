@@ -25,11 +25,11 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence 已完成；TP11.7 原始長任務完整產物及 TP20–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP11.7 原始長任務完整產物及 TP21–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-23）
+### 目前導入進度（2026-10-24）
 
-本輪 TP19 新排程 CRUD、owner／時區／overlap／max_runs 契約及唯讀 occurrence 已實作；新增 35 項契約測試、5 項隔離真實 Service 測試；完整 venv pytest **1326 passed、12 skipped、95 subtests passed**，1299.93 秒，pip check／compileall／diff check 通過。新增排程預設 paused，舊排程切換留給 TP20；執行與操作方式見 12.10。
+本輪 TP20 已完成逐筆 preview／paused staging／原子切換／安全回滾與 UTC occurrence fence；新增 35 項契約測試及 6 項隔離真實 Service 測試全通過。完整 venv 首輪 1366 passed、12 skipped、1 failed（未改動的 Go scaffold），該檔重驗 19 passed；首輪失敗未重現，未將首輪記為全綠。pip check／compileall／diff check 通過，詳細證據見 12.11。TP19 新排程整合見 12.10。
 
 前輪完成 TP18：將 Temporal 刪除接入原人類確認的 frozen lifecycle 計畫，持久 reference 保護仍在執行的本機程序；核對遠端閉合及 History／visibility 查無紀錄後，才清除同 task 的執行內容與 artifacts。保留最小雜湊 fence 防復活；有界 retention CLI 預設 dry-run，不掃描刪除程式檔案。隔離 Service 的刪除／離線恢復／CLI 重入驗證通過。完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check／compileall／diff check 通過。archival／備份分列 external_policy_required，不宣稱已抹除正式資料，詳見 12.9 及 backend README。
 
@@ -84,7 +84,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP17 | 首批同機 create_directory／write_file／edit_file 審批寫入、前後態核對、未知效果不重試與人工觀測已實作；驗收見 12.8 |
 | TP18 | 同機 erasure fence、遠端閉合與 History／visibility 核對、scoped payload 清除及有界 retention CLI 已實作；驗收見 12.9 |
 | TP19 | 新排程 owner-scoped CRUD、時區、SKIP／BUFFER_ONE、max_runs、獨立唯讀 task 與 erasure 整合；驗收見 12.10 |
-| TP20–TP30 | 待辦；舊排程遷移、多 Agent、正式部署、多機及其他副作用能力尚未交付 |
+| TP20 | 舊唯讀排程 preview／paused staging／cutover／rollback、UTC fence／DST／離線重入；驗收見 12.11 |
+| TP21–TP30 | 待辦；多 Agent、正式部署、多機及其他副作用能力尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -591,7 +592,7 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 - [x] TP13.5：以 opt-in `approval` engine／V3／獨立 queue 整合 ApprovalStore 原子 decision outbox、既有授權入口與桌面事件通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。只開放同機唯讀工具；寫入仍留 TP17。
 - [x] TP13.6（2026-10-21）：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰、人工回答接審批及端到端測試通過；35 項契約／單元測試、6 項真實 Service／Worker 測試含 V3 History replay。完整 pytest **1107 passed、9 skipped、95 subtests passed**，1069.19 秒；pip check、compileall、diff check 通過。使用受控模型；真實 provider 與桌面實機驗收未因此改標成功，細節見 backend README。
 
-後續依序：TP20 舊排程切換；TP19 新排程整合見 12.10；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
+後續依序：TP21 DAG 父／子 Workflow；TP20 舊唯讀排程切換見 12.11；TP19 新排程整合見 12.10；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
 測試代替。TP02 非 Windows 平台驗證與 TP11.7 原始長任務完整產物驗收仍獨立保留；真實 provider 唯讀補驗見 12.7。
 
@@ -684,7 +685,27 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 不因重試而延長，且不得提高既有根預算。已送出的 provider 請求仍不能保證撤回。
 Worker／Service 未恢復、仍有 transfer task、未知 RPC 或 visibility lag 時，刪除保持 pending，
 保留 frozen files；archival／備份仍屬 external_policy_required。
-下一項 TP20 才處理舊排程 dry-run／cutover／rollback、DST 與明確補跑評估。
+TP20 舊唯讀排程 dry-run／cutover／rollback、DST 與停機不補跑驗收接續見 12.11。
+
+### 12.11 TP20 舊排程遷移／切換／回滾
+
+限定 TP19 唯讀 agent/watch 與 bounded prompt；既有 skill／script／command／寫入不遷移。
+使用可信本機 `schedule_migration_cli` 或原 execution_scope 的 Python API，保持 owner、
+角色、workspace、TaskStore／scheduler DB／namespace／queue 綁定。未變更正式設定或使用者資料。
+
+- [x] TP20.1：read-only preview 不建 schema、不載入 SDK；輸出來源 digest、原 UTC next_run、timezone、計數及未來 10 次。stage 保存原始 snapshot／generation；來源變動要求重新審閱，不接受活躍 lease 或 running／uncertain legacy run。
+- [x] TP20.2：paused native staging 與真實 ListScheduleMatchingTimes 比對；DST gap 略過、fold 為兩個不同 UTC slot，UTC／Asia/Taipei 保持原語意；不符則阻擋啟用。
+- [x] TP20.3：原子 transition fence 關閉 legacy，再 reconcile native；activating 重入刷新未來 barrier，拒絕舊／停機觸發。保留 SQLite／Temporal 共用 UTC occurrence fence；metadata retry／相同時刻不同 offset 不重跑、不重計。
+- [x] TP20.4：原 max_runs／run_count／history／root budget 不歸零，既有通知仍走原 queue，跨引擎 observation digest 去重一致；新受理沿用唯讀工具上限。native desired enable 與 legacy is_enabled 分離；舊 query 仍看見停用。
+- [x] TP20.5：rollback 先 pause／停止新受理，等待 occurrence／root task／live reference／未知 operation／遠端 Workflow 關閉；刪除 Schedule 並驗證 NOT_FOUND 及 revision 後才恢復 SQLite。選現在／最後已受理 UTC slot 之後的下一次，不歷史補跑；停用、watch 完成及 needs_input 不復活。
+- [x] TP20.6：Worker 只續作已授權切換／回滾 intent；離線、未知 RPC、刪除成功但本機 commit 中斷都保留 pending 並以同 id 重入。session erasure 驗證完成後清除 migration 原文 snapshot／occurrence fences。
+- [x] TP20.7：完成 venv 全套及失敗項重驗、pip check／compileall／diff check，建立本次獨立 commit；首輪 Go scaffold 失敗及重驗分別記錄如下。
+
+驗收（2026-10-24）：TP20 新增 **35 項契約測試、6 項隔離真實 Service 測試**全部通過。完整 venv pytest 首輪 **1366 passed、12 skipped、1 failed、95 subtests passed**，1658.42 秒；唯一失敗為未改動的 Go scaffold 測試（Go test 回傳未取得 passing case），其所在完整 results 測試檔重驗 **19 passed**，33.22 秒，該失敗未重現，未確認首輪根因，不將首輪記為全綠。另有既有 Starlette／AnyIO deprecation 及 Tkinter 解構執行緒 warnings（共 3）；TP20 專用 35 項獨立驗證亦通過，34.99 秒；排程相關前置回歸 99 passed、2 subtests passed。pip check、compileall、diff check 通過。
+
+最終紀錄：`temp/temporal-tp20-full.log`、`temp/temporal-tp20-results-recheck.log`、`temp/temporal-tp20-unit-final.log`（不入 Git）。真實 Service 證明未來 10 次 Calendar API、春／秋 DST、台北、切換／受控 runner task／回滾、Service 停止恢復，以及 Schedule 已刪除但本機 commit 中斷的續作。沒有付費 provider 呼叫，未修改正式設定／使用者排程；受控 scheduled timestamp 不等同已等待正式分鐘 cron。
+操作命令、pending exit 2、停止條件與資料邊界見 backend README 的 TP20 節。
+下一項為 TP21 DAG 父／子 Workflow 與 shared budget；TP11.7 原始長任務完整產物仍獨立待辦。
 
 ## 13. 測試矩陣、驗收與放量
 

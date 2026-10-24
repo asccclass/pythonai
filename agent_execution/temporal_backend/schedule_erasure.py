@@ -126,4 +126,6 @@ def scrub(store,session):
                 'occurrence_visibility':'not_found_verified','occurrences':occurrences,'checked':time.time(),
                 'archival':'external_policy_required','backups':'external_policy_required'})))
             conn.execute('DELETE FROM temporal_schedule_occurrences WHERE job_id=?',(key,))
+            for table in ('schedule_occurrence_fences','temporal_schedule_migrations'):
+                if table in tables(conn):conn.execute('DELETE FROM '+table+' WHERE job_id=?',(key,))
             conn.execute('DELETE FROM temporal_schedule_bindings WHERE job_id=?',(key,))
