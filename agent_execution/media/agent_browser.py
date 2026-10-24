@@ -17,21 +17,40 @@ class AgentBrowserError(RuntimeError):
 AGENT_BROWSER_NPM_PACKAGE = 'agent-browser@0.39.1'
 
 
+def _npx_prefix() -> list[str]:
+    if os.name != 'nt':
+        npx = shutil.which('npx')
+        return [npx] if npx else []
+    # npm installs extensionless POSIX shims and .cmd wrappers on Windows. Neither
+    # is a native executable, so launching it directly with shell=False raises
+    # WinError 193. Invoke npm's JavaScript entrypoint through node.exe instead;
+    # this also keeps URL arguments out of cmd.exe command parsing.
+    node = shutil.which('node.exe') or shutil.which('node')
+    npx = shutil.which('npx.cmd') or shutil.which('npx')
+    if node and npx:
+        cli = Path(npx).resolve().parent / 'node_modules' / 'npm' / 'bin' / 'npx-cli.js'
+        if cli.is_file():
+            return [node, str(cli)]
+    return []
+
+
 def _command_prefix() -> list[str]:
     configured = os.environ.get('AGENT_BROWSER_EXECUTABLE')
     if configured:
+        if os.name == 'nt' and Path(configured).suffix.casefold() in {'.cmd', '.bat', '.ps1'}:
+            raise AgentBrowserError('AGENT_BROWSER_EXECUTABLE must be a native executable on Windows')
         return [configured]
-    installed = shutil.which('agent-browser')
+    installed = shutil.which('agent-browser.exe' if os.name == 'nt' else 'agent-browser')
     if installed:
         return [installed]
     root = Path(__file__).resolve().parents[2]
-    local = root / 'node_modules' / '.bin' / ('agent-browser.cmd' if os.name == 'nt' else 'agent-browser')
+    local = root / 'node_modules' / '.bin' / ('agent-browser.exe' if os.name == 'nt' else 'agent-browser')
     if local.is_file():
         return [str(local)]
-    npx = shutil.which('npx')
+    npx = _npx_prefix()
     if npx:
         # Keep automatic bootstrap deterministic when the CLI is not globally installed.
-        return [npx, '--yes', AGENT_BROWSER_NPM_PACKAGE]
+        return npx + ['--yes', AGENT_BROWSER_NPM_PACKAGE]
     raise AgentBrowserError('agent-browser is unavailable; install agent-browser or Node.js/npx')
 
 

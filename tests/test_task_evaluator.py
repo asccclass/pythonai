@@ -435,6 +435,24 @@ class TaskEvaluatorTests(unittest.TestCase):
         finally:
             _active.reset(token)
 
+    def test_duckduckgo_results_are_public_web_evidence(self):
+        from task_evaluator import public_web_source_evidence
+        step = {
+            'id': 'search', 'name': 'search_web', 'state': 'completed',
+            'input': json.dumps({'query': '1 ZAR to TWD'}),
+            'result': json.dumps(ToolResult(True, json.dumps([{
+                'title': 'ZAR to TWD', 'href': 'https://rates.test/zar-twd',
+                'body': '1 ZAR = 1.96 TWD at 08:00 UTC',
+            }]), side_effects={'status': 'none'}, evidence={
+                'kind': 'duckduckgo_search', 'provider': 'duckduckgo.com',
+            }).to_dict()),
+        }
+
+        self.assertEqual(public_web_source_evidence([step]), [{
+            'kind': 'public_web_search_result', 'url': 'https://rates.test/zar-twd',
+            'characters': len('1 ZAR = 1.96 TWD at 08:00 UTC'),
+        }])
+
     def test_judge_prompt_uses_current_system_date(self):
         response = MagicMock()
         response.choices[0].message.content = '{"success": true, "score": 1.0, "feedback": "ok"}'

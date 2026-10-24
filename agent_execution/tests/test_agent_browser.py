@@ -47,12 +47,27 @@ def test_read_public_page_rejects_invalid_cli_json():
 
 
 def test_read_public_page_uses_pinned_npx_when_cli_is_not_installed():
-    def which(name):
-        return 'npx' if name == 'npx' else None
-
-    with patch('agent_execution.media.agent_browser.shutil.which', side_effect=which), \
+    with patch('agent_execution.media.agent_browser.shutil.which', return_value=None), \
+         patch('agent_execution.media.agent_browser._npx_prefix', return_value=['npx']), \
          patch('agent_execution.media.agent_browser.run_process', return_value=completed([], {
              'success': True, 'data': {'content': 'public text'}})) as run:
         assert read_public_page('https://example.test/') == 'public text'
 
     assert run.call_args.args[0][:3] == ['npx', '--yes', 'agent-browser@0.39.1']
+
+
+def test_windows_npx_uses_node_entrypoint_instead_of_shell_shim(tmp_path):
+    from agent_execution.media.agent_browser import _npx_prefix
+    install = tmp_path / 'node'
+    cli = install / 'node_modules' / 'npm' / 'bin' / 'npx-cli.js'
+    cli.parent.mkdir(parents=True)
+    cli.write_text('// fixture', encoding='utf-8')
+    node = install / 'node.exe'
+    npx = install / 'npx.cmd'
+
+    def which(name):
+        return str(node) if name == 'node.exe' else str(npx) if name == 'npx.cmd' else None
+
+    with patch('agent_execution.media.agent_browser.os.name', 'nt'), \
+         patch('agent_execution.media.agent_browser.shutil.which', side_effect=which):
+        assert _npx_prefix() == [str(node), str(cli)]

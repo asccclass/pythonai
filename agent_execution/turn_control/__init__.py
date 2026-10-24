@@ -68,6 +68,9 @@ class TurnProgress:
                                self.state['failures'].get(self.BROWSER_ENVIRONMENT_FAMILY, 0) >= 2)
         if name in self.REUSABLE_READS and record.get('success'):
             return 'This read already succeeded. Reuse its evidence to answer; do not fetch it again.'
+        if name == 'search_web' and self.state.get('search_result_key'):
+            return ('A web search already returned usable results. Reuse those results; do not search again '
+                    'with reworded keywords. Open one returned URL if more detail is required.')
         if name == 'search_web' and self.state.get('search_rate_limited'):
             self.state['blocked'] += 1
             return ('Search provider returned HTTP 429. Do not search it again in this turn, '
@@ -99,6 +102,15 @@ class TurnProgress:
         repeats = previous.get('repeats', 0) + 1 if self.state.get('last_key') == key and previous.get('outcome') == outcome else 1
         self.state['last_key'] = key
         self.state['calls'][key] = {'outcome': outcome, 'repeats': repeats, 'success': result.success, 'name': name}
+        if name == 'search_web' and result.success and result.evidence.get('kind') == 'duckduckgo_search':
+            try:
+                search_results = json.loads(result.output)
+            except (TypeError, ValueError):
+                search_results = []
+            if (isinstance(search_results, list) and any(
+                    isinstance(item, dict) and str(item.get('href') or '').startswith(('http://', 'https://'))
+                    for item in search_results)):
+                self.state['search_result_key'] = key
         self.state['failures'][family] = 0 if result.success else self.state['failures'].get(family, 0) + 1
         if result.success and name in self.BROWSER_TOOLS:
             self.state['failures'].pop(self.BROWSER_ENVIRONMENT_FAMILY, None)
@@ -109,3 +121,10 @@ class TurnProgress:
                     'Reflect on the error and change strategy; do not repeat the same operation. '
                     'Use create_directory for mkdir; use fetched content to answer instead of fetching it again.')
         return ''
+
+    def reusable_record(self, name, args):
+        """Return the successful read that should satisfy a redundant model call."""
+        record = self.state['calls'].get(self.key(name, args), {})
+        if name == 'search_web' and not record.get('success') and self.state.get('search_result_key'):
+            record = self.state['calls'].get(self.state['search_result_key'], {})
+        return record if record.get('success') else {}

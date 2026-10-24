@@ -48,6 +48,30 @@ def test_search_duplicates_reuse_evidence_even_when_interleaved():
     assert 'Reused earlier read' in next(m['content'] for m in reversed(messages) if m['role'] == 'tool')
 
 
+def test_productive_search_is_reused_for_reworded_query_instead_of_new_request():
+    import server
+    first = {'query': '1 ZAR to TWD exchange rate today'}
+    reworded = {'query': 'South African Rand Taiwan dollar current rate'}
+    raw, create = client([
+        response([call('search_web', first, 'first')]),
+        response([call('search_web', reworded, 'second')]),
+        response(content='1 ZAR is about 1.96 TWD.'),
+    ])
+    output = json.dumps([{
+        'title': 'ZAR to TWD', 'href': 'https://rates.test/zar-twd', 'body': '1 ZAR = 1.96 TWD',
+    }])
+    run = Mock(return_value=ToolResult(True, output, side_effects={'status': 'none'},
+                                      evidence={'kind': 'duckduckgo_search', 'provider': 'duckduckgo.com'}))
+    messages = [{'role': 'user', 'content': 'current ZAR rate'}]
+    with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
+        assert server.run_agent(messages) == '1 ZAR is about 1.96 TWD.'
+    assert run.call_count == 1
+    second_result = [message for message in messages if message.get('tool_call_id') == 'second'][0]
+    assert 'Reused earlier read' in second_result['content']
+    assert '1 ZAR = 1.96 TWD' in second_result['content']
+    assert create.call_count == 3
+
+
 def test_search_rate_limit_blocks_changed_query_and_survives_checkpoint():
     progress = TurnProgress()
     progress.observe('search_web', {'query': 'ZAR'}, ToolResult(False, error='HTTP 429',
@@ -156,6 +180,28 @@ def test_navigation_only_browser_session_failure_is_recovered_by_later_source():
         'url': 'https://bank.test/rates', 'actions': [{'kind': 'click', 'selector': '#transfer'}],
     })}
     assert not recovered_read_failure(interactive, [interactive, successful])
+
+
+def test_search_429_and_prevented_repeat_are_recovered_by_prior_productive_search():
+    from agent_execution.turn_control.recovery import recovered_read_failure
+    successful = {'name': 'search_web', 'state': 'completed', 'input': '{"query":"ZAR TWD"}',
+                  'result': json.dumps(ToolResult(True, json.dumps([{
+                      'title': 'rate', 'href': 'https://rates.test/zar', 'body': '1 ZAR = 1.96 TWD',
+                  }]), side_effects={'status': 'none'}, evidence={
+                      'kind': 'duckduckgo_search', 'provider': 'duckduckgo.com',
+                  }).to_dict())}
+    limited = {'name': 'search_web', 'state': 'failed', 'input': '{"query":"current ZAR TWD"}',
+               'result': json.dumps(ToolResult(False, error='HTTP 429', side_effects={'status': 'none'},
+                                               evidence={'kind': 'duckduckgo_search', 'http_status': 429}).to_dict())}
+    prevented = {'name': 'search_web', 'state': 'failed', 'input': '{"query":"Rand rate"}',
+                 'result': json.dumps(ToolResult(False, error='do not search again', side_effects={'status': 'none'},
+                                                 evidence={'kind': 'repeat_prevented'}).to_dict())}
+    assert recovered_read_failure(limited, [successful, limited, prevented])
+    assert recovered_read_failure(prevented, [successful, limited, prevented])
+
+    successful['result'] = json.dumps(ToolResult(True, '[]', side_effects={'status': 'none'},
+                                                  evidence={'kind': 'duckduckgo_search'}).to_dict())
+    assert not recovered_read_failure(limited, [successful, limited])
 
 def test_failed_web_read_is_recovered_by_subsequent_successful_source():
     from agent_execution.turn_control.recovery import recovered_read_failure

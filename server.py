@@ -465,7 +465,7 @@ def run_agent(
                             operation_id=f'model:{iteration}:tool:{tool_call.id}')
                     else:
                         from agent_execution.results import ToolResult
-                        previous_id = progress.state['calls'].get(progress.key(tool_name, tool_args), {}).get('source_id')
+                        previous_id = progress.reusable_record(tool_name, tool_args).get('source_id')
                         previous = tool_results.get(previous_id, {})
                         if tool_name in TurnProgress.REUSABLE_READS and previous.get('success') is True:
                             source_id = previous_id

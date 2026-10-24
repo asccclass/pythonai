@@ -32,13 +32,27 @@ def public_web_source_evidence(steps):
         return []
     evidence=[]
     for step in steps:
-        if step.get('name') not in {'browse_webpage', 'browser_session'} or step.get('state') != 'completed':
+        if step.get('name') not in {'browse_webpage', 'browser_session', 'search_web'} or step.get('state') != 'completed':
             continue
         try:
             args=json.loads(step['input']);result=json.loads(step.get('result') or '{}')
         except (ValueError,TypeError):
             continue
         url=args.get('url','');output=result.get('output','');kind=result.get('evidence',{}).get('kind')
+        if step.get('name') == 'search_web':
+            if result.get('success') is not True or kind != 'duckduckgo_search':
+                continue
+            try:
+                search_results=json.loads(output)
+            except (ValueError,TypeError):
+                continue
+            for item in search_results if isinstance(search_results,list) else []:
+                if not isinstance(item,dict):
+                    continue
+                item_url=item.get('href','');body=item.get('body','')
+                if isinstance(item_url,str) and item_url.startswith(('http://','https://')) and isinstance(body,str) and body.strip():
+                    evidence.append({'kind':'public_web_search_result','url':item_url,'characters':len(body)})
+            continue
         if step.get('name') == 'browser_session':
             if not (set(args) <= {'url'} or (set(args) <= {'url', 'actions'} and not args.get('actions'))):
                 continue

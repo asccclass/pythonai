@@ -61,6 +61,22 @@ def recovered_read_failure(step, steps, root=None):
     try:
         failed = json.loads(step.get('result') or '{}')
         args = json.loads(step['input'])
+        if (step['name'] == 'search_web' and step['state'] == 'failed' and
+                failed.get('side_effects', {}).get('status') in {None, 'none'} and
+                isinstance(args.get('query'), str)):
+            for other in steps:
+                if other is step or other.get('name') != 'search_web' or other.get('state') != 'completed':
+                    continue
+                other_result = json.loads(other.get('result') or '{}')
+                if (other_result.get('success') is not True or
+                        other_result.get('evidence', {}).get('kind') != 'duckduckgo_search'):
+                    continue
+                search_results = json.loads(other_result.get('output') or '[]')
+                if isinstance(search_results, list) and any(
+                        isinstance(item, dict) and str(item.get('href') or '').startswith(('http://', 'https://'))
+                        for item in search_results):
+                    return True
+            return False
         web_reads = {'browse_webpage', 'fetch_url', 'browser_session'}
         navigation_only = step['name'] != 'browser_session' or set(args) <= {'url'} or (
             set(args) <= {'url', 'actions'} and not args.get('actions'))

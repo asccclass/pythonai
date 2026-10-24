@@ -27,42 +27,39 @@ from base import (
 
 
 class BaseTests(unittest.TestCase):
-    def test_search_http_429_is_failure_with_retry_after_and_one_request(self):
-        from urllib.error import HTTPError
-        from email.message import Message
+    def test_search_rate_limit_is_structured_http_429_and_one_request(self):
+        from ddgs.exceptions import RatelimitException
         from agent_execution.results import normalize_result
-        headers = Message()
-        headers['Retry-After'] = '30'
-        error = HTTPError('https://en.wikipedia.org/w/api.php', 429, 'Too Many Requests', headers, None)
-        with patch('urllib.request.urlopen', side_effect=error) as request:
+        with patch('ddgs.DDGS') as search:
+            search.return_value.text.side_effect = RatelimitException('Too Many Requests')
             result = normalize_result(base.search_web('ZAR to TWD'))
         self.assertFalse(result.success)
         self.assertEqual(result.evidence['http_status'], 429)
-        self.assertEqual(result.evidence['retry_after'], '30')
+        self.assertEqual(result.evidence['provider'], 'duckduckgo.com')
         self.assertEqual(result.side_effects['status'], 'none')
-        request.assert_called_once()
-        self.assertEqual(request.call_args.kwargs['timeout'], 15)
+        search.assert_called_once_with(timeout=15)
+        search.return_value.text.assert_called_once_with('ZAR to TWD', max_results=5)
 
     def test_search_success_preserves_results_and_source(self):
         from agent_execution.results import normalize_result
         import json
-        from unittest.mock import MagicMock
-        response = MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps({'query': {'search': [
-            {'title': 'Rand', 'snippet': 'Currency'}, {'title': 'Dollar', 'snippet': 'Currency'}]}}).encode()
-        with patch('urllib.request.urlopen', return_value=response):
+        with patch('ddgs.DDGS') as search:
+            search.return_value.text.return_value = [
+                {'title': 'Rand', 'href': 'https://rates.test/zar', 'body': '1 ZAR = 1.96 TWD'}]
             result = normalize_result(base.search_web('currency', max_results=1))
         self.assertTrue(result.success)
-        self.assertEqual(json.loads(result.output), [{'title': 'Rand', 'snippet': 'Currency'}])
-        self.assertEqual(result.evidence['provider'], 'en.wikipedia.org')
+        self.assertEqual(json.loads(result.output), [{
+            'title': 'Rand', 'href': 'https://rates.test/zar', 'body': '1 ZAR = 1.96 TWD'}])
+        self.assertEqual(result.evidence['provider'], 'duckduckgo.com')
 
     def test_search_network_error_is_not_success(self):
         from agent_execution.results import normalize_result
-        with patch('urllib.request.urlopen', side_effect=TimeoutError('offline')) as request:
+        with patch('ddgs.DDGS') as search:
+            search.return_value.text.side_effect = TimeoutError('offline')
             result = normalize_result(base.search_web('currency'))
         self.assertFalse(result.success)
         self.assertIn('offline', result.error)
-        request.assert_called_once()
+        search.return_value.text.assert_called_once()
 
     def setUp(self):
         base._approved_commands.clear()

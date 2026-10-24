@@ -764,34 +764,35 @@ TOOLS_SCHEMAS = [
 ]
 
 def search_web(query: str, max_results: int = 5):
-    """Search Wikipedia once; preserve HTTP failures as execution facts."""
+    """Search the public web once; preserve provider failures as execution facts."""
     from agent_execution.results import ToolResult
-    from urllib.error import HTTPError
+    evidence = {'kind': 'duckduckgo_search', 'provider': 'duckduckgo.com'}
     try:
-        import urllib.request
-        import urllib.parse
+        from ddgs import DDGS
+        from ddgs.exceptions import RatelimitException
+    except ImportError as e:
+        return ToolResult(False, error=f'Search unavailable: {type(e).__name__}: {e}',
+                          side_effects={'status': 'none'}, evidence=evidence)
+
+    try:
         import json
-        
-        url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(query)}&utf8=&format=json"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = json.loads(response.read().decode())
-        
-        results = data.get("query", {}).get("search", [])[:max_results]
-        formatted = [{"title": r["title"], "snippet": r["snippet"]} for r in results]
+        results = DDGS(timeout=15).text(query, max_results=max_results)
+        formatted = [{
+            'title': str(item.get('title') or ''),
+            'href': str(item.get('href') or item.get('url') or ''),
+            'body': str(item.get('body') or item.get('snippet') or ''),
+        } for item in results if isinstance(item, dict)]
         return ToolResult(True, json.dumps(formatted, ensure_ascii=False, indent=2),
                           side_effects={'status': 'none'},
-                          evidence={'kind': 'wikipedia_search', 'provider': 'en.wikipedia.org'})
-    except HTTPError as e:
-        evidence = {'kind': 'wikipedia_search', 'provider': 'en.wikipedia.org', 'http_status': e.code}
-        if e.headers and e.headers.get('Retry-After'):
-            evidence['retry_after'] = e.headers['Retry-After']
-        return ToolResult(False, error=f'Search failed: {e}',
-                          side_effects={'status': 'none'}, evidence=evidence)
-    except Exception as e:
-        return ToolResult(False, error=f'Search failed: {e}',
+                          evidence=evidence)
+    except RatelimitException as e:
+        return ToolResult(False, error=f'Search failed: {type(e).__name__}: {e}',
                           side_effects={'status': 'none'},
-                          evidence={'kind': 'wikipedia_search', 'provider': 'en.wikipedia.org'})
+                          evidence={**evidence, 'http_status': 429})
+    except Exception as e:
+        return ToolResult(False, error=f'Search failed: {type(e).__name__}: {e}',
+                          side_effects={'status': 'none'},
+                          evidence=evidence)
 
 def browse_webpage(url: str):
     """Return rendered page text, with browser failures represented structurally.
