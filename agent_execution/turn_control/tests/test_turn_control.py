@@ -139,6 +139,22 @@ def test_failed_duplicate_browser_read_is_recovered_by_successful_evidence():
     failed['input'] = '{"url":"https://example.test/other"}'
     assert not recovered_read_failure(failed, [successful, failed])
 
+def test_failed_web_read_is_recovered_by_subsequent_successful_source():
+    from agent_execution.turn_control.recovery import recovered_read_failure
+    from agent_execution.results import ToolResult
+    failed_bot = {'name': 'browse_webpage', 'state': 'failed', 'input': '{"url":"https://bot.example.com/rates"}',
+                  'result': json.dumps(ToolResult(False, error='DNS lookup failed', side_effects={'status': 'none'}).to_dict())}
+    successful_sunny = {'name': 'browse_webpage', 'state': 'completed', 'input': '{"url":"https://sunny.example.com/rates"}',
+                        'result': json.dumps(ToolResult(True, 'ZAR 1.92', side_effects={'status': 'none'}).to_dict())}
+    # Recovered when followed by successful read
+    assert recovered_read_failure(failed_bot, [failed_bot, successful_sunny])
+    # Not recovered when there is no subsequent successful source
+    assert not recovered_read_failure(failed_bot, [failed_bot])
+    # Subsequent failing source does not recover prior failure
+    failed_xe = {'name': 'browse_webpage', 'state': 'failed', 'input': '{"url":"https://xe.example.com/rates"}',
+                 'result': json.dumps(ToolResult(False, error='timeout', side_effects={'status': 'none'}).to_dict())}
+    assert not recovered_read_failure(failed_bot, [failed_bot, failed_xe])
+
 
 def test_changing_mkdir_paths_stops_same_failure_family_then_allows_recovery():
     progress = TurnProgress()

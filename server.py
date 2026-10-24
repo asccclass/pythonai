@@ -278,13 +278,19 @@ def run_agent(
             if step_controller is None:
                 checkpoint('model_pending')
             attempts = resume_state.get('model_attempt', 1)-1 if pending_request is not None else 0
+            step_callback = event_callback
+            if eval_retries > 0 and task_evaluator is not None and event_callback:
+                def step_callback(kind, payload):
+                    if kind == 'model.delta':
+                        return
+                    event_callback(kind, payload)
             while True:
                 try:
                     if step_controller is not None:
                         checkpoint('model_pending', model_request=request, model_attempt=attempts+1)
                     assistant_message = model_step(
                         get_client(), request, messages, iteration=iteration, attempt=attempts+1,
-                        event_callback=event_callback, check_cancelled=check_cancelled,
+                        event_callback=step_callback, check_cancelled=check_cancelled,
                         operation_id=f'model:{iteration}:attempt:{attempts+1}')
                     break
                 except BudgetExhausted as error:

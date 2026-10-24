@@ -345,6 +345,93 @@ class TaskEvaluatorTests(unittest.TestCase):
     # =========================================================
     # 3. Critic-Correction 自省修復迴圈測試 (server.run_agent)
     # =========================================================
+    def test_run_agent_critic_correction_suppresses_duplicate_model_deltas_on_retry(self):
+        eval_attempts = 0
+        def custom_evaluate(*args, **kwargs):
+            nonlocal eval_attempts
+            eval_attempts += 1
+            if eval_attempts == 1:
+                return EvaluationResult(success=False, score=0.4, feedback="需修正數字")
+            return EvaluationResult(success=True, score=1.0, feedback="驗收通過")
+
+        mock_evaluator = MagicMock()
+        mock_evaluator.capture_state.return_value = {}
+        mock_evaluator.evaluate.side_effect = custom_evaluate
+
+        call_count = 0
+        def fake_streamed_completion(client, model, messages, tools, emit, cancelled=None):
+            nonlocal call_count
+            call_count += 1
+            emit('model.delta', {'text': f'Candidate {call_count}'})
+            return ChatCompletionMessage(role='assistant', content=f'Candidate {call_count}')
+
+        events = []
+        def event_cb(kind, payload):
+            events.append((kind, payload))
+
+        messages = [{"role": "user", "content": "查詢匯率"}]
+        store = MemoryStore(self.workspace / "memory.db")
+        episode_id = store.start_episode()
+
+        with patch("server.get_client", return_value=MagicMock()),              patch("agent_execution.streaming.streamed_completion", side_effect=fake_streamed_completion):
+            reply = server.run_agent(
+                messages=messages,
+                memory=store,
+                episode_id=episode_id,
+                task_evaluator=mock_evaluator,
+                max_eval_retries=2,
+                event_callback=event_cb,
+            )
+
+        self.assertEqual(reply, "Candidate 2")
+        self.assertEqual(eval_attempts, 2)
+        deltas = [payload['text'] for kind, payload in events if kind == 'model.delta']
+        self.assertEqual(deltas, ['Candidate 1'])
+
+    def test_web_read_failure_recovered_by_subsequent_source_passes_evaluation(self):
+        evaluator = TaskEvaluator(self.workspace)
+        from agent_execution.tasks import _active
+        steps = [
+            {
+                'id': 'chatcmpl-tool-fail-bot',
+                'name': 'browse_webpage',
+                'state': 'failed',
+                'input': json.dumps({'url': 'https://bot.com.tw/rates'}),
+                'result': json.dumps({'success': False, 'error': 'DNS lookup failed', 'side_effects': {'status': 'none'}}),
+            },
+            {
+                'id': 'chatcmpl-tool-succ-sunny',
+                'name': 'browse_webpage',
+                'state': 'completed',
+                'input': json.dumps({'url': 'https://sunnybank.com.tw/rates'}),
+                'result': json.dumps({'success': True, 'output': '南非幣即期買入 1.9200', 'evidence': {'kind': 'agent_browser_read'}, 'side_effects': {'status': 'none'}}),
+            },
+        ]
+        mock_task_store = MagicMock()
+        mock_task_store.get.return_value = {
+            'goal': '查詢南非幣匯率',
+            'criteria': {'version': 1, 'checks': []},
+        }
+        mock_task_store.steps.return_value = steps
+
+        token = _active.set((mock_task_store, 'owner', 'task-rate-1'))
+        try:
+            messages = [
+                {'role': 'user', 'content': '幫我查詢南非幣現在的匯率'},
+                {'role': 'assistant', 'content': '南非幣即期買入為 1.9200。'},
+            ]
+            with patch.object(evaluator, 'evaluate_llm_judge', return_value=(True, 1.0, '匯率正確')):
+                res = evaluator.evaluate(
+                    user_goal='幫我查詢南非幣現在的匯率',
+                    messages=messages,
+                    final_reply='南非幣即期買入為 1.9200。',
+                )
+            self.assertTrue(res.success)
+            self.assertNotIn('Tool step not successful: chatcmpl-tool-fail-bot', res.feedback)
+            self.assertTrue(res.criteria_met.get('source_evidence:public_web'))
+        finally:
+            _active.reset(token)
+
     def test_run_agent_critic_correction_succeeds_on_retry(self):
         eval_attempts = 0
 
