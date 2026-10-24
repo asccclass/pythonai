@@ -23,6 +23,7 @@ def iteration_limit(requested=None, saved=None):
 
 
 class TurnProgress:
+    REUSABLE_READS = frozenset({'fetch_url', 'browse_webpage', 'read_file', 'list_files', 'search_web'})
     BROWSER_TOOLS = frozenset({'browser_vision', 'browser_session', 'browse_webpage'})
     BROWSER_ENVIRONMENT_FAMILY = 'browser:environment'
 
@@ -65,8 +66,13 @@ class TurnProgress:
         record = self.state['calls'].get(key, {})
         environment_blocked = (name in self.BROWSER_TOOLS and
                                self.state['failures'].get(self.BROWSER_ENVIRONMENT_FAMILY, 0) >= 2)
-        if name in {'fetch_url', 'browse_webpage', 'read_file', 'list_files'} and record.get('success'):
+        if name in self.REUSABLE_READS and record.get('success'):
             return 'This read already succeeded. Reuse its evidence to answer; do not fetch it again.'
+        if name == 'search_web' and self.state.get('search_rate_limited'):
+            self.state['blocked'] += 1
+            return ('Search provider returned HTTP 429. Do not search it again in this turn, '
+                    'including with different keywords. Use existing evidence, another public source, '
+                    'or explain that current information could not be verified.')
         # Successful writes may be repeated after another step changes the file. Only
         # consecutive identical outcomes and failures are blocked; no cached writes replay.
         if key in self.state['blocked_keys'] or environment_blocked or (self.state.get('last_key') == key and record.get('repeats', 0) >= 2) or self.state['failures'].get(self.family(name, args), 0) >= 2:
@@ -77,6 +83,8 @@ class TurnProgress:
         return None
 
     def observe(self, name, args, result):
+        if name == 'search_web' and not result.success and result.evidence.get('http_status') == 429:
+            self.state['search_rate_limited'] = True
         if result.success and name in {'write_file', 'edit_file', 'create_directory', 'run_command', 'apply_project_patch'}:
             for old_key, record in list(self.state['calls'].items()):
                 if record.get('name') in {'read_file', 'list_files'}:

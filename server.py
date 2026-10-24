@@ -461,7 +461,7 @@ def run_agent(
                         from agent_execution.results import ToolResult
                         previous_id = progress.state['calls'].get(progress.key(tool_name, tool_args), {}).get('source_id')
                         previous = tool_results.get(previous_id, {})
-                        if tool_name in {'fetch_url', 'browse_webpage', 'read_file', 'list_files'} and previous.get('success') is True:
+                        if tool_name in TurnProgress.REUSABLE_READS and previous.get('success') is True:
                             source_id = previous_id
                             result = ToolResult(True, 'Reused earlier read; no new network/filesystem read was performed.\n' + str(previous.get('output', '')),
                                                 evidence={'kind':'reuse_prior_read','source_tool_call':source_id})
@@ -558,7 +558,10 @@ def run_agent(
                     operation_id=f'evaluation:{iteration}:{eval_retries}',
                 )
 
-            from dataclasses import asdict
+            from dataclasses import asdict, replace
+            if not eval_res.success and progress.state.get('search_rate_limited'):
+                eval_res = replace(eval_res, retryable=False,
+                    feedback='搜尋來源回傳 HTTP 429；本輪停止搜尋與驗收自動重試，請稍後再試或改查其他來源。\n' + eval_res.feedback)
             checkpoint('evaluation_done',evaluation=asdict(eval_res))
             resume_state = {}
 

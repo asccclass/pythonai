@@ -35,6 +35,71 @@ def client(responses):
     return NS(chat=NS(completions=NS(create=create))), create
 
 
+def test_search_duplicates_reuse_evidence_even_when_interleaved():
+    import server
+    first, other = {'query': 'ZAR to TWD'}, {'query': 'Rand'}
+    raw, _ = client([response([call('search_web', args, str(i))])
+                     for i, args in enumerate([first, other, first])] + [response(content='done')])
+    run = Mock(return_value=ToolResult(True, 'source evidence'))
+    messages = [{'role': 'user', 'content': 'search currencies'}]
+    with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
+        assert server.run_agent(messages) == 'done'
+    assert run.call_count == 2
+    assert 'Reused earlier read' in next(m['content'] for m in reversed(messages) if m['role'] == 'tool')
+
+
+def test_search_rate_limit_blocks_changed_query_and_survives_checkpoint():
+    progress = TurnProgress()
+    progress.observe('search_web', {'query': 'ZAR'}, ToolResult(False, error='HTTP 429',
+                     evidence={'http_status': 429}))
+    progress = TurnProgress(json.loads(json.dumps(progress.state)))
+    assert 'HTTP 429' in progress.before('search_web', {'query': '南非幣'})
+    assert progress.before('browse_webpage', {'url': 'https://bank.test'}) is None
+    assert TurnProgress().before('search_web', {'query': 'ZAR'}) is None
+
+
+def test_non_rate_limit_search_failure_allows_different_query():
+    progress = TurnProgress()
+    progress.observe('search_web', {'query': 'ZAR'}, ToolResult(False, error='HTTP 503',
+                     evidence={'http_status': 503}))
+    assert progress.before('search_web', {'query': 'Rand'}) is None
+
+
+def test_rate_limited_search_does_not_reexecute_or_run_critic_correction():
+    import server
+    from task_evaluator import EvaluationResult
+    raw, create = client([response([call('search_web', {'query': 'ZAR'}, 'one')]),
+                          response([call('search_web', {'query': 'Rand'}, 'two')]),
+                          response(content='Current rate could not be verified.')])
+    run = Mock(return_value=ToolResult(False, error='Search failed: HTTP Error 429: Too Many Requests',
+                                     evidence={'http_status': 429}))
+    evaluator = Mock()
+    evaluator.capture_state.return_value = {}
+    evaluator.evaluate.return_value = EvaluationResult(False, 0, 'Current rate missing', retryable=True)
+    events = []
+    # Capture events without selecting the streaming model path.
+    with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run), \
+         patch('server.log_episode_event', side_effect=lambda *args, **kwargs: events.append((args, kwargs))):
+        reply = server.run_agent([{'role': 'user', 'content': 'current rate'}], task_evaluator=evaluator)
+    assert run.call_count == 1
+    assert create.call_count == 3
+    assert evaluator.evaluate.call_count == 1
+    assert 'HTTP 429' in reply and '已停止重試' in reply
+    assert not any('critic_correction' in args for args, _ in events)
+
+
+def test_rate_limited_search_in_restored_turn_does_not_make_network_call():
+    import server
+    raw, _ = client([response([call('search_web', {'query': 'new keywords'}, 'new')]),
+                     response(content='unavailable')])
+    state = TurnProgress()
+    state.observe('search_web', {'query': 'old'}, ToolResult(False, evidence={'http_status': 429}))
+    with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context') as run:
+        assert server.run_agent([{'role': 'user', 'content': 'rate'}],
+                                resume_state={'progress': json.loads(json.dumps(state.state))}) == 'unavailable'
+    run.assert_not_called()
+
+
 def test_same_fetch_loop_is_bounded_and_final_has_no_tools():
     import server
     args = {'url': 'https://github.com/HarnessRouter/harnessrouter'}

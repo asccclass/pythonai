@@ -27,6 +27,43 @@ from base import (
 
 
 class BaseTests(unittest.TestCase):
+    def test_search_http_429_is_failure_with_retry_after_and_one_request(self):
+        from urllib.error import HTTPError
+        from email.message import Message
+        from agent_execution.results import normalize_result
+        headers = Message()
+        headers['Retry-After'] = '30'
+        error = HTTPError('https://en.wikipedia.org/w/api.php', 429, 'Too Many Requests', headers, None)
+        with patch('urllib.request.urlopen', side_effect=error) as request:
+            result = normalize_result(base.search_web('ZAR to TWD'))
+        self.assertFalse(result.success)
+        self.assertEqual(result.evidence['http_status'], 429)
+        self.assertEqual(result.evidence['retry_after'], '30')
+        self.assertEqual(result.side_effects['status'], 'none')
+        request.assert_called_once()
+        self.assertEqual(request.call_args.kwargs['timeout'], 15)
+
+    def test_search_success_preserves_results_and_source(self):
+        from agent_execution.results import normalize_result
+        import json
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'query': {'search': [
+            {'title': 'Rand', 'snippet': 'Currency'}, {'title': 'Dollar', 'snippet': 'Currency'}]}}).encode()
+        with patch('urllib.request.urlopen', return_value=response):
+            result = normalize_result(base.search_web('currency', max_results=1))
+        self.assertTrue(result.success)
+        self.assertEqual(json.loads(result.output), [{'title': 'Rand', 'snippet': 'Currency'}])
+        self.assertEqual(result.evidence['provider'], 'en.wikipedia.org')
+
+    def test_search_network_error_is_not_success(self):
+        from agent_execution.results import normalize_result
+        with patch('urllib.request.urlopen', side_effect=TimeoutError('offline')) as request:
+            result = normalize_result(base.search_web('currency'))
+        self.assertFalse(result.success)
+        self.assertIn('offline', result.error)
+        request.assert_called_once()
+
     def setUp(self):
         base._approved_commands.clear()
         base._command_guard = None

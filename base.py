@@ -763,7 +763,10 @@ TOOLS_SCHEMAS = [
     }
 ]
 
-def search_web(query: str, max_results: int = 5) -> str:
+def search_web(query: str, max_results: int = 5):
+    """Search Wikipedia once; preserve HTTP failures as execution facts."""
+    from agent_execution.results import ToolResult
+    from urllib.error import HTTPError
     try:
         import urllib.request
         import urllib.parse
@@ -771,14 +774,24 @@ def search_web(query: str, max_results: int = 5) -> str:
         
         url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(query)}&utf8=&format=json"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode())
         
         results = data.get("query", {}).get("search", [])[:max_results]
         formatted = [{"title": r["title"], "snippet": r["snippet"]} for r in results]
-        return json.dumps(formatted, ensure_ascii=False, indent=2)
+        return ToolResult(True, json.dumps(formatted, ensure_ascii=False, indent=2),
+                          side_effects={'status': 'none'},
+                          evidence={'kind': 'wikipedia_search', 'provider': 'en.wikipedia.org'})
+    except HTTPError as e:
+        evidence = {'kind': 'wikipedia_search', 'provider': 'en.wikipedia.org', 'http_status': e.code}
+        if e.headers and e.headers.get('Retry-After'):
+            evidence['retry_after'] = e.headers['Retry-After']
+        return ToolResult(False, error=f'Search failed: {e}',
+                          side_effects={'status': 'none'}, evidence=evidence)
     except Exception as e:
-        return f"Search failed: {e}"
+        return ToolResult(False, error=f'Search failed: {e}',
+                          side_effects={'status': 'none'},
+                          evidence={'kind': 'wikipedia_search', 'provider': 'en.wikipedia.org'})
 
 def browse_webpage(url: str):
     """Return rendered page text, with browser failures represented structurally.
