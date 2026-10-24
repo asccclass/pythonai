@@ -61,9 +61,13 @@ def recovered_read_failure(step, steps, root=None):
     try:
         failed = json.loads(step.get('result') or '{}')
         args = json.loads(step['input'])
-        if (step['name'] not in {'browse_webpage', 'fetch_url'} or step['state'] != 'failed' or
-                failed.get('side_effects', {}).get('status') not in {None, 'none'} or
-                not isinstance(args.get('url'), str)):
+        web_reads = {'browse_webpage', 'fetch_url', 'browser_session'}
+        navigation_only = step['name'] != 'browser_session' or set(args) <= {'url'} or (
+            set(args) <= {'url', 'actions'} and not args.get('actions'))
+        side_effect_free = failed.get('side_effects', {}).get('status') in {None, 'none'} or (
+            step['name'] == 'browser_session' and navigation_only)
+        if (step['name'] not in web_reads or step['state'] != 'failed' or not side_effect_free or
+                not navigation_only or not isinstance(args.get('url'), str)):
             return False
         for other in steps:
             if other is step or other['name'] != step['name'] or other['state'] != 'completed':
@@ -75,12 +79,14 @@ def recovered_read_failure(step, steps, root=None):
         idx = steps.index(step) if step in steps else -1
         if idx >= 0:
             for other in steps[idx + 1:]:
-                if other['name'] not in {'browse_webpage', 'fetch_url'} or other['state'] != 'completed':
+                if other['name'] not in web_reads or other['state'] != 'completed':
                     continue
                 other_args = json.loads(other['input'])
                 other_result = json.loads(other.get('result') or '{}')
+                other_navigation_only = other['name'] != 'browser_session' or set(other_args) <= {'url'} or (
+                    set(other_args) <= {'url', 'actions'} and not other_args.get('actions'))
                 if (other_result.get('success') is True and
-                        other_result.get('side_effects', {}).get('status') in {None, 'none'} and
+                        other_navigation_only and
                         isinstance(other_result.get('output'), str) and other_result['output'].strip() and
                         isinstance(other_args.get('url'), str) and other_args['url'].startswith(('http://', 'https://'))):
                     return True

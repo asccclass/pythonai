@@ -139,6 +139,24 @@ def test_failed_duplicate_browser_read_is_recovered_by_successful_evidence():
     failed['input'] = '{"url":"https://example.test/other"}'
     assert not recovered_read_failure(failed, [successful, failed])
 
+
+def test_navigation_only_browser_session_failure_is_recovered_by_later_source():
+    from agent_execution.turn_control.recovery import recovered_read_failure
+    failed = {'name': 'browser_session', 'state': 'failed',
+              'input': json.dumps({'url': 'https://bank.test/rates'}),
+              'result': json.dumps(ToolResult(False, error='DNS failure').to_dict())}
+    successful = {'name': 'browser_session', 'state': 'completed',
+                  'input': json.dumps({'url': 'https://fx.test/zar-twd'}),
+                  'result': json.dumps(ToolResult(True, json.dumps({
+                      'success': True, 'url': 'https://fx.test/zar-twd', 'text': '1 ZAR = 1.96 TWD',
+                  })).to_dict())}
+    assert recovered_read_failure(failed, [failed, successful])
+
+    interactive = {**failed, 'input': json.dumps({
+        'url': 'https://bank.test/rates', 'actions': [{'kind': 'click', 'selector': '#transfer'}],
+    })}
+    assert not recovered_read_failure(interactive, [interactive, successful])
+
 def test_failed_web_read_is_recovered_by_subsequent_successful_source():
     from agent_execution.turn_control.recovery import recovered_read_failure
     from agent_execution.results import ToolResult

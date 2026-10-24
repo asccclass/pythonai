@@ -386,7 +386,7 @@ class TaskEvaluatorTests(unittest.TestCase):
         self.assertEqual(reply, "Candidate 2")
         self.assertEqual(eval_attempts, 2)
         deltas = [payload['text'] for kind, payload in events if kind == 'model.delta']
-        self.assertEqual(deltas, ['Candidate 1'])
+        self.assertEqual(deltas, ['Candidate 2'])
 
     def test_web_read_failure_recovered_by_subsequent_source_passes_evaluation(self):
         evaluator = TaskEvaluator(self.workspace)
@@ -394,17 +394,20 @@ class TaskEvaluatorTests(unittest.TestCase):
         steps = [
             {
                 'id': 'chatcmpl-tool-fail-bot',
-                'name': 'browse_webpage',
+                'name': 'browser_session',
                 'state': 'failed',
                 'input': json.dumps({'url': 'https://bot.com.tw/rates'}),
-                'result': json.dumps({'success': False, 'error': 'DNS lookup failed', 'side_effects': {'status': 'none'}}),
+                'result': json.dumps({'success': False, 'error': 'DNS lookup failed', 'side_effects': {'status': 'unknown'}}),
             },
             {
                 'id': 'chatcmpl-tool-succ-sunny',
-                'name': 'browse_webpage',
+                'name': 'browser_session',
                 'state': 'completed',
                 'input': json.dumps({'url': 'https://sunnybank.com.tw/rates'}),
-                'result': json.dumps({'success': True, 'output': '南非幣即期買入 1.9200', 'evidence': {'kind': 'agent_browser_read'}, 'side_effects': {'status': 'none'}}),
+                'result': json.dumps({'success': True, 'output': json.dumps({
+                    'success': True, 'url': 'https://sunnybank.com.tw/rates',
+                    'text': '南非幣即期買入 1.9200', 'artifacts': [],
+                }), 'evidence': {}, 'side_effects': {'status': 'unknown'}}),
             },
         ]
         mock_task_store = MagicMock()
@@ -431,6 +434,20 @@ class TaskEvaluatorTests(unittest.TestCase):
             self.assertTrue(res.criteria_met.get('source_evidence:public_web'))
         finally:
             _active.reset(token)
+
+    def test_judge_prompt_uses_current_system_date(self):
+        response = MagicMock()
+        response.choices[0].message.content = '{"success": true, "score": 1.0, "feedback": "ok"}'
+        client = MagicMock()
+        client.chat.completions.create.return_value = response
+        evaluator = TaskEvaluator(self.workspace, client=client, model='judge')
+
+        passed, _, _ = evaluator.evaluate_llm_judge('查詢匯率', [], '資料更新時間 2026/10/23')
+
+        self.assertTrue(passed)
+        prompt = client.chat.completions.create.call_args.kwargs['messages'][1]['content']
+        from datetime import date
+        self.assertIn(f'trusted current system date is {date.today().isoformat()}', prompt)
 
     def test_run_agent_critic_correction_succeeds_on_retry(self):
         eval_attempts = 0

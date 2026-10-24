@@ -5,6 +5,7 @@ from agent_configuration import load_text
 
 import ast
 from dataclasses import dataclass, field
+from datetime import date
 import json
 import math
 from pathlib import Path
@@ -26,17 +27,28 @@ class EvaluationResult:
 
 def public_web_source_evidence(steps):
     """Return immutable evidence only for a wholly read-only public web turn."""
-    if not steps or any(step.get('name') not in {'browse_webpage', 'fetch_url', 'search_web'} for step in steps):
+    allowed = {'browse_webpage', 'fetch_url', 'search_web', 'browser_session'}
+    if not steps or any(step.get('name') not in allowed for step in steps):
         return []
     evidence=[]
     for step in steps:
-        if step.get('name') != 'browse_webpage' or step.get('state') != 'completed':
+        if step.get('name') not in {'browse_webpage', 'browser_session'} or step.get('state') != 'completed':
             continue
         try:
             args=json.loads(step['input']);result=json.loads(step.get('result') or '{}')
         except (ValueError,TypeError):
             continue
         url=args.get('url','');output=result.get('output','');kind=result.get('evidence',{}).get('kind')
+        if step.get('name') == 'browser_session':
+            if not (set(args) <= {'url'} or (set(args) <= {'url', 'actions'} and not args.get('actions'))):
+                continue
+            try:
+                browser_output=json.loads(output)
+            except (ValueError,TypeError):
+                continue
+            output=browser_output.get('text','')
+            url=browser_output.get('url',url)
+            kind='agent_browser_read' if browser_output.get('success') is True else kind
         if result.get('success') is True and isinstance(url,str) and url.startswith(('http://','https://')) and isinstance(output,str) and output.strip() and kind == 'agent_browser_read':
             evidence.append({'kind':'public_web_source','url':url,'characters':len(output)})
     return evidence
@@ -396,6 +408,7 @@ class TaskEvaluator:
         judge_prompt = load_text(
             'instructions.json', 'judge_request', user_goal=user_goal,
             execution_summary=self._judge_execution_summary(user_goal, messages), final_reply=final_reply,
+            current_date=date.today().isoformat(),
         )
         try:
             from agent_execution.budgets import budget_client

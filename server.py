@@ -279,7 +279,7 @@ def run_agent(
                 checkpoint('model_pending')
             attempts = resume_state.get('model_attempt', 1)-1 if pending_request is not None else 0
             step_callback = event_callback
-            if eval_retries > 0 and task_evaluator is not None and event_callback:
+            if task_evaluator is not None and event_callback:
                 def step_callback(kind, payload):
                     if kind == 'model.delta':
                         return
@@ -624,6 +624,8 @@ def run_agent(
                         "候選最終回覆因未通過驗收而未提供，避免將未驗證內容當成事實。"
                     )
 
+        if task_evaluator is not None and event_callback and assistant_message.content:
+            event_callback('model.delta', {'text': assistant_message.content})
         return assistant_message.content or ""
         
     from agent_execution.operations.redaction import redact
