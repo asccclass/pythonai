@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import json
 import os
+import random
 from pathlib import Path
 import socket
 import subprocess
@@ -30,12 +31,24 @@ from agent_execution.temporal_backend.store import Store
 from agent_execution.temporal_backend.workflows import ReadOnlyBridge
 
 
+def frontend_port():
+    # CLI auto-selects its internal ports with bind(:0). Keep our explicitly
+    # released frontend port outside the OS dynamic range on supported hosts
+    # (Windows here: 49152..65535), so it cannot be reselected internally.
+    for port in random.SystemRandom().sample(range(20000,30000),100):
+        with socket.socket() as sock:
+            if hasattr(socket,'SO_EXCLUSIVEADDRUSE'):
+                sock.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+            try:sock.bind(('127.0.0.1',port))
+            except OSError:continue
+            return port
+    raise RuntimeError('No isolated Temporal frontend test port is available')
+
+
 class LocalServer:
     def __init__(self, binary, directory):
         self.directory, self.binary = directory, binary
-        with socket.socket() as sock:
-            sock.bind(('127.0.0.1', 0))
-            self.port = sock.getsockname()[1]
+        self.port = frontend_port()
         self.address = f'127.0.0.1:{self.port}'
         self.process = None
 
@@ -51,7 +64,8 @@ class LocalServer:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise RuntimeError('Temporal test server exited: ' + (self.directory / 'server.log').read_text(errors='replace')[-1000:])
+                log=(self.directory / 'server.log').read_text(errors='replace')
+                raise RuntimeError('Temporal test server exited: '+log[:2000]+'\n...\n'+log[-1000:])
             try:
                 return await asyncio.wait_for(Client.connect(self.address, namespace='pythonai-dev'), .5)
             except (TimeoutError, RuntimeError):

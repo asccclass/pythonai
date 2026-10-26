@@ -84,6 +84,9 @@ def test_native_schedule_crud_occurrences_limit_and_replay(server,monkeypatch,co
                 history=await wrapper.fetch_history()
                 assert 'TP19 private scheduled prompt' not in history.to_json()
                 await Replayer(workflows=[ScheduleOccurrence]).replay_workflow(history)
+                # Native manual-trigger IDs use UTC seconds. Exercise a new
+                # occurrence, rather than accidentally retrying the first ID.
+                await asyncio.sleep(1.1)
                 await handle.trigger()
                 await eventually(lambda:len(executed)==2)
                 await eventually(lambda:bool(schedules.scheduler.notifications()))
@@ -92,6 +95,7 @@ def test_native_schedule_crud_occurrences_limit_and_replay(server,monkeypatch,co
                 await applied(schedules,key,client)
                 assert (await handle.describe()).schedule.state.paused
                 # Native manual trigger cannot bypass the local logical run ceiling.
+                await asyncio.sleep(1.1)
                 await handle.trigger()
                 await asyncio.sleep(2)
                 assert len(executed)==2 and schedules.get(key)['run_count']==2
