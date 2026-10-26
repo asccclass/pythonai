@@ -25,17 +25,19 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物及 TP22–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-26）
 
-本輪 TP21 已完成 opt-in DAG 父／子 Workflow、共用原始預算、獨立 Reviewer、取消與刪除整合。新增 DAG 驗證 56 項（43 單元／契約、13 隔離真實 Service），全部通過；完整 venv 回歸 1443 passed、12 skipped、95 subtests passed，僅 1 項既有 deprecation warning。pip check／compileall／diff check 通過，詳細證據及首輪測試服務啟動問題修正見 12.12。TP20 舊排程切換見 12.11。
+本輪已通過現有 /ws/v1 入口的真實 provider 限定接入驗收，補齊使用者確認的 TP11.7 七個 wiki 子目錄及 README；2 次精確審批、Worker 重啟、串流、重連取回及 History replay 均通過，詳細證據見 12.13。
+
+前輪 TP21 已完成 opt-in DAG 父／子 Workflow、共用原始預算、獨立 Reviewer、取消與刪除整合。新增 DAG 驗證 56 項（43 單元／契約、13 隔離真實 Service），全部通過；完整 venv 回歸 1443 passed、12 skipped、95 subtests passed，僅 1 項既有 deprecation warning。pip check／compileall／diff check 通過，詳細證據及首輪測試服務啟動問題修正見 12.12。TP20 舊排程切換見 12.11。
 
 前輪完成 TP18：將 Temporal 刪除接入原人類確認的 frozen lifecycle 計畫，持久 reference 保護仍在執行的本機程序；核對遠端閉合及 History／visibility 查無紀錄後，才清除同 task 的執行內容與 artifacts。保留最小雜湊 fence 防復活；有界 retention CLI 預設 dry-run，不掃描刪除程式檔案。隔離 Service 的刪除／離線恢復／CLI 重入驗證通過。完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check／compileall／diff check 通過。archival／備份分列 external_policy_required，不宣稱已抹除正式資料，詳見 12.9 及 backend README。
 
-前輪完成 TP17 首批同機檔案寫入：新任務以顯式旗標／owner 清單／admin 綁定 V3 審批能力，固定前後態、一次 consume、同目錄原子 replace、未知效果禁止重跑及人工觀測稽核。真實 provider 在隔離 workspace 建立 7 個 wiki 子目錄與 README，**1 passed**，18.22 秒，3 筆模型／驗收請求與 2 次審批；不改使用者正式設定／資料。完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check／compileall／diff check 通過。全套回歸與獨立 live 測試分開記錄，驗收詳見 12.8 及 backend README。TP18 retention／刪除接續見 12.9；TP11.7 原始長任務完整產物及其他副作用能力仍獨立追蹤。
+前輪完成 TP17 首批同機檔案寫入：新任務以顯式旗標／owner 清單／admin 綁定 V3 審批能力，固定前後態、一次 consume、同目錄原子 replace、未知效果禁止重跑及人工觀測稽核。真實 provider 在隔離 workspace 建立 7 個 wiki 子目錄與 README，**1 passed**，18.22 秒，3 筆模型／驗收請求與 2 次審批；不改使用者正式設定／資料。完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check／compileall／diff check 通過。全套回歸與獨立 live 測試分開記錄，驗收詳見 12.8 及 backend README。TP18 retention／刪除接續見 12.9；TP11.7 原始長任務完整產物後於 12.13 補驗；其他副作用能力仍獨立追蹤。
 
-前輪沿用現有 provider 設定完成 TP16.5：TCP／`/models` 已恢復，真實 Service／Worker 的兩個案例 **2 passed**，44.27 秒。Wiki 寫入要求在 1 筆請求後被唯讀權限拒絕，0 次工具 I/O；HarnessRouter 以 3 筆含驗收的請求完成，實際抓取 1 次。History replay、新 Worker 取回完成結果／拒絕未知狀態恢復、request 與 deadline 不變均通過，驗收見 12.7 及 backend README。此前同一程式版本的完整 venv 回歸 **1201 passed、11 skipped、95 subtests passed**，971.86 秒；兩個 live 案例當時按 opt-in gate skip，已由本輪獨立補驗，全套回歸與獨立 live 測試分開記錄。該輪只更新驗收文件，未修改程式、provider 設定或正式資料。TP16 封閉唯讀範圍完成；TP17 首批檔案寫入見 12.8，正式放量留 TP27，TP11.7 原始長任務完整產物仍獨立追蹤。
+前輪沿用現有 provider 設定完成 TP16.5：TCP／`/models` 已恢復，真實 Service／Worker 的兩個案例 **2 passed**，44.27 秒。Wiki 寫入要求在 1 筆請求後被唯讀權限拒絕，0 次工具 I/O；HarnessRouter 以 3 筆含驗收的請求完成，實際抓取 1 次。History replay、新 Worker 取回完成結果／拒絕未知狀態恢復、request 與 deadline 不變均通過，驗收見 12.7 及 backend README。此前同一程式版本的完整 venv 回歸 **1201 passed、11 skipped、95 subtests passed**，971.86 秒；兩個 live 案例當時按 opt-in gate skip，已由本輪獨立補驗，全套回歸與獨立 live 測試分開記錄。該輪只更新驗收文件，未修改程式、provider 設定或正式資料。TP16 封閉唯讀範圍完成；TP17 首批檔案寫入見 12.8，正式放量留 TP27，TP11.7 原始長任務完整產物補驗見 12.13。
 
 前輪完成 TP15 同機唯讀範圍的持久事件、可靠投遞及 memory／profile finalization 去重；完整驗收見 12.6 及 backend README。專案 venv 完整 pytest **1174 passed、9 skipped、95 subtests passed**，1029.94 秒；pip check、compileall、diff check 通過。真實 Temporal Service／Worker、History replay、原生 WebSocket reconnect／ACK 及兩庫故障注入通過；模型與 communication adapters 使用受控替身，真實 LLM／Telegram 送達／桌面／正式部署驗收獨立保留。TP14 取消與清理驗收見 12.5；TP13.5–13.6 操作審批交付見 12.4。
 
@@ -59,7 +61,7 @@ model Activities；排隊 Workflow 取消後模型呼叫為零。完整 pytest *
 95 subtests passed**，781.06 秒；pip check、compileall、diff check 通過。本輪沒有重驗真實
 LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 
-本輪 TP11：新增 `AgentTaskWorkflowV1`、六種 Activities、版本綁定與獨立 queue、確認邊界恢復及錯誤映射。最終完整 pytest **949 passed、8 skipped、95 subtests passed**，670.92 秒；Temporal／continuation 專項 **122 passed**，前置 hook 邊界專項 **35 passed**。真實 Service/Worker 的受控模型讀檔、Worker 重啟、回覆遺失、未知效果停止與 History replay 通過；pip check、compileall、diff check 通過。真實 LLM 在第一個模型步驟逾時，90 秒後取消，三筆請求預留保留、無工具執行；獨立 15 秒探測也為 `APITimeoutError`，未取得服務端根因。此項與原始長任務仍待驗收；詳見 backend README 與 `temp/temporal-tp11-provider-check/`。未啟用正式設定。
+本輪 TP11：新增 `AgentTaskWorkflowV1`、六種 Activities、版本綁定與獨立 queue、確認邊界恢復及錯誤映射。最終完整 pytest **949 passed、8 skipped、95 subtests passed**，670.92 秒；Temporal／continuation 專項 **122 passed**，前置 hook 邊界專項 **35 passed**。真實 Service/Worker 的受控模型讀檔、Worker 重啟、回覆遺失、未知效果停止與 History replay 通過；pip check、compileall、diff check 通過。真實 LLM 在第一個模型步驟逾時，90 秒後取消，三筆請求預留保留、無工具執行；獨立 15 秒探測也為 `APITimeoutError`，未取得服務端根因。當時未完成的真實 provider 後於 12.7／12.8 補驗，原始長任務完整產物補驗見 12.13；詳見 backend README 與 `temp/temporal-tp11-provider-check/`。未啟用正式設定。
 
 前輪 TP10 驗收：完整 pytest **902 passed、8 skipped、95 subtests passed**，764.80 秒，包含真實 Temporal Service/Worker、故障注入與 History replay。真實 LLM 也完成隔離讀檔／回覆／驗收回合，使用 **3 筆模型請求**；重取已完成工具結果未重跑或增加請求，History 不含檔案內容。另修正 stream monitor 未等待退出的 SQLite 清理競態（commit `bf7bcfd`）。pip check／compileall／diff check 通過。紀錄見 backend README、`temp/temporal-tp10-full.log` 及 `temp/temporal-tp10-provider-check/`；逐工具自動崩潰恢復仍待 TP11。
 
@@ -75,7 +77,7 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP08 | Windows 唯讀橋接已接通並完成真實 Service + Worker + 受控模型工具回合、重送、History replay、重啟取回結果；當時真實 provider 逾時紀錄保留，TP10 本輪另已通過隔離小型真實 LLM 唯讀回合 |
 | TP09 | 已抽出共用 model/tool/evaluation steps；SQLite runner 與 Temporal 唯讀 Activity 使用同一實作，保留外層 hooks／checkpoint／重試與預算；驗收紀錄見 backend README |
 | TP10 | 已實作版本化 operation ledger、canonical digest、雙層 fence、原子 result/evidence 引用與完整性檢查；接入唯讀 Activity 的 model/tool/evaluation，共用結果不重跑，未知結果保守阻擋；詳見 backend README |
-| TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過；TP16／TP17 已有獨立真實 provider 補驗，原始長任務完整產物仍待驗收 |
+| TP11 | 已實作 opt-in step-based Workflow／Activities、cursor references、版本綁定與確認邊界恢復；未知操作不重試。受控模型與真實 SDK 恢復／replay 已通過；TP16／TP17 已有獨立真實 provider 補驗；原始長任務完整產物已於本輪經現有 WebSocket 入口補驗，見 12.13 |
 | TP12 | 已實作 root budget contract、恢復限制、retry ownership、deadline 與目前唯讀範圍的取消矩陣；驗收詳見 backend README |
 | TP13 | 人工回答及唯讀操作審批完成：同庫 decision outbox、Timer／Signal、TTL、原入口通知與一次性 consume；V3 整合及驗收見 12.4，寫入仍留 TP17 |
 | TP14 | 已完成目前唯讀範圍的取消 outbox、heartbeat 合作式停止、程序樹清理與 late-result fencing，驗收見 12.5；DAG 父子流程留 TP21–22，TP17 首批檔案工具不啟動命令，Docker 實機終止仍未驗收 |
@@ -554,11 +556,11 @@ TP09–TP10 已具備共用 I/O steps 與 operation ledger。TP11 已拆分 Work
 - [x] TP11.4：將 workflow type／協定版本持久化綁定到 submission，舊 M0 任務仍由舊 Workflow 處理；新增唯讀 opt-in 路由與版本相容測試，不用環境切換偷偷遷移存量任務。
 - [x] TP11.5：串接 TP10 穩定 step ID、結果引用與 fence，已完成結果重用；running／uncertain 不重送外部操作。明確設定 model／HTTP／工具 Activity max-attempts=1，provider 重試擁有者、次數與預算不得相乘或重置。
 - [x] TP11.6：錯誤映射至少區分已知拒絕、預算耗盡、取消、缺 artifact／校驗失敗及未知效果；保留原 iteration／critic 上限，人工輸入需求在 TP13 完成前明確停止。
-- [ ] TP11.7（程式驗證已進行，外部驗收未完成）：以真實 Service/Worker 做逐步中斷與重啟、結果提交後回覆遺失、未知效果停止、跨 scope、root budget 計數不增與新舊 History replay；再通過完整 pytest、compileall、pip check、diff check，建立對應 commit。真實 provider 的小型成功與原始長任務驗收分開記錄。
+- [x] TP11.7（2026-10-26 完成原始完整產物補驗，見 12.13）：以真實 Service/Worker 做逐步中斷與重啟、結果提交後回覆遺失、未知效果停止、跨 scope、root budget 計數不增與新舊 History replay；再通過完整 pytest、compileall、pip check、diff check，建立對應 commit。真實 provider 的小型成功與原始長任務驗收分開記錄。
 
 實作見 `temporal_backend/{contracts,context,step_store,step_activities,workflows}.py` 及 `turn_control/continuation.py`。`AGENT_TEMPORAL_ENGINE=steps` 僅影響新受理的 Temporal 任務，預設為 `bridge`；存量任務的 protocol／queue 不改派。Worker 同時服務兩個版本，並共享 host 併發上限。最多 1024 個步驟、三次經核對的 Workflow 恢復；model／tool／evaluation Activity max-attempts=1，bootstrap／recover／finalize metadata 最多三次。只有已確認完成邊界或 ledger 證明 I/O 尚未開始才恢復；`step_preparing`（前置 hooks 未確認）與 `tool_started`（包含 raw result 已提交但完成 hooks 未確認）一律 uncertain。回滾新任務旗標時仍須保留此版 Worker 服務已綁 steps 的存量工作。
 
-TP12 的完整預算／provider retry ownership 矩陣與 TP13 人工回答／唯讀操作審批已完成，交付與驗收分列於 12.4。TP11.7 原始長任務完整產物仍需追蹤；本輪真實 provider 的唯讀補驗見 12.7，不以唯讀拒絕代替寫入產物驗收。
+TP12 的完整預算／provider retry ownership 矩陣與 TP13 人工回答／唯讀操作審批已完成，交付與驗收分列於 12.4。TP11.7 原始長任務完整產物已於 12.13 經現有入口補驗；12.7 保留當時唯讀補驗證據，與後續完整寫入產物驗收分列。
 
 ### 12.3 TP12 預算、retry ownership 與取消矩陣
 
@@ -595,7 +597,7 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 
 後續依序：TP22 worktree／merge 與完整孤兒治理；TP21 DAG 父／子 Workflow 見 12.12；TP20 舊唯讀排程切換見 12.11；TP19 新排程整合見 12.10；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
-測試代替。TP02 非 Windows 平台驗證與 TP11.7 原始長任務完整產物驗收仍獨立保留；真實 provider 唯讀補驗見 12.7。
+測試代替。TP11.7 原始長任務完整產物已於 12.13 補驗；TP02 非 Windows 平台驗證仍獨立待辦，真實 provider 唯讀補驗見 12.7。
 
 ### 12.5 TP14 取消、heartbeat 與子程序清理
 
@@ -649,7 +651,7 @@ publication version 與可信 memory／episode／WebSocket delivery references�
 - [x] TP17.5：既有 TaskEvaluator／程式測試要求／reviewer／審批不能繞過；對尚未開放的測試命令與其他副作用明確失敗。取消／撤權／刪除 fence 仍有效。
 - [x] TP17.6：真實 Service／Worker、檔案 I/O、審批與 crash 注入／History replay，配合契約、容量與隔離測試；完整 venv pytest／pip check／compileall／diff check 通過、文件記錄範圍並 commit。真實 provider／Docker／桌面與正式部署證據分開。
 
-驗收（2026-10-23）：完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check、compileall、diff check 通過。真實 Service／Worker 的受控 provider 故障矩陣、Worker 重啟與 History replay，以及獨立子 Python 在實際寫入後退出的測試通過；同時修正前端等待事件使用舊 fence 的問題。真實 provider 獨立驗收 **1 passed**，18.22 秒，在隔離 workspace 建立 7 個 llm-wiki 子目錄與 README，3 筆模型／驗收請求、2 次精確審批，取回結果不增加請求或改寫檔案。這不等於 TP11.7 原始長任務完整產物驗收；shell／測試命令／Docker／桌面與正式部署仍未開放或未實機驗收。未修改正式設定或使用者資料。詳細操作與證據見 backend README；TP18 retention／刪除接續見 12.9。
+驗收（2026-10-23）：完整 venv pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；pip check、compileall、diff check 通過。真實 Service／Worker 的受控 provider 故障矩陣、Worker 重啟與 History replay，以及獨立子 Python 在實際寫入後退出的測試通過；同時修正前端等待事件使用舊 fence 的問題。真實 provider 獨立驗收 **1 passed**，18.22 秒，在隔離 workspace 建立 7 個 llm-wiki 子目錄與 README，3 筆模型／驗收請求、2 次精確審批，取回結果不增加請求或改寫檔案。該輪不等於 TP11.7 原始長任務完整產物驗收（後於 12.13 補驗）；shell／測試命令／Docker／桌面與正式部署仍未開放或未實機驗收。未修改正式設定或使用者資料。詳細操作與證據見 backend README；TP18 retention／刪除接續見 12.9。
 
 ### 12.9 TP18 retention／刪除
 
@@ -706,7 +708,7 @@ TP20 舊唯讀排程 dry-run／cutover／rollback、DST 與停機不補跑驗收
 
 最終紀錄：`temp/temporal-tp20-full.log`、`temp/temporal-tp20-results-recheck.log`、`temp/temporal-tp20-unit-final.log`（不入 Git）。真實 Service 證明未來 10 次 Calendar API、春／秋 DST、台北、切換／受控 runner task／回滾、Service 停止恢復，以及 Schedule 已刪除但本機 commit 中斷的續作。沒有付費 provider 呼叫，未修改正式設定／使用者排程；受控 scheduled timestamp 不等同已等待正式分鐘 cron。
 操作命令、pending exit 2、停止條件與資料邊界見 backend README 的 TP20 節。
-接續 TP21 DAG 父／子 Workflow 與 shared budget 已完成，見 12.12；TP11.7 原始長任務完整產物仍獨立待辦。
+接續 TP21 DAG 父／子 Workflow 與 shared budget 已完成，見 12.12；TP11.7 原始長任務完整產物補驗見 12.13。
 
 ### 12.12 TP21 DAG 父／子 Workflow 與 shared budget
 
@@ -732,6 +734,25 @@ Planner／Coder／Reviewer 使用穩定 Child Workflow ID，History 只攜帶 op
 
 後續 TP22 擴充 worktree／merge 的 Temporal 流程與完整孤兒治理；本輪保留既有 worktree／merge，
 不引入另一個 agent core、不自動 merge、不啟用正式設定或真實 provider 付費呼叫。
+
+### 12.13 目前入口限定接入與 TP11.7 完整產物補驗
+
+使用者於 2026-10-26 確認 TP11.7 原始完整要求就是 `llm-wiki` 的 sources、notes、concepts、projects、people、daily、templates 七個子目錄及 README.md；本輪據此補驗，不以唯讀拒絕或較小產物替代。
+
+- [x] 使用現有 `/ws/v1` 的 hello／chat.send／approval.decide／重連協定，獨立實體 frontend／Temporal Service／Worker 程序；沿用本機 provider，所有設定與資料限隔離試用 owner／workspace，不修改正式 `.env`。
+- [x] 修正現有入口自動匹配 executable skill 導致 Temporal 拒絕的問題。新 Temporal 任務走既有 Agent steps，固定 SQLite／排除試用的任務與 Activity 內原執行器保留 skill 路徑；明確 skill 執行限制不變，沒有 SQLite fallback 或擴權。
+- [x] 修正第二次審批發生在前端回合結束之後，只收到文字而缺少 approval.required 的問題。每次等待從同 submission／revision 的持久 intent 發布可去重事件，重連可重播；不從 reply 文字解析權限或參數。
+- [x] 真實 provider 案例完成七個子目錄及含各目錄用途的繁體中文 README；精確目標審批 2 次、根任務 requests 4 筆、chat.delta 1 筆。第一次審批前終止／重啟獨立 Worker，原 workflow／預算不變，核准後繼續同一任務。
+- [x] 完成後再次重啟 Worker，重連取回相同結果，重播 15 個事件；相同 chat.send ID 去重，沒有新增 submission／requests，檔案 bytes／mtime 不變。History 不含原始目標／產物標記且 Replayer 通過。
+- [x] 最終完整專案回歸、文件與可獨立回退 commit；首輪檔案變動檢查與重驗分列如下。
+
+驗收證據：live 組合 **7 passed**（6 個限定審批案例、1 個真實 provider 全流程），125.89 秒，紀錄 `temp/temporal-entry-live-20261026-final.log`；`acceptance.json`／`frames.json` 與實際產物位於 `temp/temporal-entry-live-20261026-final/` 隔離目錄，不入 Git。路由／server 專項 72 passed、1 live skipped；審批持久事件／路由／範圍專項 66 passed、1 live skipped。前一批 backend／admission／真實 publication／file writes／communication 回歸 91 passed；最終修正後的真實 Service／審批／檔案寫入／串流與 WebSocket 回歸 **33 passed**（193.39 秒），只有既有 Starlette／AnyIO warning。
+
+完整專案 venv 回歸：**1456 passed、13 skipped、1 failed、95 subtests passed**，1675.55 秒，1 項既有 Starlette／AnyIO warning；紀錄 `temp/temporal-entry-full-20261026.log`。唯一失敗為 operations benchmark 的檔案不變檢查：15／15 功能案例皆成功、completion／recovery rate 均為 1，但我在回歸期間更新本文件，觸發 `unexpected_tracked_source_changes=1`。停止編輯後原測試重驗 **1 passed**（31.92 秒），紀錄 `temp/temporal-entry-benchmark-recheck-20261026.log`。完成文件後，整份 operations 再驗 **9 passed、5 subtests passed**（25.18 秒），紀錄 `temp/temporal-entry-operations-final-20261026.log`。未放寬檢查、未修改 benchmark；不將首輪報為全綠。pip check、compileall、diff check 通過。
+
+保留前置診斷，不宣稱首輪全綠：本機 provider 的 `/models` 曾 ConnectTimeout；第一輪入口因 45 秒接收等待不足失敗，補上有界 heartbeat／啟動診斷後，依序確認自動 skill 路由拒絕與第二次審批事件缺失。中間一次診斷已建立七個目錄但停在 README 審批，安全停止其隔離前端以結束該次重跑，紀錄保留於 `temp/temporal-entry-live-20261026-routing-fixed.log`。修正後以全新隔離目錄完成上述 live 驗收；不重用部分成功作為完整通過。
+
+此次為現有協定與真實模型的同機限定驗收，審批由驗收管理員程式核對指定目標後回覆；不代表桌面人工點擊、Docker、多機或正式服務部署驗收。尚未對日常使用者放量，TP22–TP30 繼續依原順序；操作命令見 backend README 的「目前入口的限定接入驗收」。
 
 ## 13. 測試矩陣、驗收與放量
 

@@ -173,6 +173,36 @@ TP21 DAG 最終驗證 56 passed（43 單元／契約、13 隔離真實 Service�
 TP21 驗收數字與紀錄見 `papers/temportal.md` 12.12；本輪使用隔離 Service、受控模型 runner，
 不修改正式設定、不搬移使用者 DAG、不進行付費 provider 或正式部署驗收。
 
+## 目前入口的限定接入驗收（TP11.7）
+
+使用現有 `/ws/v1` 路由、真實本機 provider 與獨立 Worker 程序；所有 DB、owner、角色設定及
+workspace 放在隔離目錄。只對指定試用 owner 開啟 approval/file-write 模式，不修改 `.env`。
+新 Temporal 任務即使自動命中 executable skill，也走原 Agent steps；明確 skill 執行仍不支援。
+已固定 SQLite 的任務及 Activity 內原執行器維持既有 skill 路徑。
+每次審批等待由 Worker journal 發布 `approval.required`，不依賴原前端回合仍在訂閱；事件可去重及重連重播。
+
+```powershell
+$env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
+$env:PYTHONAI_TEMPORAL_ENTRY_LIVE = '1'
+$trialRun = Join-Path 'temp' ('temporal-entry-live-' + [guid]::NewGuid().ToString('N'))
+.\venv\Scripts\python.exe -m pytest agent_execution\temporal_backend\tests\test_entry_live.py -v -s --basetemp=$trialRun
+Remove-Item Env:PYTHONAI_TEMPORAL_ENTRY_LIVE
+```
+
+此命令會呼叫現有 provider，root 上限 16 requests／128000 tokens／300 秒。
+驗收管理員程式只核准七個指定子目錄、限定長度且含標記的 `llm-wiki/README.md`，以及這些目標的讀取；
+其他路徑與命令一律拒絕。這是協定層審批驗收，不代表桌面 UI 的人工點擊已驗證。
+第一次審批前重啟 Worker，核對 workflow ID／原預算不變；完成後再重啟 Worker、重連 socket，
+驗證相同結果與重複 chat.send 去重、檔案內容／mtime 及 requests 不變，並重播 History。
+
+2026-10-26 真實驗收 **7 passed**（6 審批範圍案例、1 完整 live 案例），125.89 秒。
+live 案例完成七個子目錄及繁體中文 README，**4 requests、2 approvals、1 chat.delta、15 重連重播事件**；
+等待審批與完成後各重啟一次 Worker，結果取回無新增請求或改寫產物。
+紀錄：`temp/temporal-entry-live-20261026-final.log`，完整證據與產物保留在
+`temp/temporal-entry-live-20261026-final/` 的 `workspace/.system_generated/{acceptance.json,frames.json}`
+及 `workspace/llm-wiki/README.md`，均不入 Git。完整回歸與失敗診斷分列 `papers/temportal.md` 12.13。
+此結果完成使用者確認的 TP11.7 產物範圍；未啟用日常服務、移轉舊任務或擴大到其他身分。
+
 ## 版本與安裝
 
 - Python 驗證環境：3.12.0 / Windows amd64。
@@ -358,7 +388,7 @@ Docker、桌面、跨平台及正式部署仍需另行驗收。
 - 真實 provider 沿用既有設定：隔離 llm-wiki 的 7 個子目錄與 README 確實建立，
   **1 passed，18.22 秒，3 筆模型／驗收請求、2 次精確審批**；完成結果取回、
   History replay 與預算不變通過。未執行使用者正式 wiki 任務；
-  TP11.7 原始長任務完整產物仍獨立追蹤。
+  TP11.7 原始長任務完整產物補驗見「目前入口的限定接入驗收」。
 - 專案 venv 完整 pytest **1248 passed、12 skipped、95 subtests passed**，1446.15 秒；
   pip check、compileall、diff check 通過。只有既有 Starlette／AnyIO deprecation warning。
   真實 provider 測試預設 skip，以上獨立 live 結果分開記錄；最終紀錄為
@@ -449,7 +479,7 @@ live 測試 **1 passed（wiki 停止安全性）、1 failed（HarnessRouter 未�
   request 計數與原 deadline 不變，未知狀態仍拒絕恢復，不回退 SQLite。
 
 TP16.5 與 TP16 的封閉唯讀驗收完成；不將 wiki 的權限拒絕宣稱為建立成功。
-TP11.7 原始長任務完整產物仍獨立追蹤；TP17 首批檔案寫入驗收見上節，正式部署留 TP26、放量留 TP27。
+TP11.7 原始長任務完整產物已由現有入口補驗，見上述限定接入章節；TP17 首批檔案寫入驗收見上節，正式部署留 TP26、放量留 TP27。
 本次僅更新文件，程式版本沿用上列完整回歸結果；未重跑全套、未改 provider 設定或正式資料。
 
 ## TP15：持久串流與 finalization
