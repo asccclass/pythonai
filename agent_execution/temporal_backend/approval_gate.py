@@ -288,6 +288,11 @@ def notify_wait(callback):
     row = store.for_task(owner, context.task_id)
     if row is None or store.workflow_type(row) != APPROVAL_WORKFLOW_NAME:
         return
+    from .publication import binding
+    delivery = (binding(row) or {}).get('delivery')
+    if delivery and delivery.get('kind','websocket') == 'websocket':
+        # The durable Worker journal also covers subsequent waits and socket replay.
+        return
     key = task['checkpoint']['approval_wait']['id']
     with closing(store.tasks.connect()) as conn:
         intent = conn.execute("SELECT * FROM temporal_approval_waits WHERE submission_id=? AND approval_id=? AND state='pending'",

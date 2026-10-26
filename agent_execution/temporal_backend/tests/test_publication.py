@@ -50,6 +50,43 @@ def test_journal_order_idempotency_and_modified_content(published):
     assert len(pub.events(store,row,after=1))==1
 
 
+def test_each_approval_boundary_is_durable_without_a_frontend_subscriber(published):
+    from agent_execution.temporal_backend.approval_gate import ApprovalGate
+    store,row,_,_=published
+    ApprovalGate(store)
+    for revision in (1,2):
+        key=str(revision)*32
+        wait={'id':key,'revision':revision,'operation_id':'tool:'+str(revision)}
+        payload={'tool':'write_file','arguments':{'path':'note.md','content':'private '+str(revision)}}
+        with closing(store.tasks.connect()) as conn,conn:
+            conn.execute("INSERT INTO temporal_approval_waits VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (row['id'],revision,wait['operation_id'],'call-'+str(revision),'write_file',
+                 canonical(payload),'fingerprint','binding','action',9999999999,key,'pending'))
+            conn.execute("UPDATE tasks SET state='suspended',phase='waiting_approval',checkpoint=?,reply=? WHERE owner=? AND id=?",
+                (canonical({'approval_wait':wait,'suspended_tool_call_id':'call-'+str(revision)}),
+                 'approval '+str(revision),row['owner'],row['task_id']))
+        pub.waiting(store,row)
+        pub.waiting(store,row)
+    events=pub.events(store,row)
+    assert [event['kind'] for event in events]==['approval.required','end']*2
+    notifications=[json.loads(e['payload']) for e in events if e['kind']=='approval.required']
+    assert [event['approval_id'] for event in notifications]==['1'*32,'2'*32]
+    assert notifications[1]['arguments']=={'path':'note.md','content':'private 2'}
+    assert all(event['auto_resume'] for event in notifications)
+
+
+def test_missing_approval_intent_cannot_publish_an_action(published):
+    from agent_execution.temporal_backend.approval_gate import ApprovalGate
+    store,row,_,_=published
+    ApprovalGate(store)
+    with closing(store.tasks.connect()) as conn,conn:
+        conn.execute("UPDATE tasks SET state='suspended',phase='waiting_approval',checkpoint=? WHERE owner=? AND id=?",
+            (canonical({'approval_wait':{'id':'f'*32,'revision':1}}),row['owner'],row['task_id']))
+    with pytest.raises(PermissionError,match='durable intent'):
+        pub.waiting(store,row)
+    assert not pub.events(store,row)
+
+
 @pytest.mark.parametrize('reason',['cancel','stale_fence','other_owner'])
 def test_event_owner_and_execution_fences(published,reason):
     store,row,memory,episode = published

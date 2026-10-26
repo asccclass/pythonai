@@ -199,6 +199,18 @@ def waiting(store, row):
         return
     task = store.tasks.get(row['owner'],row['task_id'])
     if task['state'] == 'suspended':
+        if task['phase'] == 'waiting_approval':
+            # Later approval boundaries can occur after the frontend turn has detached.
+            # Read the exact durable intent, never parse tool arguments out of reply text.
+            wait = task['checkpoint'].get('approval_wait', {})
+            with closing(store.tasks.connect()) as conn:
+                intent = conn.execute("SELECT payload FROM temporal_approval_waits WHERE submission_id=? AND revision=? AND approval_id=? AND state='pending'",
+                    (row['id'],wait.get('revision'),wait.get('id'))).fetchone()
+            if intent is None:
+                raise PermissionError('Suspended approval has no matching durable intent')
+            data = json.loads(intent['payload'])
+            append(store,row,'approval-required:'+digest([wait,data]),'approval.required',
+                {'approval_id':wait['id'],'name':data['tool'],'arguments':data['arguments'],'auto_resume':True})
         key = digest([task['phase'],task['checkpoint'].get('suspended_tool_call_id'),task['reply']])
         append(store,row,'waiting:'+key,'end',{'text':task['reply'],'suspended':True,'failed':False,
             'interrupted':False,'episode_id':binding(row)['episode'],'emotion':'neutral','action':'none'})
