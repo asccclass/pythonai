@@ -1,6 +1,6 @@
 # Temporal 可選後端：逐步流程、操作紀錄與審批寫入
 
-依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入；TP19 提供新排程 CRUD 與唯讀 occurrence；TP20 提供逐筆舊唯讀排程遷移／切換／回滾。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
+依 `papers/temportal.md` 的 Python SDK 路線實作。**預設保留 M0 相容橋接；TP11 新增 opt-in 逐步唯讀流程，接續 TP09 共用步驟與 TP10 操作紀錄；TP17 另提供顯式審批的同機檔案寫入；TP19 提供新排程 CRUD 與唯讀 occurrence；TP20 提供逐筆舊唯讀排程遷移／切換／回滾；TP21 提供獨立 opt-in 的 coordinator DAG 父／子 Workflow 與 shared budget。** 不自動安裝 CLI、不自動啟動背景服務，不遷移既有任務。
 
 ## 已實作邊界
 
@@ -12,7 +12,7 @@
 - StartWorkflow 回覆未知保留 pending，絕不回退本機執行；固定 ID 重送查同一 Workflow。
 - `/tasks` 可看 TaskStore 投影，已開始的任務仍保存原 checkpoint；逐步模式只恢復已確認邊界或可證明尚未開始 I/O 的狀態，未知效果需人工核對。M0 不開放自動／手動跨引擎恢復。
 
-限制：目前不支援 Temporal skill、V1／V2 approval resume、舊副作用排程／coordinator 轉交、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
+限制：目前不支援 Temporal skill、V1／V2 approval resume、舊副作用排程／既有 coordinator DAG 遷移、跨主機事件串流、remote TLS/Cloud、多機資料共用或刪除外部 archival／備份。human V2 模式已開放 `ask_user` 文字回答續行；M0 bridge／steps V1 不支援。原生 sqlite 功能繼續使用原路徑。預設只對新的唯讀測試任務開啟 Temporal；TP17 的三個檔案工具需另行顯式受理與逐次人類審批，詳細邊界見下節。
 
 ## TP19：新排程 CRUD 與唯讀 occurrence
 
@@ -111,6 +111,67 @@ skill／script／command／寫入／coordinator 留在 SQLite。預設不變更�
   與 UTC fences，只留原雜湊收據。不是排程層自動 GC，fence 上限 100000 筆時拒絕新受理。
 
 TP20 詳細驗收見 `papers/temportal.md` 12.11。新增 **35 項契約、6 項真實 Service 測試**全部通過；完整 venv 首輪 **1366 passed、12 skipped、1 failed、95 subtests passed**（1658.42 秒）。未改動的 Go scaffold 首輪未取得 passing case，整個 results 檔重驗 **19 passed**（33.22 秒），未重現，未確認根因，首輪不記為全綠。另有 Starlette／AnyIO 及 Tkinter 解構 warnings（3）。pip check、compileall、diff check 通過。紀錄 `temp/temporal-tp20-full.log`、`temp/temporal-tp20-results-recheck.log`、`temp/temporal-tp20-unit-final.log` 不入 Git。未呼叫付費 provider、未修改正式設定／使用者排程；受控 runner／scheduled timestamp 不代表正式模型、平台通知或已等待真實分鐘 cron 驗收。
+
+## TP21：DAG 父／子 Workflow、共用預算與獨立 Reviewer
+
+新增的協作 root 以 `AGENT_COORDINATOR_BACKEND=temporal` 明確選用；預設仍為 sqlite。
+這是既有 root task 的協作圖調度，root task 的主 backend 保持原綁定。
+原 M0／V1–V3 的工具清單保持既有能力；一般使用方式是由有權委派的 sqlite root task
+呼叫原 `invoke_subagent`／`check_subagent`／`manage_subagent`。
+Planner、Coder、Reviewer 各自有固定 Child Workflow、TaskStore task 及隔離 worktree；
+Coder 仍沿用原 coordinator 授權的工具及 runner，並取原父工具清單與 persona 工具的交集。
+
+```powershell
+# 僅影響之後建立的協作 root；不遷移已存在的 DAG。
+$env:AGENT_COORDINATOR_BACKEND='temporal'
+# 以原 managed sqlite task 入口委派，invoke_subagent evidence 會帶 graph_id。
+# 原明確啟動的 Temporal Worker 同時服務 DAG control / I/O queues。
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.worker
+
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli status --id <graph_id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli seal --id <graph_id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli cancel --id <graph_id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli reconcile --id <graph_id>
+```
+
+- backend 在第一個 node 受理時固定；未綁定的舊 root 仍保留 sqlite。legacy claim／recover
+  不執行 native nodes；worker 子程序還需核對持久 Activity 許可與活躍程序身分。
+  子 task 固定 Temporal claim fence，在授權 Activity scope 內呼叫原 durable runner，
+  不再包一層 M0 bridge，也不新增另一套模型執行器。
+- 原 owner／session／admin／trial、workspace／managed worktree／DB host queue、namespace
+  都需重新核對。CLI 是可信本機管理入口，Python `Graphs` bridge 可沿用原 execution_scope。
+  角色或設定失效停止受理，session tombstone 阻擋重新執行。
+- 父 Workflow 決定 DAG 依賴與併發，並沿用跨 root／跨 legacy-native 的全域 coordinator 名額；
+  名額不足時只作 metadata 等待，不另建 child、不增加預算或重試 I/O。Coder 的 `review_pending` 會等獨立 Reviewer。
+  approve 必須為真正 boolean、findings 必須為空，任何格式錯誤／拒絕會阻擋依賴。
+  Child Workflow 結束只代表執行結束，業務成功仍核對原 SQL 狀態。
+  `reviewed` 不等於已 merge；原 admin／immediate parent／base-content／Reviewer 驗證保持，
+  merge 仍需原明確操作，已停止 DAG 不能再發起 merge。
+- 沿用同一 TaskBudget 的 requests／tokens／cost／children／depth／deadline，不另配子預算。
+  首次受理保存 immutable contract，新增 Reviewer 也計 child，metadata retry 不重算。
+  root 剩餘期限限一小時內，每 node timeout 沿用 1..600 秒、root 最多 128 nodes（含 Reviewer），
+  最多 1000 個 DAG，contract 限 64 KiB；不延長原根期限。
+- node I/O Activity 最多一次，metadata 最多三次；不確定 process／Activity completion
+  轉 needs_resolution 並保留原 checkpoint／worktree，不能自動由另一引擎重跑。
+  遺失 Start 回覆以相同 parent／child ID 重送，不另建 root 或 child。
+- control 與 I/O queue 分離，I/O 併發由 Worker 設定限制，避免長執行阻塞取消／投影。
+  Child Cancellation 明確 WAIT_CANCELLATION_COMPLETED，Parent Close Policy 為 REQUEST_CANCEL；
+  取消先寫本機 fence，再等實際子程序樹結束；晚到結果不能發布。
+  外部請求已送出時，仍不能保證撤回。
+- `seal` 關閉新 node 受理，但保留已受理 Coder 所需 Reviewer。root task 完成或 seal 後，
+  全部 nodes 解析完才關閉圖；否則在原根期限內繼續接受動態委派。
+  `cancel` 保存停止意圖，`reconcile` 未知 RPC 回傳 pending／exit 2，原 Worker 可有界續作。
+  已關閉／取消的圖不再追加 node，後續工作使用新的 durable root。
+- History 只有 graph/node opaque references 及有限取消控制欄位，prompt／結果／路徑只留本機。
+  session frozen plan 包含精確 DAG/child targets；先排空 local Activity／lease，
+  核對 parent 與 child History／visibility NOT_FOUND，才清理檔案與原文，留下雜湊收據。
+  offline／transfer task／index lag 保留原 frozen files。archival／備份仍需外部政策處置。
+  普通 retention 會保留有 DAG 關聯的 root，避免共用預算或 guarded merge reference 提前失效；
+  自動圖 GC、Temporal merge 流程與完整孤兒治理留 TP22–23。
+
+TP21 DAG 最終驗證 56 passed（43 單元／契約、13 隔離真實 Service）；完整專案回歸 1443 passed、12 skipped、95 subtests passed，僅 1 項既有 deprecation warning。測試服務補強另有 3 項單元驗證。
+TP21 驗收數字與紀錄見 `papers/temportal.md` 12.12；本輪使用隔離 Service、受控模型 runner，
+不修改正式設定、不搬移使用者 DAG、不進行付費 provider 或正式部署驗收。
 
 ## 版本與安裝
 

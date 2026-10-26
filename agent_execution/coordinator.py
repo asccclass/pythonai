@@ -87,6 +87,8 @@ class Coordinator:
                     event TEXT NOT NULL, data TEXT NOT NULL, created REAL NOT NULL);
                 CREATE UNIQUE INDEX IF NOT EXISTS one_agent_review ON agent_nodes(review_of) WHERE review_of IS NOT NULL;
             ''')
+            from .temporal_backend.dag import install
+            install(conn)
 
     def connect(self):
         conn=sqlite3.connect(self.path,timeout=10);conn.row_factory=sqlite3.Row;return conn
@@ -167,6 +169,8 @@ class Coordinator:
             row=conn.execute('SELECT children,deadline FROM task_budgets WHERE owner=? AND id=?',(budget.owner,budget.key)).fetchone()
             if row['deadline']<=time.time() or row['children']>=budget.max_children or payload['depth']>budget.max_depth:
                 raise BudgetExhausted('Task child count/depth/deadline budget exhausted')
+            from .temporal_backend.dag import pin
+            pin(conn,self,owner,root,key,payload,budget,review_of)
             conn.execute('UPDATE task_budgets SET children=children+1 WHERE owner=? AND id=?',(budget.owner,budget.key))
             conn.execute('INSERT INTO agent_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (key,owner,root,parent,persona,goal,json.dumps(dependencies),json.dumps(payload),'queued',None,review_of,None,None,None,
@@ -189,7 +193,9 @@ class Coordinator:
     def recover(self):
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
-            rows=conn.execute("SELECT * FROM agent_nodes WHERE state IN ('queued','running','cancel_requested','merging')").fetchall()
+            rows=conn.execute("""SELECT * FROM agent_nodes WHERE state IN ('queued','running','cancel_requested','merging')
+                AND NOT EXISTS(SELECT 1 FROM agent_root_backends b WHERE b.owner=agent_nodes.owner
+                    AND b.root=agent_nodes.root AND b.backend='temporal')""").fetchall()
             for raw in rows:
                 node=self.decode(raw);child=self.child_task(node)
                 try:root=self.tasks.get(node['payload']['budget_owner'],node['root'])
@@ -225,7 +231,9 @@ class Coordinator:
         self.recover()
         with closing(self.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
-            for raw in conn.execute("SELECT * FROM agent_nodes WHERE state='queued' ORDER BY updated LIMIT 128").fetchall():
+            for raw in conn.execute("""SELECT * FROM agent_nodes WHERE state='queued' AND NOT EXISTS(
+                    SELECT 1 FROM agent_root_backends b WHERE b.owner=agent_nodes.owner
+                    AND b.root=agent_nodes.root AND b.backend='temporal') ORDER BY updated LIMIT 128""").fetchall():
                 node=self.decode(raw)
                 child=self.child_task(node)
                 if child and child['lease_until'] and child['lease_until']>time.time():continue
@@ -251,6 +259,10 @@ class Coordinator:
     def publish(self,node,result):
         if not isinstance(result,dict) or len(json.dumps(result).encode())>1024*1024:raise ValueError('Invalid agent result')
         verified=result.get('verified') is True and result.get('success') is True
+        if node['persona']=='reviewer' and node['payload'].get('temporal_graph'):
+            from .coordinator_worker import review_result
+            try:review_result(json.dumps(result.get('review')))
+            except (ValueError,TypeError):verified=False
         state='review_pending' if node['persona']=='coder' and verified else 'completed' if node['persona']=='planner' and result.get('success') is True else 'rejected' if node['persona']=='reviewer' else 'needs_input'
         if node['persona']=='reviewer' and verified and result.get('review',{}).get('approve') is True and result['review'].get('findings')==[]:state='completed'
         with closing(self.connect()) as conn,conn:
@@ -341,7 +353,9 @@ class CoordinatorService:
 
     def tick(self):
         with closing(self.store.connect()) as conn:
-            waiting=conn.execute("SELECT owner,id FROM agent_nodes WHERE state='review_pending'").fetchall()
+            waiting=conn.execute("""SELECT owner,id FROM agent_nodes WHERE state='review_pending' AND NOT EXISTS(
+                SELECT 1 FROM agent_root_backends b WHERE b.owner=agent_nodes.owner
+                AND b.root=agent_nodes.root AND b.backend='temporal')""").fetchall()
         for row in waiting:self.store.ensure_review(row['owner'],row['id'])
         while not self.stop.is_set():
             node=self.store.claim()
@@ -389,7 +403,12 @@ def resume_coordinator():
     store=TaskStore()
     with closing(store.connect()) as conn:
         table=conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_nodes'").fetchone()
-        active=table and conn.execute("SELECT 1 FROM agent_nodes WHERE state IN ('queued','running','review_pending','cancel_requested') LIMIT 1").fetchone()
+        active=False
+        if table:
+            query="SELECT 1 FROM agent_nodes WHERE state IN ('queued','running','review_pending','cancel_requested')"
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='agent_root_backends'").fetchone():
+                query+=" AND NOT EXISTS(SELECT 1 FROM agent_root_backends b WHERE b.owner=agent_nodes.owner AND b.root=agent_nodes.root AND b.backend='temporal')"
+            active=conn.execute(query+' LIMIT 1').fetchone()
     return start_coordinator(store.path) if active else None
 
 
@@ -424,6 +443,15 @@ def merge_node(store,owner,key):
     node=store.get(owner,key)
     if node['state']=='merged':return node['result']['merge']
     if current_role()!='admin':raise PolicyDenied('Merging requires admin role')
+    if node['payload'].get('temporal_graph'):
+        from .temporal_backend.dag import Graphs
+        graphs=Graphs(store)
+        with closing(store.connect()) as conn:
+            graph=graphs.get(node['payload']['temporal_graph'],conn=conn)
+            if graph['state'] in {'cancelling','cancelled'} or graph['stop_reason']:
+                raise ValueError('DAG stopped; no new merge is allowed')
+            graphs.authority(conn,graph,admission=False)
+            graphs.contract(conn,graph)
     TaskBudget(node['payload']['budget_owner'],node['root'],store.path).check()
     parent=store.tasks.get(node['payload']['budget_owner'],node['root'])
     if parent['state'] in {'cancelled','failed'}:raise ValueError('Parent task has stopped')

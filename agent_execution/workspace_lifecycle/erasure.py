@@ -26,6 +26,10 @@ def transports(owners,task_db=None):
 
 def external_blockers(owners,task_db=None):
     result=[]
+    if task_db is not None:
+        from agent_execution.temporal_backend.dag import busy
+        with closing(sqlite3.connect(task_db)) as conn:
+            if busy(conn,owners):result.append('temporal-dag:local-process')
     from agent_execution.scheduling.store import scheduler_db_path
     path=scheduler_db_path()
     if path.exists():
@@ -173,6 +177,8 @@ def finalize(store,key,runtime=None,event_store=None):
         from agent_execution.temporal_backend.erasure import finish_session
         from agent_execution.temporal_backend.store import Store
         finish_session(Store(store.path),plan['session'])
+    from agent_execution.temporal_backend.dag_erasure import scrub as scrub_dags
+    scrub_dags(store,plan['session'])
     with closing(store.connect()) as conn,conn:
         conn.execute('BEGIN IMMEDIATE')
         names=tables(conn)

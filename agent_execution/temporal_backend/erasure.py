@@ -218,6 +218,8 @@ def ensure_session(store,session):
 
 
 def guard_session(store,session):
+    from .dag_erasure import guard as guard_dags
+    guard_dags(store,session)
     with closing(store.connect()) as conn,conn:
         if 'temporal_submissions' not in tables(conn):
             return
@@ -232,10 +234,12 @@ def guard_session(store,session):
 
 def session_receipts(store,session):
     with closing(store.connect()) as conn:
+        from .dag_erasure import receipts
+        dags=receipts(conn,session)
         if 'temporal_erasures' not in tables(conn):
-            return []
+            return dags
         return [{'submission_id':r[0],'state':r[1],'receipt':json.loads(r[2])}
-            for r in conn.execute('SELECT submission_id,state,receipt FROM temporal_erasures WHERE session=? ORDER BY submission_id',(session,))]
+            for r in conn.execute('SELECT submission_id,state,receipt FROM temporal_erasures WHERE session=? ORDER BY submission_id',(session,))]+dags
 
 def finish_session(store,session):
     ensure_session(store,session)

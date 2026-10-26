@@ -30,6 +30,11 @@ async def serve():
     from .schedule_workflow import ScheduleOccurrence
     from .schedule_activities import ACTIVITIES as SCHEDULE_ACTIVITIES
     schedules = Schedules(tasks=store)
+    from .dag import Graphs,reconcile as dag_reconcile
+    from .dag_workflow import CoordinatorDAG,CoordinatorNode
+    from .dag_activities import CONTROL_ACTIVITIES as DAG_CONTROL,IO_ACTIVITIES as DAG_IO
+    from agent_execution.coordinator import Coordinator
+    graphs=Graphs(Coordinator(store.path))
     queues = {store.queue, store.queue_for('steps'), store.queue_for('human'), store.queue_for('approval')}
     async def reconcile():
         while True:
@@ -99,6 +104,12 @@ async def serve():
             except Exception as error:
                 print(json.dumps({'temporal':'schedule_pending','error_type':type(error).__name__}),flush=True)
             await asyncio.sleep(5)
+    async def reconcile_dags():
+        while True:
+            try:await dag_reconcile(graphs,client)
+            except Exception as error:
+                print(json.dumps({'temporal':'dag_pending','error_type':type(error).__name__}),flush=True)
+            await asyncio.sleep(5)
     with ThreadPoolExecutor(max_workers=settings.concurrency*2) as executor:
         bridge_worker = Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],
                         activities=[execute_readonly], activity_executor=executor,
@@ -118,8 +129,17 @@ async def serve():
                                  graceful_shutdown_timeout=timedelta(seconds=15))
         print(json.dumps({'temporal': 'worker_configured', 'namespace': settings.namespace,
                           'queues': sorted(queues), 'schedule_queue': schedules.queue,
-                          'os': host_environment()['os'], 'mode': 'bridge_and_readonly_steps_v1_v2_v3'}), flush=True)
+                          'dag_queue':graphs.queue,'dag_io_queue':graphs.queue+'-io',
+                          'os': host_environment()['os'], 'mode': 'bridge_readonly_steps_and_optin_dag_v1'}), flush=True)
         async with AsyncExitStack() as stack:
+            await stack.enter_async_context(Worker(client,task_queue=graphs.queue,
+                workflows=[CoordinatorDAG,CoordinatorNode],activities=DAG_CONTROL,
+                max_concurrent_activities=settings.concurrency+4,
+                graceful_shutdown_timeout=timedelta(seconds=15)))
+            await stack.enter_async_context(Worker(client,task_queue=graphs.queue+'-io',
+                activities=DAG_IO,
+                max_concurrent_activities=settings.concurrency,
+                graceful_shutdown_timeout=timedelta(seconds=15)))
             await stack.enter_async_context(Worker(client,task_queue=schedules.queue,
                 workflows=[ScheduleOccurrence],activities=SCHEDULE_ACTIVITIES,
                 max_concurrent_activities=settings.concurrency,
@@ -130,12 +150,14 @@ async def serve():
             await stack.enter_async_context(approval_worker)
             reconciler = asyncio.create_task(reconcile())
             schedule_reconciler = asyncio.create_task(reconcile_schedules())
+            dag_reconciler=asyncio.create_task(reconcile_dags())
             try:
                 await asyncio.Future()
             finally:
                 reconciler.cancel()
                 schedule_reconciler.cancel()
-                await asyncio.gather(reconciler, schedule_reconciler, return_exceptions=True)
+                dag_reconciler.cancel()
+                await asyncio.gather(reconciler, schedule_reconciler,dag_reconciler, return_exceptions=True)
 
 
 def main():

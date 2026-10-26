@@ -308,11 +308,13 @@ class LifecycleStore:
             known={Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?',(root,))}
             unmanaged_count=sum(p.is_dir() and p.name not in known and p.name!='.git' for p in path.iterdir())
             from agent_execution.temporal_backend.retention import preview as temporal_preview
+            from agent_execution.temporal_backend.dag_erasure import preview as dag_preview
             payload = {'session':session,'action':action,'items':items,'kept':kept,'blocking_tasks':blocking,'unmanaged_count':unmanaged_count,
                 'resources':self.resources(conn),
                 'transports':[CommunicationStore(path).lifecycle_summary(owner) for owner,path in transports(owners,self.path)],
                 'schedules':schedules(owners) if action=='delete_session' else [],
-                'temporal':temporal_preview(conn,owners) if action=='delete_session' else []}
+                'temporal':temporal_preview(conn,owners) if action=='delete_session' else [],
+                'dags':dag_preview(conn,owners) if action=='delete_session' else []}
             plan = uuid.uuid4().hex
             conn.execute('INSERT INTO wl_plans(id,session,principal,action,payload,expires) VALUES(?,?,?,?,?,?)',
                 (plan,session,principal(),action,json.dumps(payload),time.time()+300))

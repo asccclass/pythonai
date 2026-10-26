@@ -8,5 +8,10 @@ from agent_execution.policy import current_context
 def invoke_subagent(persona: str,task: str,dependencies: list[str] | None = None):
     store=Coordinator()
     key=store.submit(persona,task,dependencies)
-    if current_context().coordinator_node is None:start_coordinator(store.path)
-    return ToolResult(True,output='Agent queued: '+key,evidence={'agent_id':key,'status':'queued'})
+    evidence={'agent_id':key,'status':'queued'}
+    node=store.get(scope_owner(),key)
+    if current_context().coordinator_node is None and not node['payload'].get('temporal_graph'):
+        start_coordinator(store.path)
+    if node['payload'].get('temporal_graph'):
+        evidence.update(backend='temporal',graph_id=node['payload']['temporal_graph'])
+    return ToolResult(True,output='Agent queued: '+key,evidence=evidence)

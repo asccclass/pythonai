@@ -65,6 +65,9 @@ def check_items(store,plan,conn):
         from agent_execution.temporal_backend.retention import preview
         if preview(conn,owners)!=plan['payload'].get('temporal',[]):
             raise ValueError('Temporal targets changed; preview again')
+        from agent_execution.temporal_backend.dag_erasure import preview as dag_preview
+        if dag_preview(conn,owners)!=plan['payload'].get('dags',[]):
+            raise ValueError('DAG targets changed; preview again')
     for kept in plan['payload']['kept']:
         row=store.get(kept['id'],conn)
         refs=sorted(r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],)))

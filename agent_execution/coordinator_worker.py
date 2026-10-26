@@ -35,6 +35,18 @@ def execute_node(store,node,runner=None,evaluator_factory=None):
     from base import auto_approve_command_runs
     payload=node['payload'];owner=node_task_owner(payload);key='subagent:'+node['id']
     if store.cancelled(node,node['lease']):raise InterruptedError('Worker lease or task cancelled')
+    if payload.get('temporal_graph'):
+        # A legacy dispatcher cannot manufacture the Activity's one-time permit.
+        from .temporal_backend.dag import Graphs
+        from .temporal_backend.references import process_stamp
+        graphs=Graphs(store)
+        with closing(store.connect()) as conn:
+            graph=graphs.get(payload['temporal_graph'],conn=conn)
+            graphs.authority(conn,graph)
+            graphs.contract(conn,graph)
+            permit=conn.execute('SELECT * FROM temporal_agent_runs WHERE node_id=?',(node['id'],)).fetchone()
+            if not permit or permit['graph_id']!=graph['id'] or permit['lease']!=node['lease'] or permit['state']!='started' or process_stamp(permit['pid'])!=permit['process']:
+                raise PermissionError('Native DAG node requires its live Activity permit')
     role=payload['role']
     if payload['source']!='local':
         ranks={'viewer':0,'operator':1,'admin':2};live=get_user_role(payload['identity'])
@@ -45,10 +57,13 @@ def execute_node(store,node,runner=None,evaluator_factory=None):
     cancelled=lambda:store.cancelled(node,node['lease'])
     budget=TaskBudget(payload['budget_owner'],node['root'],store.path)
     budget_token=_budget.set(budget);depth_token=_depth.set(payload['depth'])
+    tools=TOOLS_BY_ROLE[node['persona']]
+    if payload.get('temporal_graph') and payload.get('parent_tools') is not None:
+        tools=tools&frozenset(payload['parent_tools'])
     try:
         with execution_scope(source='subagent',identity=payload['identity'],session=payload['session'],project=payload['project'],
                 task_id=key,workspace=Path(payload['repository']),repository_workspace=Path(payload['repository']),
-                allowed_tools=TOOLS_BY_ROLE[node['persona']],coordinator_node=node['id'],coordinator_owner=node['owner'],check_cancelled=cancelled),set_current_role(role),auto_approve_command_runs():
+                allowed_tools=tools,coordinator_node=node['id'],coordinator_owner=node['owner'],check_cancelled=cancelled),set_current_role(role),auto_approve_command_runs():
             worktrees=WorktreeStore(payload['repository'],payload['storage'])
             workspace=worktrees.create(owner,key,base=payload['snapshot'])
             from .workspace_lifecycle import LifecycleStore
@@ -91,7 +106,10 @@ def execute_node(store,node,runner=None,evaluator_factory=None):
                 agent=runner or server.run_agent
                 def invoke(saved):return agent(messages,resume_state=saved,check_cancelled=cancelled,task_evaluator=evaluator)
                 criteria={'version':1,'checks':[]} if node['persona']=='planner' else payload['criteria']
-                reply=durable_invoke(invoke,messages,None,resume=True,acceptance_contract=criteria)
+                from contextlib import nullcontext
+                from .temporal_backend.router import activity_scope
+                with activity_scope(owner,key) if payload.get('temporal_graph') else nullcontext():
+                    reply=durable_invoke(invoke,messages,None,resume=True,acceptance_contract=criteria)
                 row=store.tasks.get(owner,key)
                 success=row['state']=='completed' and not str(reply).startswith('Error:')
                 result={'success':success,'reply':str(reply),'verified':row['verification']=='verified_completed',

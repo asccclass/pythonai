@@ -25,11 +25,11 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP11.7 原始長任務完整產物及 TP21–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物及 TP22–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-24）
+### 目前導入進度（2026-10-26）
 
-本輪 TP20 已完成逐筆 preview／paused staging／原子切換／安全回滾與 UTC occurrence fence；新增 35 項契約測試及 6 項隔離真實 Service 測試全通過。完整 venv 首輪 1366 passed、12 skipped、1 failed（未改動的 Go scaffold），該檔重驗 19 passed；首輪失敗未重現，未將首輪記為全綠。pip check／compileall／diff check 通過，詳細證據見 12.11。TP19 新排程整合見 12.10。
+本輪 TP21 已完成 opt-in DAG 父／子 Workflow、共用原始預算、獨立 Reviewer、取消與刪除整合。新增 DAG 驗證 56 項（43 單元／契約、13 隔離真實 Service），全部通過；完整 venv 回歸 1443 passed、12 skipped、95 subtests passed，僅 1 項既有 deprecation warning。pip check／compileall／diff check 通過，詳細證據及首輪測試服務啟動問題修正見 12.12。TP20 舊排程切換見 12.11。
 
 前輪完成 TP18：將 Temporal 刪除接入原人類確認的 frozen lifecycle 計畫，持久 reference 保護仍在執行的本機程序；核對遠端閉合及 History／visibility 查無紀錄後，才清除同 task 的執行內容與 artifacts。保留最小雜湊 fence 防復活；有界 retention CLI 預設 dry-run，不掃描刪除程式檔案。隔離 Service 的刪除／離線恢復／CLI 重入驗證通過。完整 venv pytest **1286 passed、12 skipped、95 subtests passed**，1148.42 秒；pip check／compileall／diff check 通過。archival／備份分列 external_policy_required，不宣稱已抹除正式資料，詳見 12.9 及 backend README。
 
@@ -85,7 +85,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP18 | 同機 erasure fence、遠端閉合與 History／visibility 核對、scoped payload 清除及有界 retention CLI 已實作；驗收見 12.9 |
 | TP19 | 新排程 owner-scoped CRUD、時區、SKIP／BUFFER_ONE、max_runs、獨立唯讀 task 與 erasure 整合；驗收見 12.10 |
 | TP20 | 舊唯讀排程 preview／paused staging／cutover／rollback、UTC fence／DST／離線重入；驗收見 12.11 |
-| TP21–TP30 | 待辦；多 Agent、正式部署、多機及其他副作用能力尚未交付 |
+| TP21 | 已完成 opt-in DAG 父／子 Workflow、shared budget、獨立 Reviewer 與取消／刪除整合，見 12.12 |
+| TP22–TP30 | 待辦；完整 worktree／merge 流程、孤兒治理、正式部署、多機及其他副作用能力尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -592,7 +593,7 @@ task／step／owner／session 與一次性 consume；未知效果不重試。先
 - [x] TP13.5：以 opt-in `approval` engine／V3／獨立 queue 整合 ApprovalStore 原子 decision outbox、既有授權入口與桌面事件通知、pending／approved／denied／expired 映射；執行前重查當前權限、相同 action／digest／session 並一次性 consume。consume 後崩潰保持 uncertain，不盲重做。只開放同機唯讀工具；寫入仍留 TP17。
 - [x] TP13.6（2026-10-21）：操作審批的重送、早到、TTL、撤權、跨 session、consume 後崩潰、人工回答接審批及端到端測試通過；35 項契約／單元測試、6 項真實 Service／Worker 測試含 V3 History replay。完整 pytest **1107 passed、9 skipped、95 subtests passed**，1069.19 秒；pip check、compileall、diff check 通過。使用受控模型；真實 provider 與桌面實機驗收未因此改標成功，細節見 backend README。
 
-後續依序：TP21 DAG 父／子 Workflow；TP20 舊唯讀排程切換見 12.11；TP19 新排程整合見 12.10；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
+後續依序：TP22 worktree／merge 與完整孤兒治理；TP21 DAG 父／子 Workflow 見 12.12；TP20 舊唯讀排程切換見 12.11；TP19 新排程整合見 12.10；TP17 首批檔案寫入驗收見 12.8，TP18 retention／刪除見 12.9。TP19–TP24 排程、DAG 與版本治理
 必須沿用上述保護；TP25–TP30 維運／部署／多機仍有外部環境與觀察期驗收，不能用單元
 測試代替。TP02 非 Windows 平台驗證與 TP11.7 原始長任務完整產物驗收仍獨立保留；真實 provider 唯讀補驗見 12.7。
 
@@ -705,7 +706,32 @@ TP20 舊唯讀排程 dry-run／cutover／rollback、DST 與停機不補跑驗收
 
 最終紀錄：`temp/temporal-tp20-full.log`、`temp/temporal-tp20-results-recheck.log`、`temp/temporal-tp20-unit-final.log`（不入 Git）。真實 Service 證明未來 10 次 Calendar API、春／秋 DST、台北、切換／受控 runner task／回滾、Service 停止恢復，以及 Schedule 已刪除但本機 commit 中斷的續作。沒有付費 provider 呼叫，未修改正式設定／使用者排程；受控 scheduled timestamp 不等同已等待正式分鐘 cron。
 操作命令、pending exit 2、停止條件與資料邊界見 backend README 的 TP20 節。
-下一項為 TP21 DAG 父／子 Workflow 與 shared budget；TP11.7 原始長任務完整產物仍獨立待辦。
+接續 TP21 DAG 父／子 Workflow 與 shared budget 已完成，見 12.12；TP11.7 原始長任務完整產物仍獨立待辦。
+
+### 12.12 TP21 DAG 父／子 Workflow 與 shared budget
+
+本輪沿用既有 coordinator 執行器及 guarded merge，新增獨立 `AGENT_COORDINATOR_BACKEND=temporal`
+opt-in；預設 sqlite，不將現有 DAG 或唯讀 Temporal task 自動擴權。新 root 固定 backend，
+Planner／Coder／Reviewer 使用穩定 Child Workflow ID，History 只攜帶 opaque graph/node reference。
+
+- [x] TP21.1：root backend 固定、owner／admin／trial／workspace／DB／queue 核對；legacy claim／recover 排除 native DAG，不遷移舊節點。
+- [x] TP21.2：父 Workflow 管理依賴、併發與動態 Reviewer；Coder review_pending 不作成功，嚴格 approve/findings 與原 guarded merge 維持。
+- [x] TP21.3：共用原 TaskBudget／child count／depth／deadline 及跨 root／引擎全域併發，保存 immutable contract；重試／重啟不重算 child 或預算、不重放未知 I/O。
+- [x] TP21.4：明確 Child Cancellation 與 Parent Close Policy；本機 cancellation fence、子程序結束等待及晚到結果拒絕；session tombstone 阻擋新受理。
+- [x] TP21.5：獨立 queue／Worker 與 restartable dispatch；可信 status／seal／cancel／reconcile 入口，History 不含 prompt／結果／絕對路徑。
+- [x] TP21.6：單元、原 coordinator 回歸、隔離真實 Service／Worker／replay／故障矩陣；完整 venv 驗證、文件與獨立 commit。
+
+驗收（2026-10-26，全部使用專案 venv）：
+
+- DAG 最終組合：56 passed（43 單元／契約、13 隔離真實 Service／Worker），377.49 秒；涵蓋 parent／child replay、Worker 重啟、Start 回覆遺失、Service 離線、未知效果、跨引擎併發、取消後實際程序退出，以及 session erasure。
+- 完整專案最終回歸：1443 passed、12 skipped、95 subtests passed，1700.25 秒；1 項既有 Starlette／AnyIO deprecation warning。紀錄：`temp/temporal-tp21-full.log`。
+- 測試服務補強與既有 Schedule 重驗：8 passed（3 port fixture 單元、5 真實 Schedule），101.32 秒。pip check、compileall 與 git diff --check 通過。
+- 完整回歸首輪為 1439 passed、12 skipped、1 failed、95 subtests passed；唯一失敗是既有 Schedule 測試尚未進入業務驗證前，隔離 CLI Service 在 HTTP server 啟動時發生 Go nil pointer panic，紀錄保留於 `temp/temporal-tp21-full-initial.log`。依 CLI free-port 實作及本機 dynamic port 範圍，推測存在釋放後再選取的競爭，未宣稱已證明底層碰撞；測試 fixture 改用本機 dynamic 範圍外的候選 loopback port、保留啟動錯誤首尾，並讓手動 Schedule trigger 跨秒避免同秒 Workflow ID 去重。補強後重跑整套得到上述全綠結果，沒有略過失敗測試。
+
+測試模型使用受控 runner，沒有正式 provider E2E 或多機部署證據；未改使用者設定或遷移使用者資料。測試服務實作參考：[CLI freeport](https://raw.githubusercontent.com/temporalio/cli/v1.9.1/internal/devserver/freeport.go)、[CLI devserver](https://raw.githubusercontent.com/temporalio/cli/v1.9.1/internal/devserver/server.go)。
+
+後續 TP22 擴充 worktree／merge 的 Temporal 流程與完整孤兒治理；本輪保留既有 worktree／merge，
+不引入另一個 agent core、不自動 merge、不啟用正式設定或真實 provider 付費呼叫。
 
 ## 13. 測試矩陣、驗收與放量
 

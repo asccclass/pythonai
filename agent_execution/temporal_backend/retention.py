@@ -94,6 +94,9 @@ def queue_deleted_sessions(conn):
             conn.execute("UPDATE temporal_erasures SET reason='deleted_session' WHERE session=? AND state!='local_done'",(session,))
 
 def eligible(conn,row,before):
+    if 'temporal_agent_graphs' in tables(conn) and conn.execute(
+            'SELECT 1 FROM temporal_agent_graphs WHERE owner=? AND root=?',(row['owner'],row['task_id'])).fetchone():
+        return False  # Shared budgets and guarded merge references still belong to this DAG.
     from .schedules import task_pending
     if task_pending(conn,row['id']):
         return False
