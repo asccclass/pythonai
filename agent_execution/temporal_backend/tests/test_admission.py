@@ -135,3 +135,42 @@ def test_unmanaged_excluded_runner_retains_sqlite_behavior(monkeypatch):
     monkeypatch.setenv('AGENT_TEMPORAL_TRIAL_OWNERS','[]')
     with execution_scope(task_id=None):
         assert durable_invoke(Mock(return_value='ephemeral'),[],None)=='ephemeral'
+
+
+@pytest.mark.parametrize('binding,excluded,activity,expected', [
+    (None, False, False, False),
+    (None, True, False, True),
+    ('sqlite', False, False, True),
+    ('temporal', True, False, False),
+    ('temporal', False, True, True),
+])
+def test_automatic_skill_selection_obeys_pinned_backend(monkeypatch,binding,excluded,activity,expected):
+    from contextlib import nullcontext
+    from agent_execution.temporal_backend.router import automatic_skills_enabled,activity_scope
+    enable(monkeypatch)
+    owner,task=task_owner(current_context()),current_context().task_id
+    if binding:
+        Store().bind(owner,task,binding)
+    if excluded:
+        monkeypatch.setenv('AGENT_TEMPORAL_TRIAL_OWNERS','[]')
+    with activity_scope(owner,task) if activity else nullcontext():
+        assert automatic_skills_enabled() is expected
+
+
+def test_native_runtime_routes_an_automatic_executable_match_to_agent_steps(monkeypatch):
+    import agent_runtime
+    from laya_guard import GuardDecision
+    enable(monkeypatch)
+    skill=SimpleNamespace(name='wiki',execution={'steps':[{'tool':'write_file'}]},allowed_tools=[])
+    match=SimpleNamespace(skill=skill,to_dict=lambda:{'name':'wiki'})
+    runtime=agent_runtime.AgentRuntime(messages=[],guard=SimpleNamespace(assess=lambda text:GuardDecision()),
+        memory=None,memory_searcher=None,skill_matcher=SimpleNamespace(match=lambda text:[match]),
+        memory_worker=None,memory_classifier_factory=None,semantic_extractor=None,procedure_matcher=None,
+        run_agent=Mock(side_effect=AssertionError('Legacy agent must not execute')),
+        run_skill=Mock(side_effect=AssertionError('Native Workflow cannot auto-execute a skill')))
+    with patch('agent_execution.temporal_backend.backend.invoke',return_value='native wiki result') as invoke:
+        result=agent_runtime.run_agent_turn('建立 llm-wiki',runtime)
+    assert result.reply=='native wiki result'
+    invoke.assert_called_once()
+    runtime.run_agent.assert_not_called()
+    runtime.run_skill.assert_not_called()

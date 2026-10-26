@@ -45,6 +45,16 @@ def backend_for_task(context=None):
     return new_backend(owner)
 
 
+def automatic_skills_enabled():
+    """Native task Workflows use Agent steps; Activity-owned legacy runners retain skills."""
+    from agent_execution.policy import current_context
+    from agent_execution.tasks import task_owner
+    context = current_context()
+    if context.task_id is None or _activity.get() == (task_owner(context), context.task_id):
+        return True
+    return backend_for_task(context) == 'sqlite'
+
+
 def route(messages, *, resume=False, skill=False):
     from agent_execution.policy import current_context
     from agent_execution.tasks import task_owner

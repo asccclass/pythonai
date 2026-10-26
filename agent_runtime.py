@@ -173,7 +173,9 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
     executable_skill_matches = [
         match for match in skill_matches if hasattr(match, "skill") and skill_has_executable_steps(match.skill)
     ]
-    if len(skill_matches) == 1 and executable_skill_matches and runtime.run_skill is not None:
+    from agent_execution.temporal_backend.router import automatic_skills_enabled
+    if (len(skill_matches) == 1 and executable_skill_matches and runtime.run_skill is not None
+            and automatic_skills_enabled()):
         selected = skill_matches[0].skill
         inputs = {"question": user_input} if "question" in selected.inputs.get("properties", {}) else {}
         if runtime.event_callback:
