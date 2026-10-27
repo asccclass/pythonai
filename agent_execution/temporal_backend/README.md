@@ -224,6 +224,20 @@ TP22 新增 31 項（25 單元／契約、6 真實 Service）全數通過；最�
 真實 Service／Worker 與受控 Reviewer 結果；非 Windows 的破壞性清理、正式 provider、
 Docker／多機或正式部署未實機驗收。
 
+## TP23：DAG History Continue-As-New（部分交付）
+
+`CoordinatorDAG` checks the SDK's `is_continue_as_new_suggested()` hint after reconciling
+its persisted graph snapshot. It continues with the same opaque `graph_id` only when every
+child handle is settled. The next run re-reads SQLite as authority for graph state, root
+budget, idempotency records, and cancellation; active children are never orphaned by parent
+Continue-As-New. The SDK control exception is explicitly re-raised instead of entering the
+DAG stop/fence path.
+
+Per-artifact (2 MiB), total ledger/artifact storage (256 MiB), and operation-count
+(100,000) limits remain enforced. TP18 retention/erasure owns cleanup after references drain.
+Automatic DAG GC and isolated real-Service run-chain/pressure validation remain outstanding;
+this is a partial TP23 implementation, not a completed capacity-governance milestone.
+
 ## 目前入口的限定接入驗收（TP11.7）
 
 使用現有 `/ws/v1` 路由、真實本機 provider 與獨立 Worker 程序；所有 DB、owner、角色設定及

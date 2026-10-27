@@ -25,7 +25,7 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 History 容量治理部分實作中；TP24–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-27）
 
@@ -91,7 +91,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP20 | 舊唯讀排程 preview／paused staging／cutover／rollback、UTC fence／DST／離線重入；驗收見 12.11 |
 | TP21 | 已完成 opt-in DAG 父／子 Workflow、shared budget、獨立 Reviewer 與取消／刪除整合，見 12.12 |
 | TP22 | 已完成明確 lifecycle 意圖、guarded merge 取消保護、worktree 封存／還原及孤兒治理，見 12.14 |
-| TP23–TP30 | 待辦；History／artifact 容量、版本、正式部署、多機及其他副作用能力尚未交付 |
+| TP23 | Continue-As-New 安全切換已部分實作；自動 DAG GC 與 Service/Worker run-chain 驗收待完成 |
+| TP24–TP30 | 待辦；History/artifact 完整治理、版本、正式部署、多機及其他副作用能力尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -861,6 +862,20 @@ Workflow 變更使用明確 V1/V2 cutover、相容 patch 或經驗證的 Worker 
 | 過早刪 legacy | 待排空、觀察期與可回滾條件滿足後才 TP30 |
 
 實作起始建議：先執行 TP01–TP03，完成基準、版本相容 POC 與 ADR，再進入程式修改。正式部署位置、Cloud／自管、保留期間、備份責任及目標並發可在 M0 結果出來後做最終決策；對部署或預算有重大影響的差異需先更新本規劃。
+
+## TP23 進度：DAG History Continue-As-New（2026-10-27）
+
+`CoordinatorDAG` 現在採用 Temporal SDK 的 `is_continue_as_new_suggested()` 提示；只有所有
+child handle 已 settled 才從 main Workflow 呼叫 Continue-As-New，並以原 opaque `graph_id`
+啟動同一 Workflow chain 的新 run。Coordinator SQLite snapshot、root budget、node／operation
+去重及取消狀態維持唯一權威；不把它們複製到 History，也不在新 run 重建仍在執行的 Child。
+Continue-As-New 的 control exception 會被原樣傳回 Temporal，不觸發 DAG stop/fence 路徑。
+
+既有每份 artifact 2 MiB、ledger/artifact 合計 256 MiB 與 operation 100,000 筆上限仍生效；
+TP18 retention/erasure 仍負責引用排空後清理，TP23 尚未增加自動 DAG GC。審批／排程事件去重
+由持久化 outbox／ledger 管理，這些有限執行目前不使用 Continue-As-New。已新增觸發條件及
+新 run command-path 單元回歸；尚待隔離真實 Service/Worker 的 run-chain、artifact 壓力／GC
+邊界與完整回歸，因此本節只記錄部分交付，不代表 TP23 完成。
 
 ## 15. 官方參考資料
 

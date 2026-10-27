@@ -7,6 +7,11 @@ from temporalio.exceptions import ActivityError,ApplicationError,CancelledError
 from .dag_contracts import PARENT,CHILD,SNAPSHOT,RUN,FENCE,STOP,envelope,probe,node_result
 
 
+def should_continue_as_new(suggested, active_children):
+    """Only rotate a parent run at a point where all child handles are settled."""
+    return suggested is True and type(active_children) is int and active_children == 0
+
+
 async def metadata(name,value):
     return await workflow.execute_activity(name,value,start_to_close_timeout=timedelta(seconds=20),
         retry_policy=RetryPolicy(maximum_attempts=3))
@@ -80,8 +85,16 @@ class CoordinatorDAG:
                             except BaseException:
                                 await metadata(FENCE,{**value,'node_id':node})
                             del handles[node]
+                # Child executions do not transfer to a continued parent run. The
+                # SQLite graph snapshot is authoritative, so rotate only after all
+                # children have settled and all local state is represented there.
+                if should_continue_as_new(workflow.info().is_continue_as_new_suggested(),
+                                          sum(not h.done() for h in handles.values())):
+                    workflow.continue_as_new(value)
                 await workflow.sleep(1)
             raise ApplicationError('DAGHistoryBoundReached',non_retryable=True)
+        except workflow.ContinueAsNewError:
+            raise
         except BaseException:
             # Cancellation fences local publication before asking children to stop.
             await metadata(STOP,value)

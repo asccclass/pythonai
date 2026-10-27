@@ -15,6 +15,37 @@ from agent_execution.worktrees import git
 from permissions import set_current_role
 from agent_execution.temporal_backend.dag import Graphs,busy
 from agent_execution.temporal_backend.dag_contracts import envelope,probe
+from agent_execution.temporal_backend.dag_workflow import should_continue_as_new
+
+
+@pytest.mark.parametrize(('suggested','active','expected'),[
+    (True,0,True),(True,1,False),(False,0,False),(True,-1,False),(True,False,False)])
+def test_dag_continue_as_new_requires_suggestion_and_settled_children(suggested,active,expected):
+    assert should_continue_as_new(suggested,active) is expected
+
+
+def test_dag_workflow_rotates_run_without_stopping_graph(monkeypatch):
+    from types import SimpleNamespace
+    from temporalio import workflow as sdk_workflow
+    import agent_execution.temporal_backend.dag_workflow as dag_workflow
+
+    class ContinueSignal(sdk_workflow.ContinueAsNewError):
+        pass
+
+    calls=[]
+    async def execute(name,value,**kwargs):
+        calls.append(name)
+        return {'done':False,'stop':False,'ready':[],'concurrency':1}
+    def continue_run(value):
+        calls.append(('continue',value))
+        raise ContinueSignal()
+    fake=SimpleNamespace(ContinueAsNewError=sdk_workflow.ContinueAsNewError,
+        info=lambda:SimpleNamespace(is_continue_as_new_suggested=lambda:True),
+        execute_activity=execute,continue_as_new=continue_run,sleep=lambda *_:None)
+    monkeypatch.setattr(dag_workflow,'workflow',fake)
+    with pytest.raises(ContinueSignal):
+        asyncio.run(dag_workflow.CoordinatorDAG().run({'graph_id':'a'*32}))
+    assert calls==['pythonai_dag_snapshot_v1',('continue',{'graph_id':'a'*32})]
 
 
 @pytest.fixture
