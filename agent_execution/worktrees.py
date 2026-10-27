@@ -276,7 +276,7 @@ class WorktreeStore:
                 ('ready',time.time(),owner,task,str(self.repository)))
         return path
 
-    def archive(self,owner,task):
+    def archive(self,owner,task,expected_content=None):
         """Caller must stop the task and obtain human authorization before this operation."""
         path=self.location(owner,task)
         with closing(self.connect()) as conn,conn:
@@ -286,6 +286,9 @@ class WorktreeStore:
             if row is None:raise KeyError(task)
             if row['state']=='archived':return Path(row['archive'])
             if not self.registered(path):raise ValueError('Managed worktree is not registered')
+            if expected_content is not None:
+                from .temporal_backend.dag_lifecycle import fingerprint
+                if fingerprint(path)!=expected_content:raise ValueError('Worktree content changed after authorization')
             if git(path,'submodule','status').strip():raise ValueError('Submodule worktrees require manual preservation')
             objects=dict(line.split(': ',1) for line in git(path,'count-objects','-v').splitlines() if ': ' in line)
             if (int(objects.get('size',0))+int(objects.get('size-pack',0)))*1024>256*1024*1024:
@@ -315,6 +318,8 @@ class WorktreeStore:
             # Recheck the resolved target immediately before Git removes it.
             if self.location(owner,task)!=path:raise ValueError('Worktree path changed')
             if git(path,'rev-parse','HEAD').strip()!=head:raise ValueError('Worktree HEAD changed during archive')
+            if expected_content is not None and fingerprint(path)!=expected_content:
+                raise ValueError('Worktree content changed during authorized archive')
             git(self.repository,'worktree','remove','--force',str(path))
             conn.execute('UPDATE worktrees SET state=?,archive=?,updated=? WHERE owner=? AND task=? AND repository=?',
                 ('archived',str(archive),time.time(),owner,task,str(self.repository)))

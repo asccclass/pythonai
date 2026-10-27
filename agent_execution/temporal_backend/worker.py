@@ -35,6 +35,10 @@ async def serve():
     from .dag_activities import CONTROL_ACTIVITIES as DAG_CONTROL,IO_ACTIVITIES as DAG_IO
     from agent_execution.coordinator import Coordinator
     graphs=Graphs(Coordinator(store.path))
+    from .dag_lifecycle import Lifecycle
+    from .dag_lifecycle_workflow import CoordinatorLifecycle
+    from .dag_lifecycle_activities import execute as lifecycle_execute
+    lifecycle=Lifecycle(graphs)
     queues = {store.queue, store.queue_for('steps'), store.queue_for('human'), store.queue_for('approval')}
     async def reconcile():
         while True:
@@ -130,8 +134,13 @@ async def serve():
         print(json.dumps({'temporal': 'worker_configured', 'namespace': settings.namespace,
                           'queues': sorted(queues), 'schedule_queue': schedules.queue,
                           'dag_queue':graphs.queue,'dag_io_queue':graphs.queue+'-io',
+                          'lifecycle_queue':lifecycle.queue,
                           'os': host_environment()['os'], 'mode': 'bridge_readonly_steps_and_optin_dag_v1'}), flush=True)
         async with AsyncExitStack() as stack:
+            await stack.enter_async_context(Worker(client,task_queue=lifecycle.queue,
+                workflows=[CoordinatorLifecycle],activities=[lifecycle_execute],
+                max_concurrent_activities=1,max_heartbeat_throttle_interval=timedelta(seconds=2),
+                graceful_shutdown_timeout=timedelta(seconds=30)))
             await stack.enter_async_context(Worker(client,task_queue=graphs.queue,
                 workflows=[CoordinatorDAG,CoordinatorNode],activities=DAG_CONTROL,
                 max_concurrent_activities=settings.concurrency+4,

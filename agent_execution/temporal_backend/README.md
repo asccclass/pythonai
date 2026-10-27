@@ -167,11 +167,62 @@ $env:AGENT_COORDINATOR_BACKEND='temporal'
   核對 parent 與 child History／visibility NOT_FOUND，才清理檔案與原文，留下雜湊收據。
   offline／transfer task／index lag 保留原 frozen files。archival／備份仍需外部政策處置。
   普通 retention 會保留有 DAG 關聯的 root，避免共用預算或 guarded merge reference 提前失效；
-  自動圖 GC、Temporal merge 流程與完整孤兒治理留 TP22–23。
+  Temporal merge／孤兒治理接續見 TP22；自動圖 GC 與容量治理留 TP23。
 
 TP21 DAG 最終驗證 56 passed（43 單元／契約、13 隔離真實 Service）；完整專案回歸 1443 passed、12 skipped、95 subtests passed，僅 1 項既有 deprecation warning。測試服務補強另有 3 項單元驗證。
 TP21 驗收數字與紀錄見 `papers/temportal.md` 12.12；本輪使用隔離 Service、受控模型 runner，
 不修改正式設定、不搬移使用者 DAG、不進行付費 provider 或正式部署驗收。
+
+## TP22：DAG worktree／merge／孤兒治理
+
+沿用 TP21 的同機 DB／角色／workspace 與原 guarded merge。預設後端不變，Worker 不會自動
+建立 merge 或 archive 意圖。只能由同 owner 的非委派 admin 透過現有人類入口明確提交：
+
+```text
+/agents <root_task> merge <node_id>
+/agents <root_task> archive <node_id>
+/agents <root_task> operations <node_id>
+```
+
+亦可使用可信 CLI（其執行身分／session 必須與 graph owner 相符）：
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli merge --id <graph_id> --node <node_id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli archive --id <graph_id> --node <node_id>
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_cli operation-status --id <operation_id>
+```
+
+- 操作先持久化，Worker reconcile 以固定 Workflow ID 派送到同 host 的 `-dag-v1-lifecycle-v1`
+  queue；History 只含 operation ID。I/O Activity 最多一次，不因回覆遺失、Worker 重啟或租約過期重做。
+  查詢以本機操作 state 為準；Workflow 回傳 reference 不代表未知效果已確認完成。
+- merge 仍要求 immediate-root Coder、獨立 Reviewer 的嚴格 approve／空 findings，以及原 root
+  deadline／角色／目錄權限。意圖固定 Reviewer、結果、worktree HEAD／status／內容摘要；
+  原 parent bytes／base 與 128 files／32 MiB 限制仍由 guarded merge 核對。逐檔及發布前重查取消
+  fence，衝突保留人工處理，取消時只回復仍等於本次寫入的檔案，不改父 repository HEAD。
+  既有直接 guarded-merge API 保留原管理員／immediate-parent 權限；已有 lifecycle 意圖的節點
+  不可再跨路徑重複 merge。取消 fence 不會被晚到 worker failure 降級，兩種到達順序都保留待核對狀態。
+- archive 只接受已終止／merged／completed 節點；未合併的 reviewed Coder 須先明確取消。
+  整個 DAG 必須結束，所有 Activity／子程序及租約都已排空。核對已授權內容後，由既有
+  WorktreeStore 保存 bundle／zip／metadata，含 ignored、untracked 檔案；移除前再次核對內容。
+  可用原 worktree restore 還原。完成或未知操作的相同 ID 不會再次移除還原後的目錄。
+- 子程序在開始 worktree I/O 前保存實際 PID／process creation identity。Worker 不在且子程序仍
+  存活時只發出 cancellation fence 並保留資源；直到兩者都確認退出才投影 needs_resolution，
+  不會重新執行、不重算 attempts／child count／預算，也不自動刪 worktree。無法核實存活時保留。
+- 取消 merge Activity 先設 fence，再等待 I/O thread 排空後回覆；已開始的 archive 可能完成其
+  保存動作，取消仍須等待排空，不宣稱能撤回已發生效果。程序在效果後退出會留下 uncertain，
+  需人工核對；禁止自動 replay。新生命周期意圖限 10000 筆；worktree 摘要／封存限 10000 項、
+  單檔 64 MiB／總計 256 MiB，拒絕連結或嵌入 repository。
+- lifecycle Worker 最大 heartbeat 節流為 2 秒、Activity heartbeat timeout 為 15 秒。
+  reconcile 也核對 lifecycle Workflow 的 cancel／terminate／failure，避免遠端先閉合而本機 merge
+  尚未排空時錯誤放行清理；遠端已閉合不等於本機 I/O 已停止。
+- Session frozen erasure 計畫包含確切 operation IDs；存活執行仍擋清理，對應 lifecycle Histories／
+  visibility 查無紀錄後才清除本機操作／程序 reference。舊無 operation 的 frozen 計畫不改格式。
+
+TP22 新增 31 項（25 單元／契約、6 真實 Service）全數通過；最終完整回歸 1488 passed、
+13 skipped、95 subtests passed，1 項既有警告。驗收與首輪競態修正見 `papers/temportal.md` 12.14；
+紀錄 `temp/temporal-tp22-full.log` 不入 Git。驗證使用 Windows 同機隔離 Git repository、
+真實 Service／Worker 與受控 Reviewer 結果；非 Windows 的破壞性清理、正式 provider、
+Docker／多機或正式部署未實機驗收。
 
 ## 目前入口的限定接入驗收（TP11.7）
 

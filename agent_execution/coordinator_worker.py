@@ -47,6 +47,8 @@ def execute_node(store,node,runner=None,evaluator_factory=None):
             permit=conn.execute('SELECT * FROM temporal_agent_runs WHERE node_id=?',(node['id'],)).fetchone()
             if not permit or permit['graph_id']!=graph['id'] or permit['lease']!=node['lease'] or permit['state']!='started' or process_stamp(permit['pid'])!=permit['process']:
                 raise PermissionError('Native DAG node requires its live Activity permit')
+        from .temporal_backend.dag_lifecycle import register_process
+        register_process(store,node)
     role=payload['role']
     if payload['source']!='local':
         ranks={'viewer':0,'operator':1,'admin':2};live=get_user_role(payload['identity'])

@@ -43,6 +43,8 @@ def install(conn):
     ]:conn.execute(sql)
     if 'remote_deleted' not in {r[1] for r in conn.execute('PRAGMA table_info(temporal_agent_graphs)')}:
         conn.execute('ALTER TABLE temporal_agent_graphs ADD COLUMN remote_deleted INTEGER NOT NULL DEFAULT 0')
+    from .dag_lifecycle import install as install_lifecycle
+    install_lifecycle(conn)
 
 
 def queue_name(conn):
@@ -108,6 +110,9 @@ def busy(conn,owners):
     from .references import process_stamp
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_agent_runs'").fetchone():return False
     for owner in owners:
+        from .dag_lifecycle import live
+        for graph_id, in conn.execute('SELECT id FROM temporal_agent_graphs WHERE owner=?', (owner,)):
+            if live(conn, graph_id):return True
         for pid,stamp in conn.execute("""SELECT r.pid,r.process FROM temporal_agent_runs r
                 JOIN temporal_agent_graphs g ON g.id=r.graph_id
                 WHERE g.owner=? AND r.state IN ('started','uncertain')""",(owner,)):
@@ -209,7 +214,11 @@ class Graphs:
         with closing(self.coordinator.connect()) as conn,conn:
             conn.execute('BEGIN IMMEDIATE')
             graph=self.get(key,conn=conn)
-            if graph['state'] in TERMINAL:return
+            if graph['state'] in TERMINAL:
+                if graph['state']=='completed':
+                    conn.execute('UPDATE temporal_agent_graphs SET stop_reason=?,sealed=1,updated=? WHERE id=?',
+                                 (reason,time.time(),key))
+                return
             conn.execute("UPDATE temporal_agent_graphs SET sealed=1,state='cancelling',stop_reason=?,updated=? WHERE id=?",
                 (reason,time.time(),key))
             for node in self.nodes(conn,graph):
@@ -310,8 +319,8 @@ class Graphs:
             graph=self.get(key,conn=conn)
             node=self.coordinator.get(graph['owner'],node_id)
             if node['root']!=graph['root']:raise PermissionError('Node belongs to another DAG')
-            if node['state'] in {'running','cancel_requested','queued'}:
-                run=conn.execute('SELECT 1 FROM temporal_agent_runs WHERE node_id=?',(node_id,)).fetchone()
+            run=conn.execute('SELECT 1 FROM temporal_agent_runs WHERE node_id=?',(node_id,)).fetchone()
+            if node['state'] in {'running','cancel_requested','queued'} or (node['state']=='failed' and run):
                 conn.execute('UPDATE agent_nodes SET state=?,updated=? WHERE id=?',
                     ('needs_resolution' if run else 'cancelled',time.time(),node_id))
             conn.execute("UPDATE temporal_agent_runs SET state='uncertain',updated=? WHERE node_id=? AND state='started'",
@@ -364,6 +373,22 @@ class Graphs:
 async def reconcile(graphs,client):
     from temporalio.client import WorkflowExecutionStatus
     from datetime import timedelta
+    from .dag_lifecycle import reap,Lifecycle
+    await asyncio.to_thread(reap,graphs)
+    life=Lifecycle(graphs)
+    with closing(graphs.coordinator.connect()) as conn:
+        operations=[r[0] for r in conn.execute("SELECT id FROM temporal_dag_operations WHERE state IN ('pending','started') ORDER BY updated LIMIT 8")]
+    lifecycle_deadline=time.monotonic()+10
+    for operation in operations:
+        if time.monotonic()>=lifecycle_deadline:break
+        try:
+            handle=await life.dispatch(operation,client)
+            status=(await handle.describe(rpc_timeout=timedelta(seconds=10))).status
+            await asyncio.to_thread(life.observe,operation,status.name)
+        except Exception as error:
+            with closing(graphs.coordinator.connect()) as conn,conn:
+                conn.execute('UPDATE temporal_dag_operations SET updated=? WHERE id=?',(time.time(),operation))
+            print(canonical({'temporal':'dag_lifecycle_pending','error_type':type(error).__name__}),flush=True)
     with closing(graphs.coordinator.connect()) as conn:
         keys=[r[0] for r in conn.execute("SELECT id FROM temporal_agent_graphs WHERE state IN ('pending','running','cancelling') ORDER BY updated LIMIT 32")]
     deadline=time.monotonic()+10

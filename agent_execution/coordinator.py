@@ -309,8 +309,9 @@ class Coordinator:
 
     def fail(self,node,state,error_type=''):
         with closing(self.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
             row=conn.execute('SELECT state FROM agent_nodes WHERE id=? AND lease=?',(node['id'],node['lease'])).fetchone()
-            if row:
+            if row and row['state'] in {'running','cancel_requested'}:
                 if row['state']=='cancel_requested':state='cancelled'
                 if state=='queued':self.fence_child(conn,node)
                 if state=='needs_resolution':
@@ -443,6 +444,7 @@ def merge_node(store,owner,key):
     node=store.get(owner,key)
     if node['state']=='merged':return node['result']['merge']
     if current_role()!='admin':raise PolicyDenied('Merging requires admin role')
+    from .temporal_backend.dag_lifecycle import merge_guard
     if node['payload'].get('temporal_graph'):
         from .temporal_backend.dag import Graphs
         graphs=Graphs(store)
@@ -452,6 +454,7 @@ def merge_node(store,owner,key):
                 raise ValueError('DAG stopped; no new merge is allowed')
             graphs.authority(conn,graph,admission=False)
             graphs.contract(conn,graph)
+    merge_guard(store,node)
     TaskBudget(node['payload']['budget_owner'],node['root'],store.path).check()
     parent=store.tasks.get(node['payload']['budget_owner'],node['root'])
     if parent['state'] in {'cancelled','failed'}:raise ValueError('Parent task has stopped')
@@ -484,12 +487,15 @@ def merge_node(store,owner,key):
     if changes:snapshot_files(root,archive/'before.zip',[change[0] for change in changes])
     token=uuid.uuid4().hex
     with closing(store.connect()) as conn,conn:
+        conn.execute('BEGIN IMMEDIATE')
+        merge_guard(store,node,conn)
         if conn.execute("UPDATE agent_nodes SET state='merging',lease=?,expires=? WHERE id=? AND state='reviewed'",(token,time.time()+90,key)).rowcount!=1:
             raise ValueError('Merge already owned or result changed')
         store.event(conn,node,'merge_started',{'archive':str(archive)})
     applied=[]
     try:
         for name,old,new in changes:
+            merge_guard(store,node)
             if current_context().check_cancelled and current_context().check_cancelled():raise InterruptedError('Parent cancelled')
             path=root/name
             if (path.read_bytes() if path.exists() else None)!=old:raise ValueError('Merge conflict during apply')
@@ -503,6 +509,8 @@ def merge_node(store,owner,key):
             'base':result['base'],'commit':result['commit'],'merged_at':time.time()}
         result['merge']=evidence
         with closing(store.connect()) as conn,conn:
+            conn.execute('BEGIN IMMEDIATE')
+            merge_guard(store,node,conn)
             if conn.execute("UPDATE agent_nodes SET state='merged',result=?,lease=NULL,expires=NULL,updated=? WHERE id=? AND state='merging' AND lease=?",
                 (json.dumps(result,ensure_ascii=False),time.time(),key,token)).rowcount!=1:raise RuntimeError('Merge lease lost')
             store.event(conn,node,'merged',evidence)
@@ -521,7 +529,7 @@ def merge_node(store,owner,key):
 def human_agent_command(text):
     from permissions import current_role
     parts=text.split(maxsplit=4)
-    if len(parts)<2:raise ValueError('Usage: /agents <root_task> [list|cancel|answer|resolve|abandon] ...')
+    if len(parts)<2:raise ValueError('Usage: /agents <root_task> [list|cancel|answer|resolve|abandon|merge|archive|operations] ...')
     store=Coordinator();owner=scope_owner();root=parts[1]
     store.tasks.get(owner,root)
     action=parts[2] if len(parts)>2 else 'list'
@@ -532,6 +540,17 @@ def human_agent_command(text):
     if len(parts)<4:raise ValueError('Agent ID required')
     node=store.get(owner,parts[3])
     if node['root']!=root:raise ValueError('Agent belongs to another root task')
+    if action in {'merge','archive','operations'}:
+        if not node['payload'].get('temporal_graph'):raise ValueError('This lifecycle command requires a native DAG')
+        from .temporal_backend.dag_lifecycle import Lifecycle
+        from .temporal_backend.dag import Graphs
+        graphs=Graphs(store);graphs.get(node['payload']['temporal_graph'],operator=True)
+        lifecycle=Lifecycle(graphs)
+        if action=='operations':
+            with closing(store.connect()) as conn:
+                return json.dumps([dict(r) for r in conn.execute('SELECT id,action,state FROM temporal_dag_operations WHERE node_id=?',(node['id'],))])
+        key=lifecycle.request(node['payload']['temporal_graph'],node['id'],action)
+        return json.dumps({'operation_id':key,'state':lifecycle.get(key)['state']})
     if action=='cancel':store.cancel(owner,node['id']);return 'Cancellation requested'
     if current_role()!='admin':raise PolicyDenied('Human recovery requires admin role')
     if len(parts)<5:raise ValueError('Human observed answer/result required')

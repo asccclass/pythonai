@@ -20,7 +20,11 @@ def preview(conn,owners):
     for owner in owners:
         for row in conn.execute('SELECT id,root,address,namespace,queue FROM temporal_agent_graphs WHERE owner=? ORDER BY id',(owner,)):
             nodes=[r[0] for r in conn.execute('SELECT id FROM agent_nodes WHERE owner=? AND root=? ORDER BY id',(owner,row[1]))]
-            result.append({'id':row[0],'address':row[2],'namespace':row[3],'queue':row[4],'nodes':nodes})
+            item={'id':row[0],'address':row[2],'namespace':row[3],'queue':row[4],'nodes':nodes}
+            from .dag_lifecycle import operation_ids
+            operations=operation_ids(conn,row[0])
+            if operations:item['operations']=operations
+            result.append(item)
     return sorted(result,key=lambda r:r['id'])
 
 
@@ -55,6 +59,10 @@ async def erase(graphs,session):
             if busy(conn,[graph['owner']]) or any((n['expires'] or 0)>time.time() for n in nodes):
                 raise ErasurePending('DAG local execution still needs to drain')
         targets=[graphs.workflow_id(key)]+[graphs.child_id(key,n['id']) for n in nodes]
+        from .dag_lifecycle import Lifecycle,operation_ids
+        with closing(graphs.coordinator.connect()) as conn:
+            operations=operation_ids(conn,key)
+        targets += [Lifecycle.workflow_id(operation) for operation in operations]
         for workflow_id in targets:
             handle=client.get_workflow_handle(workflow_id)
             try:
@@ -76,6 +84,8 @@ async def erase(graphs,session):
         with closing(graphs.coordinator.connect()) as conn,conn:
             if sorted(n['id'] for n in graphs.nodes(conn,graph))!=sorted(n['id'] for n in nodes):
                 raise ErasurePending('DAG targets changed during erasure')
+            if operation_ids(conn,key)!=operations:
+                raise ErasurePending('DAG lifecycle targets changed during erasure')
             conn.execute('UPDATE temporal_agent_graphs SET remote_deleted=1,updated=? WHERE id=?',(time.time(),key))
 
 
@@ -101,6 +111,9 @@ def scrub(store,session):
                 'version':1,'history':'not_found_verified','visibility':'not_found_verified',
                 'checked':time.time(),'archival':'external_policy_required','backups':'external_policy_required'})))
             conn.execute('DELETE FROM temporal_agent_runs WHERE graph_id=?',(key,))
+            for table in ('temporal_agent_processes','temporal_dag_operations'):
+                if conn.execute('SELECT 1 FROM sqlite_master WHERE name=?',(table,)).fetchone():
+                    conn.execute(f'DELETE FROM {table} WHERE graph_id=?',(key,))
             conn.execute('DELETE FROM temporal_agent_graphs WHERE id=?',(key,))
 
 
