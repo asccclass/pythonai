@@ -298,6 +298,7 @@ Use the existing operator diagnostics from the configured application environmen
 ```powershell
 .\venv\Scripts\python.exe -m agent_execution.operations readiness
 .\venv\Scripts\python.exe -m agent_execution.operations traces
+.\venv\Scripts\python.exe -m agent_execution.operations metrics --format prometheus
 ```
 
 `readiness` checks local dependencies, workspace writability, and configured SQLite accessibility. With
@@ -316,6 +317,11 @@ queries Temporal Service `DescribeTaskQueue` for fresh workflow and activity pol
 new-task queue and queues with active submissions, plus approximate backlog count/age. Poller identities
 and raw queue names are omitted. The check uses a 60-second freshness window and fails closed on a missing
 or mismatched local host binding.
+
+The CLI Prometheus exposition uses only unlabeled gauges over the retained local trace window. Redirect its
+stdout to a Prometheus textfile-collector `.prom` file using an external atomic-update wrapper; this command
+does not install or configure a collector, expose a scrape endpoint, or deliver alerts. Counts may decrease
+when the bounded trace window expires or evicts spans.
 
 Provider-specific spans, configured alert delivery, and production Service/Worker observability remain
 open TP25 work. The local queue probe verifies recent poller observations from the Service; it does not

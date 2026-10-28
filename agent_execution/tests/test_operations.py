@@ -93,6 +93,17 @@ class OperationsTests(unittest.TestCase):
             TraceStore()
             self.assertTrue(snapshot()['available'])
 
+    def test_prometheus_metrics_export_is_bounded_and_has_no_labels(self):
+        from agent_execution.operations.metrics import prometheus
+        with patch.dict(os.environ, {'AGENT_TRACE_DB': str(self.database())}):
+            TraceStore()
+            exposition = prometheus()
+        self.assertIn('# TYPE agent_execution_spans gauge', exposition)
+        self.assertIn('agent_execution_trace_store_available 1', exposition)
+        self.assertNotIn('{', exposition)
+        self.assertNotIn('owner', exposition)
+        self.assertNotIn('task_id', exposition)
+
     def test_backup_restore_preserves_data_and_never_overwrites_or_accepts_tampering(self):
         path=self.database();destination=self.root/'backup';manifest=backup([path],destination)
         with closing(sqlite3.connect(path)) as conn,conn:conn.execute("INSERT INTO data VALUES('later')")

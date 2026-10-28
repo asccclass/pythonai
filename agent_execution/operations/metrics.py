@@ -46,3 +46,25 @@ def snapshot(path=None):
             'model_attempt_spans_total': counts.get('attempt', 0), 'tokens_total': tokens,
             'known_cost_usd_total': round(cost, 8),
             'scope': 'aggregate only; no owner or task labels'}
+
+
+def prometheus(path=None):
+    """Render bounded aggregate snapshots for a Prometheus textfile collector."""
+    values = snapshot(path)
+    metrics = (
+        ('agent_execution_trace_store_available', 'Whether the local trace store is available',
+         int(values['available'])),
+        ('agent_execution_spans', 'Spans currently retained in the local trace window', values['spans_total']),
+        ('agent_execution_spans_failed', 'Failed spans currently retained', values['spans_failed']),
+        ('agent_execution_spans_unfinished', 'Unfinished spans currently retained', values['spans_unfinished']),
+        ('agent_execution_latency_seconds_sum', 'Sum of retained span latencies in seconds', values['latency_seconds_sum']),
+        ('agent_execution_latency_seconds_p95', 'P95 of completed retained span latencies in seconds', values['latency_seconds_p95']),
+        ('agent_execution_model_requests', 'Retained model request spans', values['model_requests_total']),
+        ('agent_execution_tool_spans', 'Retained tool spans', values['tool_spans_total']),
+        ('agent_execution_workflow_activity_spans', 'Retained Temporal workflow activity spans', values['workflow_activity_spans_total']),
+        ('agent_execution_model_attempt_spans', 'Retained model attempt spans', values['model_attempt_spans_total']),
+        ('agent_execution_tokens', 'Known tokens across completed retained spans', values['tokens_total']),
+        ('agent_execution_known_cost_usd', 'Known cost in USD across completed retained spans', values['known_cost_usd_total']),
+    )
+    return ''.join(f'# HELP {name} {help_text}\n# TYPE {name} gauge\n{name} {value}\n'
+                   for name, help_text, value in metrics)

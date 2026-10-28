@@ -25,9 +25,9 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25 已完成隔離 trace hierarchy／redaction 驗證，metrics／告警／poller readiness 尚待完成；TP26 已完成隔離 TaskStore＋Temporal Service backup/restore 驗證，正式服務選型／原生備份／還原仍待驗；TP27 已有 8-run 隔離 canary（2-slot Worker）受控測量，實際放量／長時觀察尚待驗；TP28 尚無 frozen/Linux 實機驗證；TP29 multi-host 保持關閉；TP30 僅有只讀本機 drain inventory，legacy removal 尚未授權**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25 已有隔離 trace hierarchy／redaction、低基數 metrics API／Prometheus CLI 格式與 poller readiness；provider spans、告警及正式觀測仍待驗；TP26 已完成隔離 TaskStore＋Temporal Service backup/restore 驗證，正式服務選型／原生備份／還原仍待驗；TP27 已有 8-run 隔離 canary（2-slot Worker）受控測量，正式壓測／放量／長時觀察尚待驗；TP28 尚無 frozen/Linux 實機驗證；TP29 multi-host 保持關閉；TP30 僅有只讀本機 drain inventory，legacy removal 尚未授權**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
-### 目前導入進度（2026-10-27）
+### 目前導入進度（2026-10-28）
 
 本輪 TP22 已完成明確 admin lifecycle 意圖、原 guarded merge 的逐檔取消 fence、實際子程序存活 reference、保留資料的 worktree archive，以及 session erasure 整合。新增 31 項測試（25 單元／契約、6 真實 Service）全部通過；最終完整 venv 回歸 1488 passed、13 skipped、95 subtests passed，1 項既有警告，紀錄見 12.14。
 
@@ -938,8 +938,13 @@ README 增補 local diagnostics/runbook：readiness、traces、aggregate metrics
 pollers freshness（60 秒）與 backlog；空 queue 初始會報 not-ready，直到 Service 觀察到 poller。
 真實隔離 Service 測試驗證無 poller 時不 ready、啟動受控 run 後 pollers 出現並 ready；再由同步
 operations readiness bridge 重查成功，**1 passed**。metrics admin API 聚合計數不含 owner/task
-label；operations 組更新為 **10 passed、5 subtests passed**。Provider spans、告警投遞與正式觀測仍缺，
+label；operations 組更新為 **12 passed、5 subtests passed**。Provider spans、告警投遞與正式觀測仍缺，
 TP25 尚未全部完成。
+
+追加 Prometheus textfile exposition：`operations metrics --format prometheus` 僅輸出無 label 的
+retained-window gauges，可供外部 textfile collector wrapper 讀取；不包含 scrape endpoint、collector
+設定或 alert delivery。operations 回歸更新為 **12 passed、5 subtests passed**，仍須隔離 Service live
+poller 測試與外部告警／正式觀測驗收。
 
 同時新增 TP26 隔離 restore drill：停止 Worker／development Service 後，以 SQLite backup API
 保存 TaskStore 與 Temporal Service DB；還原至新路徑、啟動還原後的 Service，原 workflow result
