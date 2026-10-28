@@ -104,6 +104,9 @@ class LifecycleStore:
         row = conn.execute('SELECT * FROM wl_sessions WHERE id=?', (key,)).fetchone()
         if row['principal'] != principal() or row['state'] != 'active':
             raise PermissionError('Conversation is deleting or deleted')
+        if current_context().task_id and conn.execute('SELECT 1 FROM companion_turn_cleanup WHERE session=? AND task=?',
+                                                     (key,current_context().task_id)).fetchone():
+            raise PermissionError('Turn is deleting or deleted')
         from agent_execution.tasks import task_owner
         conn.execute('INSERT OR IGNORE INTO wl_session_owners VALUES(?,?)', (key, task_owner(current_context())))
         context=current_context()

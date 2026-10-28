@@ -77,6 +77,24 @@ class LifecycleWebSocketTests(unittest.TestCase):
                 self.assertEqual(result['type'],'error')
                 self.assertTrue(self.root.joinpath('temporary').exists())
 
+    def test_turn_cleanup_removes_output_without_deleting_the_conversation(self):
+        from base import write_file
+        from permissions import set_current_role
+        with self.scope(), execution_scope(task_id='turn-one'), set_current_role('admin'):
+            item=write_file('turn-output.txt','翻譯')['artifacts'][0]
+        with TestClient(app) as client:
+            with client.websocket_connect('/ws/v1') as ws:
+                welcome=self.hello(ws)
+                self.assertTrue(welcome['payload']['features']['workspace_lifecycle']['turn_cleanup'])
+                result=self.send(ws,'turn.delete',{'request_id':'turn-one'})
+                self.assertEqual(result['type'],'turn.delete.result')
+                self.assertEqual(result['payload']['state'],'deleted',result)
+                self.assertFalse((self.root/'turn-output.txt').exists())
+                self.assertEqual(self.send(ws,'workspace.list')['type'],'workspace.result')
+                self.assertEqual(self.send(ws,'file.get',{'file_id':item['id'],'offset':0})['payload']['code'],'file_unavailable')
+                self.assertEqual(self.send(ws,'turn.delete.status',{'request_id':'turn-one'})['payload']['state'],'deleted')
+                self.assertEqual(self.send(ws,'turn.delete',{'request_id':'turn-one'})['payload']['state'],'deleted')
+
     def test_document_download_is_scoped_and_deleted_with_conversation(self):
         import base64
         from base import write_file

@@ -191,6 +191,7 @@ def finalize(store,key,runtime=None,event_store=None):
                 conn.execute("UPDATE agent_nodes SET goal='',payload='{}',result='' WHERE owner=?",(owner,))
                 conn.execute("UPDATE agent_events SET data='{}' WHERE owner=?",(owner,))
         conn.execute("UPDATE wl_sessions SET state='deleted' WHERE id=?",(plan['session'],))
+        conn.execute('DELETE FROM companion_attachment_refs WHERE session=?',(plan['session'],))
         conn.execute("UPDATE wl_outbox SET state='completed' WHERE session=?",(plan['session'],))
         conn.execute('INSERT OR IGNORE INTO wl_audit VALUES(?,?,?,?,?,?,?)',(key,plan['principal'],plan['session'],'deleted',sum(r['files'] for r in plan['payload']['items']),sum(r['bytes'] for r in plan['payload']['items']),time.time()))
     if runtime is not None:runtime.messages=[m for m in runtime.messages if m.get('role')=='system']

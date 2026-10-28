@@ -26,6 +26,8 @@ def initialize(store):
             path TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL,
             sha256 TEXT NOT NULL, identity TEXT NOT NULL, state TEXT NOT NULL,
             UNIQUE(root,path))''')
+    from .turn_cleanup import initialize as initialize_cleanup
+    initialize_cleanup(store)
 
 
 def checked_path(row):
@@ -102,14 +104,16 @@ def assert_writable(path):
     store = LifecycleStore()
     initialize(store)
     with closing(store.connect()) as conn:
-        row = conn.execute("SELECT session FROM companion_outputs WHERE root=? AND path=? AND state='active'",
+        row = conn.execute("SELECT session,state FROM companion_outputs WHERE root=? AND path=? AND state IN ('active','deleting')",
                            (str(workspace_root()), path.relative_to(workspace_root()).as_posix())).fetchone()
         if row and row['session'] != session_key():
             raise PermissionError('Output belongs to another conversation; use a different filename')
+        if row and row['state']=='deleting':
+            raise PermissionError('Output file cleanup is in progress')
 
 
-def rows(store, conn, task=None):
-    query = "SELECT * FROM companion_outputs WHERE session=? AND state='active'"
+def rows(store, conn, task=None, include_deleting=False):
+    query = "SELECT * FROM companion_outputs WHERE session=? AND " + ("state IN ('active','deleting')" if include_deleting else "state='active'")
     args = [session_key()]
     if task is not None:
         query += ' AND task=?'
@@ -156,9 +160,9 @@ def read_chunk(key, offset):
                 'eof': offset + len(data) == row['size']}
 
 
-def preview(store, conn):
+def preview(store, conn, task=None):
     result = []
-    for row in rows(store, conn):
+    for row in rows(store, conn,task,include_deleting=True):
         try:
             path = checked_path(row)
             manifest = snapshot(path)

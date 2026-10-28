@@ -20,7 +20,7 @@ from agent_execution.companion.protocol import (conversation_id, scope_device, d
 
 
 PROTOCOL_VERSION = 1
-RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error", "workspace.result", "session.delete.preview", "session.delete.result", "meeting.process.result"}
+RELIABLE_TYPES = {"chat.end", "proactive", "notify", "tool.call", "tool.start", "tool.result", "task.evaluation", "approval.required", "approval.result", "approval.cancelled", "error", "workspace.result", "session.delete.preview", "session.delete.result", "turn.delete.result", "meeting.process.result"}
 DEFAULT_FEATURES = {"stt": False, "tts": False, "tts_voices": []}
 logger = logging.getLogger(__name__)
 
@@ -571,7 +571,7 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
             ref=message_id,
         )
         return
-    if isinstance(message_type,str) and message_type.startswith(('workspace.','session.delete.')):
+    if isinstance(message_type,str) and message_type.startswith(('workspace.','session.delete.','turn.delete')):
         await handle_lifecycle_message(session,data)
     elif message_type == 'file.get':
         from agent_execution.companion.outputs import read_chunk
@@ -808,7 +808,7 @@ def lifecycle_features(session):
             canonical=session_key()
         state=row[0] if row else 'active'
     session.state['lifecycle_state']=state
-    return {'workspace_lifecycle':{'version':1,'instance':instance,'session':canonical,'recovery':os.name=='nt','mutable':os.name=='nt' and os.environ.get('AGENT_WORKSPACE_CLEANUP','1').lower() in {'1','true'}},'conversation_state':state}
+    return {'workspace_lifecycle':{'version':1,'instance':instance,'session':canonical,'turn_cleanup':True,'recovery':os.name=='nt','mutable':os.name=='nt' and os.environ.get('AGENT_WORKSPACE_CLEANUP','1').lower() in {'1','true'}},'conversation_state':state}
 
 
 def matching_conversations(session):
@@ -825,7 +825,8 @@ async def handle_lifecycle_message(session,data):
     from permissions import set_current_role,get_user_role
     kind=data['type'];payload=data.get('payload') or {};reference=data.get('id')
     allowed={'workspace.list','workspace.preview','workspace.request','workspace.confirm','workspace.retain',
-        'session.delete.preview','session.delete.confirm','session.delete.status','session.delete.resume'}
+        'session.delete.preview','session.delete.confirm','session.delete.status','session.delete.resume',
+        'turn.delete','turn.delete.status'}
     if kind not in allowed:
         await session.send('error',{'code':'bad_lifecycle','message':'Unknown workspace operation','retryable':False},ref=reference)
         return
@@ -833,12 +834,15 @@ async def handle_lifecycle_message(session,data):
     busy=[other.scoped_device for other in peers if
         other.current_chat_task and not other.current_chat_task.done() or
         other.audio_task and not other.audio_task.done()]
-    if busy and kind not in {'workspace.list','session.delete.status'}:
+    if busy and kind not in {'workspace.list','session.delete.status','turn.delete.status'}:
         await session.send('error',{'code':'cleanup_busy','message':'Wait for active conversation work to finish or interrupt it first','retryable':True},ref=reference)
         return
     def run():
         with lifecycle_scope(session),set_current_role(get_user_role('websocket:'+session.user_id)):
             store=LifecycleStore()
+            if kind in {'turn.delete','turn.delete.status'}:
+                from agent_execution.companion.turn_cleanup import delete, status
+                return (delete if kind=='turn.delete' else status)(payload.get('request_id'))
             if kind=='workspace.list':return store.inventory()
             if kind=='workspace.retain':
                 store.retain(payload.get('directory_id'))
@@ -863,18 +867,18 @@ async def handle_lifecycle_message(session,data):
             return result
     try:
         result=await asyncio.to_thread(run)
-        if result.get('state')=='deleted':
+        if result.get('state')=='deleted' and kind.startswith('session.delete.'):
             for peer in peers:
                 peer.state['lifecycle_state']='deleted'
                 peer.outbox.clear();peer.attachments=()
                 if peer.audio_turn:peer.audio_turn.cancelled.set();peer.audio_turn=None
                 if peer.runtime is not None:peer.runtime.messages=[m for m in peer.runtime.messages if m.get('role')=='system']
-        response='session.delete.preview' if kind=='session.delete.preview' else 'session.delete.result' if kind.startswith('session.delete.') else 'workspace.result'
+        response='turn.delete.result' if kind.startswith('turn.delete') else 'session.delete.preview' if kind=='session.delete.preview' else 'session.delete.result' if kind.startswith('session.delete.') else 'workspace.result'
         await session.send(response,result,ref=reference)
         if result.get('state')=='deleted':
             for peer in peers:
                 if peer is not session and peer.ws:
-                    await peer.send('session.delete.result',result)
+                    await peer.send(response,result)
     except (ValueError,PermissionError,OSError,sqlite3.Error) as error:
         await session.send('error',{'code':'cleanup_blocked','message':str(error),'retryable':False},ref=reference)
 

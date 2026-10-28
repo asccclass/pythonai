@@ -39,6 +39,12 @@ def stage_text(filename, text):
             pass
     if target.is_symlink() or target.read_bytes() != data:
         raise PermissionError('Uploaded source changed; upload again')
+    from agent_execution.policy import current_context
+    if current_context().task_id:
+        with closing(store.connect()) as conn, conn:
+            session = store.ensure_session(conn)
+            conn.execute('INSERT OR IGNORE INTO companion_attachment_refs VALUES(?,?,?)',
+                         (session,current_context().task_id,directory_id))
     reference = {'name': filename, 'path': target.relative_to(root).as_posix(),
                  'directory_id':directory_id,
                  'sha256': digest, 'bytes': len(data), 'characters': len(text),
