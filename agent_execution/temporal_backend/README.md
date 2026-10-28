@@ -330,8 +330,13 @@ Budgeted `BudgetEndpoint` calls add a nested `provider_request` span with a boun
 kind, streaming flag, elapsed time, and failure type. Raw endpoint URL/host, request contents, and
 credentials are not stored. Streaming spans measure only creation/opening of the stream response; they do
 not claim to measure full token generation or consumption. Provider failure counts are available in the
-aggregate metrics. Configured alert delivery and production Service/Worker observability remain open TP25
-work. The local queue probe verifies recent poller observations from the Service; it does not prove
+aggregate metrics. `operations alerts` checks readiness and trace-store availability; `--deliver` explicitly
+enables one HTTPS webhook attempt using host-private `AGENT_OPS_ALERT_WEBHOOK_URL` and optional
+`AGENT_OPS_ALERT_TOKEN`. Only fixed health codes are sent, redirects and automatic retries are disabled,
+and a five-second timeout bounds delivery. Periodic execution, receiver configuration, suppression and
+recovery notifications, and production observability remain open TP25 deployment work. See
+[deployment handoff](DEPLOYMENT_HANDOFF.md) for commands, payload and remaining TP26–TP30 evidence.
+The local queue probe verifies recent poller observations from the Service; it does not prove
 provider health, task execution progress, or production deployment health.
 
 ### TP26 isolated backup/restore progress

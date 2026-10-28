@@ -961,6 +961,25 @@ unbound task、V1 bridge 與 Temporal submission 的非終態數，以及 pendin
 execution、schedule、其他 Worker fleet 與 rollback-window 檢查。TP28 本輪發現 repo/venv 沒有
 PyInstaller/frozen packaging 入口；TP29 Settings 維持 loopback-only，這兩項都沒有冒充實機完成。
 
+## 2026-10-29 後續交付與正式環境缺口
+
+TP25 新增 `operations alerts`：檢查 readiness／trace-store availability；只有顯式 `--deliver`
+才將固定 alert codes 以 HTTPS webhook 投遞。設定由主機私有環境提供，不包含 task／owner／URL
+或 provider 錯誤正文；單次嘗試、五秒 timeout、不跟隨 redirect。mock transport 覆蓋成功、失敗、
+redirect、timeout 與不合法設定；尚無正式接收端收到通知的證據，不因此將 TP25 結案。
+
+使用者本輪選擇先完成本機版本，正式服務選型／Linux／多機與生產 legacy 移除延後。
+在 `temp/temporal-tools/1.9.1/temporal.exe` 找到既有 CLI，版本為 1.9.1／Server 1.32.0。
+先前「PATH 沒有 temporal 因而略過」的執行條件已補正：指定此路徑重跑 integration 模組
+**7 passed**，含隔離 Service backup/restore、8-run canary、poller readiness 與既有流程。
+另驗證跨程序 Worker 替換／既有 V1 run 排空及 provider retry 計帳，**2 passed**。
+告警與 operations 合併回歸 **24 passed、5 subtests passed**，pip check／compileall／diff check 通過。
+這是 Windows 同機 venv／隔離 Service 證據；frozen executable 與正式環境狀態仍按原表保留。
+
+部署方式、正式主機及告警接收端尚未指定；TP26–TP30 仍依原驗收條件處理。
+完整環境需求、各 milestone 結案證據及一般語言說明見
+`agent_execution/temporal_backend/DEPLOYMENT_HANDOFF.md`。未啟用遠端 Worker、搬遷資料或刪除 legacy。
+
 ## 15. 官方參考資料
 
 下列連結於規劃時查閱；官方內容與 SDK main branch 可能繼續變動，實作須以 TP02 鎖定版本及 release documentation 為準。架構切分、表格 schema、任務順序與工期是本專案設計建議，不是 Temporal 官方保證。

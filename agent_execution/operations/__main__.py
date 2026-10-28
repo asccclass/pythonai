@@ -7,6 +7,7 @@ def main():
     parser=argparse.ArgumentParser(description='Local operations; stop workers before database migration')
     commands=parser.add_subparsers(dest='action',required=True)
     for name in ('readiness','doctor','traces','syntax','benchmark'):commands.add_parser(name)
+    alerts=commands.add_parser('alerts');alerts.add_argument('--deliver',action='store_true')
     metrics=commands.add_parser('metrics');metrics.add_argument('--format',choices=('json','prometheus'),default='json');metrics.add_argument('--output')
     backup=commands.add_parser('backup');backup.add_argument('--database',action='append',required=True);backup.add_argument('--destination',required=True)
     restore=commands.add_parser('restore');restore.add_argument('--source',required=True);restore.add_argument('--destination',required=True)
@@ -17,6 +18,9 @@ def main():
     if args.action in {'doctor','readiness'}:
         from .doctor import readiness,dependency_doctor
         result=readiness() if args.action=='readiness' else dependency_doctor()
+    elif args.action=='alerts':
+        from .alerts import run
+        result=run(args.deliver)
     elif args.action=='traces':
         from .tracing import TraceStore
         store=TraceStore();result={'summary':store.summary(),'spans':store.list()}
