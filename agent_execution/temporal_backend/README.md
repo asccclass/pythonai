@@ -325,9 +325,14 @@ Point an already configured Prometheus textfile collector at that directory; the
 or configure a collector, expose a scrape endpoint, or deliver alerts. Counts may decrease when the bounded
 trace window expires or evicts spans.
 
-Provider-specific spans, configured alert delivery, and production Service/Worker observability remain
-open TP25 work. The local queue probe verifies recent poller observations from the Service; it does not
-prove provider health, task execution progress, or production deployment health.
+Budgeted `BudgetEndpoint` calls add a nested `provider_request` span with a bounded provider family
+(`openai`, `azure_openai`, `ollama`, local OpenAI-compatible, or generic OpenAI-compatible), operation
+kind, streaming flag, elapsed time, and failure type. Raw endpoint URL/host, request contents, and
+credentials are not stored. Streaming spans measure only creation/opening of the stream response; they do
+not claim to measure full token generation or consumption. Provider failure counts are available in the
+aggregate metrics. Configured alert delivery and production Service/Worker observability remain open TP25
+work. The local queue probe verifies recent poller observations from the Service; it does not prove
+provider health, task execution progress, or production deployment health.
 
 ### TP26 isolated backup/restore progress
 

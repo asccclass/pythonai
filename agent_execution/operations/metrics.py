@@ -13,7 +13,8 @@ def snapshot(path=None):
     empty = {'available': False, 'spans_total': 0, 'spans_failed': 0,
              'spans_unfinished': 0, 'latency_seconds_sum': 0.0,
              'latency_seconds_p95': 0.0, 'model_requests_total': 0,
-             'tool_spans_total': 0, 'workflow_activity_spans_total': 0,
+             'tool_spans_total': 0, 'provider_requests_total': 0,
+             'provider_requests_failed': 0, 'workflow_activity_spans_total': 0,
              'model_attempt_spans_total': 0, 'tokens_total': 0,
              'known_cost_usd_total': 0.0, 'scope': 'aggregate only; no owner or task labels'}
     if not database.is_file() or database.is_symlink():
@@ -26,6 +27,8 @@ def snapshot(path=None):
                    coalesce(sum(elapsed),0) FROM spans
         ''').fetchone()
         counts = dict(conn.execute('SELECT kind,count(*) FROM spans GROUP BY kind'))
+        provider_failures = conn.execute(
+            "SELECT count(*) FROM spans WHERE kind='provider_request' AND status='failed'").fetchone()[0]
         rows = conn.execute('SELECT elapsed,metadata FROM spans WHERE elapsed IS NOT NULL').fetchall()
     durations = sorted(row[0] for row in rows)
     p95 = durations[max(0, (95*len(durations)+99)//100-1)] if durations else 0.0
@@ -43,6 +46,8 @@ def snapshot(path=None):
             'spans_unfinished': unfinished or 0, 'latency_seconds_sum': round(latency, 6),
             'latency_seconds_p95': round(p95, 6), 'model_requests_total': counts.get('model', 0),
             'tool_spans_total': counts.get('tool', 0),
+            'provider_requests_total': counts.get('provider_request', 0),
+            'provider_requests_failed': provider_failures,
             'workflow_activity_spans_total': counts.get('workflow_activity', 0),
             'model_attempt_spans_total': counts.get('attempt', 0), 'tokens_total': tokens,
             'known_cost_usd_total': round(cost, 8),
@@ -62,6 +67,8 @@ def prometheus(path=None):
         ('agent_execution_latency_seconds_p95', 'P95 of completed retained span latencies in seconds', values['latency_seconds_p95']),
         ('agent_execution_model_requests', 'Retained model request spans', values['model_requests_total']),
         ('agent_execution_tool_spans', 'Retained tool spans', values['tool_spans_total']),
+        ('agent_execution_provider_requests', 'Retained provider request spans', values['provider_requests_total']),
+        ('agent_execution_provider_requests_failed', 'Failed retained provider request spans', values['provider_requests_failed']),
         ('agent_execution_workflow_activity_spans', 'Retained Temporal workflow activity spans', values['workflow_activity_spans_total']),
         ('agent_execution_model_attempt_spans', 'Retained model attempt spans', values['model_attempt_spans_total']),
         ('agent_execution_tokens', 'Known tokens across completed retained spans', values['tokens_total']),

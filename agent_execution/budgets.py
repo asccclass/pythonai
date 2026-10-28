@@ -333,7 +333,7 @@ class BudgetEndpoint:
         budget=active_budget()
         if budget is None:
             endpoint=self.client.chat.completions if self.kind=='chat' else self.client.embeddings
-            return endpoint.create(**kwargs)
+            return self._provider_create(endpoint, self.client, kwargs)
         budget.check()
         cancelled=current_context().check_cancelled
         if cancelled and cancelled():
@@ -384,7 +384,7 @@ class BudgetEndpoint:
         try:
             key=budget.reserve(kwargs['model'],prompt,output)
             endpoint=client.chat.completions if self.kind=='chat' else client.embeddings
-            result=endpoint.create(**kwargs)
+            result=self._provider_create(endpoint, client, kwargs)
             if kwargs.get('stream'):
                 stream=BudgetStream(result,budget,key,slot,cancelled)
                 handed_off=True
@@ -394,6 +394,26 @@ class BudgetEndpoint:
             return result
         finally:
             if not handed_off:slot.__exit__(None,None,None)
+
+    def _provider_create(self, endpoint, client, kwargs):
+        from urllib.parse import urlsplit
+        from .operations.tracing import span
+        try:
+            parsed=urlsplit(str(getattr(client,'base_url','')))
+            host=(parsed.hostname or '').lower()
+            port=parsed.port
+        except (TypeError, ValueError):
+            host='';port=None
+        if host=='api.openai.com':family='openai'
+        elif host.endswith('.openai.azure.com'):family='azure_openai'
+        elif 'ollama' in host or port==11434:family='ollama'
+        elif host in {'localhost','127.0.0.1','::1'}:family='local_openai_compatible'
+        else:family='openai_compatible'
+        streaming=bool(kwargs.get('stream'))
+        metadata={'provider_family':family,'operation':self.kind,'streaming':streaming,
+                  'phase':'stream_open' if streaming else 'request'}
+        with span('provider_request',family,metadata):
+            return endpoint.create(**kwargs)
 
 
 class BudgetClient:

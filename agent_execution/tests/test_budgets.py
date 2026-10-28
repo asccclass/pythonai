@@ -21,6 +21,7 @@ class BudgetTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         env=patch.dict(os.environ,{'AGENT_TASK_DB':str(Path(self.temp.name)/'tasks.db'),
+            'AGENT_TRACE_DB':str(Path(self.temp.name)/'traces.db'),
             'AGENT_TASK_MAX_REQUESTS':'3','AGENT_TASK_MAX_TOKENS':'20000','AGENT_MODEL_MAX_OUTPUT_TOKENS':'100',
             'AGENT_TASK_MAX_COST_USD':'0','AGENT_MODEL_RATES':'{}','AGENT_MODEL_CAPABILITIES':'{}',
             'AGENT_TASK_DEADLINE_SECONDS':'60','AGENT_MODEL_CONCURRENCY':'1',
@@ -50,6 +51,29 @@ class BudgetTests(unittest.TestCase):
             self.assertEqual(restored.snapshot()['requests'],3)
             with self.assertRaises(BudgetExhausted):restored.reserve('m',1,1)
         self.assertEqual(raw.chat.completions.create.call_count,3)
+
+    def test_provider_request_spans_classify_without_persisting_endpoint_or_credentials(self):
+        from agent_execution.operations.tracing import TraceStore
+        raw=self.client(NS(usage=NS(total_tokens=10)))
+        raw.base_url='https://user:private-pass@api.openai.com/v1?token=private-token'
+        with budget_scope():
+            budget_client(raw).chat.completions.create(model='m',messages=[{'role':'user','content':'hello'}])
+            raw.chat.completions.create.side_effect=TimeoutError('provider unavailable')
+            with self.assertRaises(TimeoutError):
+                budget_client(raw).chat.completions.create(model='m',messages=[{'role':'user','content':'retry'}])
+        rows=TraceStore().list()
+        requests=[row for row in rows if row['kind']=='provider_request']
+        self.assertEqual(len(requests),2)
+        self.assertEqual({row['name'] for row in requests},{'openai'})
+        self.assertEqual(sum(row['status']=='failed' for row in requests),1)
+        self.assertTrue(all(row['parent_span'] for row in requests))
+        serialized=json.dumps(requests)
+        for value in ('api.openai.com','private-pass','private-token'):
+            self.assertNotIn(value,serialized)
+        from agent_execution.operations.metrics import snapshot
+        metrics=snapshot()
+        self.assertEqual(metrics['provider_requests_total'],2)
+        self.assertEqual(metrics['provider_requests_failed'],1)
 
     def test_atomic_reservations_cannot_exceed_budget(self):
         budget=TaskBudget(self.owner,'atomic')
