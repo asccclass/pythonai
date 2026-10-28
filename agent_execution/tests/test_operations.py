@@ -85,6 +85,14 @@ class OperationsTests(unittest.TestCase):
         probe.assert_called_once()
         self.assertFalse(report['ready'])
         self.assertFalse(report['checks']['temporal_pollers'])
+
+    def test_metrics_default_path_matches_trace_store_without_localappdata(self):
+        from agent_execution.operations.metrics import snapshot
+        from agent_execution.operations.tracing import TraceStore
+        with patch.dict(os.environ, {}, clear=True), patch('pathlib.Path.home', return_value=self.root):
+            TraceStore()
+            self.assertTrue(snapshot()['available'])
+
     def test_backup_restore_preserves_data_and_never_overwrites_or_accepts_tampering(self):
         path=self.database();destination=self.root/'backup';manifest=backup([path],destination)
         with closing(sqlite3.connect(path)) as conn,conn:conn.execute("INSERT INTO data VALUES('later')")

@@ -7,8 +7,8 @@ import sqlite3
 
 
 def snapshot(path=None):
-    root = Path(os.environ.get('LOCALAPPDATA') or Path.home()/'.local'/'share')/'PythonAI'
-    database = Path(path or os.environ.get('AGENT_TRACE_DB') or root/'traces.db').resolve()
+    default_database = Path(os.environ.get('LOCALAPPDATA', Path.home()))/'PythonAI'/'traces.db'
+    database = Path(path or os.environ.get('AGENT_TRACE_DB') or default_database).resolve()
     empty = {'available': False, 'spans_total': 0, 'spans_failed': 0,
              'spans_unfinished': 0, 'latency_seconds_sum': 0.0,
              'latency_seconds_p95': 0.0, 'model_requests_total': 0,
