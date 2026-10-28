@@ -284,6 +284,34 @@ This is an isolated Service simulation using a test harness and controlled provi
 install or downgrade a real deployment package, drain a production Worker fleet, or exercise production
 traffic. Those deployment and canary gates remain in TP26–TP27.
 
+### TP25 observability progress
+
+Temporal Activities now create a redacted `workflow_activity` span after rebuilding the trusted task
+scope. Existing task and model-attempt spans become descendants of that span, so the local trace store correlates
+task owner/task ID, opaque submission/workflow IDs, queue, activity type, model attempt, latency and
+error type. Trace metadata does not include prompts, provider responses, tool arguments, or credentials.
+An isolated process-upgrade test checks the parent/trace relationship and verifies that private provider
+evidence is absent from stored spans.
+
+Use the existing operator diagnostics from the configured application environment:
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.operations readiness
+.\venv\Scripts\python.exe -m agent_execution.operations traces
+```
+
+`readiness` checks local dependencies, workspace writability, and configured SQLite accessibility; it
+does not probe the model provider or prove Temporal Worker pollers are healthy. The authenticated
+admin-only `/api/ops/readiness` and `/api/ops/traces` routes expose the same diagnostics. If readiness
+fails, stop admitting new Temporal work, preserve configured DBs and Worker logs, verify the same
+TaskStore paths/namespace, and restart only after storage/access checks pass. For a stuck run,
+correlate task/submission state, Temporal UI History, queue, `workflow_activity` span, child model spans,
+and operation ledger; classify unknown side effects as `uncertain` and do not replay them manually.
+
+This completes trace correlation and local redaction evidence only. Exportable metrics, provider-level
+correlation, configured alert delivery, and a live poller-aware readiness endpoint are still open TP25
+work; generic local readiness must not be used as a production deployment gate.
+
 Regenerate fixtures only from the controlled local Service tests:
 
 ```powershell

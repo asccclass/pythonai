@@ -25,7 +25,7 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25 已完成隔離 trace hierarchy／redaction 驗證，metrics／告警／poller readiness 尚待完成；TP26–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-27）
 
@@ -92,8 +92,9 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP21 | 已完成 opt-in DAG 父／子 Workflow、shared budget、獨立 Reviewer 與取消／刪除整合，見 12.12 |
 | TP22 | 已完成明確 lifecycle 意圖、guarded merge 取消保護、worktree 封存／還原及孤兒治理，見 12.14 |
 | TP23 | Continue-As-New、DAG History retention 與隔離 Service／累積容量邊界驗收已完成；正式長時間 canary 留 TP27 |
-| TP24 | V1/V2/V3 固定 History fixture、舊 patch replay、未知協定拒絕派送及 V3 不被舊 V1 Worker 誤領已驗收；部署程序 rollback／舊 run 排空待完成 |
-| TP25–TP30 | 待辦；監控、正式部署、canary、跨平台、多機及 legacy 排空尚未交付 |
+| TP24 | V1/V2/V3 固定 History fixture、舊 patch replay、未知協定拒絕派送、V3 queue rollback 及隔離 Service 跨程序 V1 run 接手已驗收；正式 fleet rollout 留 TP26–27 |
+| TP25 | 部分完成：Temporal Activity→model attempt redacted trace correlation 已經隔離 Service 驗證；metrics export、provider spans、告警投遞、poller-aware readiness 尚未完成 |
+| TP26–TP30 | 待辦；正式部署／還原、canary、跨平台包裝、多機共享資料面及 legacy 排空尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -916,6 +917,21 @@ dispatch guard 同樣要求 StartWorkflow 前拒絕。
 舊 queue 隔離測試合計本輪指定回歸 **5 passed**。演練使用隔離 CLI development Service 與受控 provider；
 舊程序由測試 harness 模擬，沒有安裝／回退實際部署包。可重現的程序替換及舊 run 排空行為已驗收；
 正式發佈回滾、Worker fleet drain 和生產流量仍留 TP26–TP27。
+
+## TP25 進度：Activity trace correlation 與局部 runbook（部分完成，2026-10-28）
+
+沿用既有 `operations.tracing`、redaction、owner-scoped TraceStore、admin-only readiness／traces
+routes；Temporal `execution_context` 現在於可信 task scope 建立 `workflow_activity` span，記錄
+opaque workflow/submission IDs、queue、activity type。既有 task/model attempt/model request span
+形成 `workflow_activity → task → attempt → model` 階層；不記 prompt、provider response、tool
+arguments 或 credentials。隔離程序升級測試檢查 trace/parent 關係，並確認 private provider evidence
+不進 TraceStore，**1 passed**。通用 operations 回歸 **9 passed、5 subtests passed**；`pip check`、
+compileall、diff check 通過。
+
+README 增補 local diagnostics/runbook：readiness、traces 查詢、停收新任務、核對相同 TaskStore／
+namespace、對照 Temporal History 與 ledger、未知副作用維持 uncertain。明確標示通用 readiness
+不探測 provider 或 Worker pollers；尚無 metrics exporter、provider span、外送告警或 poller-aware
+readiness，因此 TP25 仍部分完成，這些功能補齊後才可算 milestone 完成。
 
 ## 15. 官方參考資料
 

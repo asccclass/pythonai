@@ -84,4 +84,13 @@ def execution_context(store, row, cancelled=None):
         stack.enter_context(budget_scope())
         ledger = Ledger(store, row['id'], row['fence'])
         stack.enter_context(operation_scope(ledger))
+        from agent_execution.operations.tracing import span
+        try:
+            from temporalio import activity as temporal_activity
+            info = temporal_activity.info()
+            metadata = {'workflow_id': info.workflow_id, 'activity_type': info.activity_type,
+                        'task_queue': info.task_queue, 'submission_id': row['id']}
+        except RuntimeError:  # Direct unit calls do not have a Temporal Activity context.
+            metadata = {'submission_id': row['id']}
+        stack.enter_context(span('workflow_activity', 'temporal.activity', metadata))
         yield ledger

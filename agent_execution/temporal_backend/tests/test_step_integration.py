@@ -167,6 +167,8 @@ def test_deployment_worker_process_upgrade_drains_existing_v1_run(server, config
     from agent_execution.temporal_backend.tests.test_integration import prepare
 
     monkeypatch.setenv('AGENT_TEMPORAL_ENGINE', 'steps')
+    monkeypatch.setenv('AGENT_TRACE_ENABLED', '1')
+    monkeypatch.setenv('AGENT_TRACE_DB', str(tmp_path / 'traces.db'))
     (configured / 'note.txt').write_text('process-drain-evidence', encoding='utf-8')
     marker = tmp_path / 'worker.marker'
 
@@ -220,6 +222,18 @@ def test_deployment_worker_process_upgrade_drains_existing_v1_run(server, config
             assert len(attempts) >= 2
             replay = await Replayer(workflows=[AgentTaskWorkflowV1]).replay_workflow(history)
             assert replay.replay_failure is None
+            from agent_execution.operations.tracing import TraceStore
+            with execution_scope(task_id='deployment-drain'):
+                traces = TraceStore().list()
+            activities = [item for item in traces if item['kind'] == 'workflow_activity']
+            task_spans = {item['id']: item for item in traces if item['kind'] == 'task'}
+            model_steps = [item for item in traces if item['kind'] == 'attempt']
+            assert activities and model_steps
+            assert all(step['trace_id'] == activities[0]['trace_id'] for step in model_steps)
+            for step in model_steps:
+                task_span = task_spans[step['parent_span']]
+                assert task_span['parent_span'] in {item['id'] for item in activities}
+            assert 'process-drain-evidence' not in json.dumps(traces)
         finally:
             for process, output in ((old, old_output), (replacement, replacement_output)):
                 if process is not None:
