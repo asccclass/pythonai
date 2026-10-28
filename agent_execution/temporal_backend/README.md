@@ -264,7 +264,7 @@ cases require separate provider or write-live opt-in. The final full venv run pa
 with **83 skipped** and **95 subtests passed**; its only warning was the same existing deprecation.
 `pip check`, `compileall`, and `git diff --check` passed.
 
-## TP24: Workflow compatibility and rollback guard (in progress)
+## TP24: Workflow compatibility and rollback guard (isolated process drill complete)
 
 V1/V2/V3 keep separate Workflow types and queues. Existing isolated Service tests generate and replay
 Histories for each version; the TP14 legacy patch branch also replays under the current code. Dispatch
@@ -275,6 +275,14 @@ Checked-in, sanitized replay fixtures now cover V1, pre-TP14-patch V1, V2, and V
 Service rollback drill starts a V3 approval Workflow while a V1 Worker polls only the old steps
 queue; the V3 execution remains on its pinned approval queue, with no Activity claimed by V1.
 Fixture replay passed **4 cases**, and the V3-on-old-Worker drill passed.
+
+The process-level drill starts a V1 run with an old Worker subprocess, terminates that process after
+its bootstrap Activity starts, then starts a replacement Worker subprocess on the same V1 queue. The
+replacement consumes the Activity retry, completes the original submission, and the resulting History
+replays with the current V1 definition. The run plus four fixed fixtures passed **5 focused cases**.
+This is an isolated Service simulation using a test harness and controlled provider; it does not
+install or downgrade a real deployment package, drain a production Worker fleet, or exercise production
+traffic. Those deployment and canary gates remain in TP26–TP27.
 
 Regenerate fixtures only from the controlled local Service tests:
 
@@ -290,8 +298,6 @@ Remove-Item Env:PYTHONAI_WRITE_TEMPORAL_REPLAY_FIXTURES
 .\venv\Scripts\python.exe -m pytest agent_execution\temporal_backend\tests\test_replay_fixtures.py -q
 ```
 
-The process-level Worker upgrade/rollback and old-run drain procedure still needs a repeatable
-deployment artifact and remains outstanding for TP24.
 
 ## 目前入口的限定接入驗收（TP11.7）
 

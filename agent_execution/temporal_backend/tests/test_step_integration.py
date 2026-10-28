@@ -3,7 +3,12 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 import threading
+import time
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
@@ -150,6 +155,84 @@ def test_worker_restart_before_tool_preserves_progress_and_budget(server,configu
         assert row['state']=='completed'
         history=await client.get_workflow_handle(row['workflow_id']).fetch_history()
         await Replayer(workflows=[AgentTaskWorkflowV1]).replay_workflow(history)
+    asyncio.run(exercise())
+
+
+def test_deployment_worker_process_upgrade_drains_existing_v1_run(server, configured, monkeypatch, tmp_path):
+    """A run started by the old process resumes on the replacement V1 process."""
+    from dataclasses import replace
+    from agent_execution import execution_scope
+    from agent_execution.temporal_backend.client import dispatch
+    from agent_execution.temporal_backend.config import Settings
+    from agent_execution.temporal_backend.tests.test_integration import prepare
+
+    monkeypatch.setenv('AGENT_TEMPORAL_ENGINE', 'steps')
+    (configured / 'note.txt').write_text('process-drain-evidence', encoding='utf-8')
+    marker = tmp_path / 'worker.marker'
+
+    async def exercise():
+        client = await server.client()
+        with execution_scope(task_id='deployment-drain'):
+            store, row = prepare(replace(Settings.load(), engine='steps'))
+        base = [sys.executable, '-m', 'agent_execution.temporal_backend.tests.rollout_worker']
+
+        def start(mode):
+            output = (tmp_path / f'{mode}.log').open('ab')
+            process = subprocess.Popen(base + [mode, str(marker)], cwd=Path.cwd(),
+                stdout=output, stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            return process, output
+
+        old, old_output = start('old')
+        replacement = replacement_output = None
+        try:
+            deadline = time.monotonic() + 15
+            while not marker.exists() and time.monotonic() < deadline:
+                if old.poll() is not None:
+                    raise RuntimeError((tmp_path / 'old.log').read_text(errors='replace'))
+                await asyncio.sleep(.05)
+            assert marker.exists(), 'old Worker process did not become ready'
+            handle = await dispatch(store, row, client)
+            deadline = time.monotonic() + 15
+            while marker.read_text(encoding='utf-8') != 'started' and time.monotonic() < deadline:
+                if old.poll() is not None:
+                    raise RuntimeError((tmp_path / 'old.log').read_text(errors='replace'))
+                await asyncio.sleep(.05)
+            assert marker.read_text(encoding='utf-8') == 'started', 'old Worker did not claim the run'
+            old.terminate()
+            old.wait(timeout=10)
+            old_output.close()
+            marker.unlink()
+            replacement, replacement_output = start('new')
+            deadline = time.monotonic() + 20
+            while not marker.exists() and time.monotonic() < deadline:
+                if replacement.poll() is not None:
+                    raise RuntimeError((tmp_path / 'new.log').read_text(errors='replace'))
+                await asyncio.sleep(.05)
+            assert marker.exists(), 'replacement Worker did not become ready'
+            result = await asyncio.wait_for(handle.result(), 110)
+            assert result == {'submission_id': row['id']}
+            assert store.get(row['id'])['state'] == 'completed'
+            history = await handle.fetch_history()
+            attempts = [event.activity_task_started_event_attributes.attempt
+                        for event in history.events
+                        if event.HasField('activity_task_started_event_attributes')]
+            assert len(attempts) >= 2
+            replay = await Replayer(workflows=[AgentTaskWorkflowV1]).replay_workflow(history)
+            assert replay.replay_failure is None
+        finally:
+            for process, output in ((old, old_output), (replacement, replacement_output)):
+                if process is not None:
+                    if process.poll() is None:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=5)
+                    if output is not None:
+                        output.close()
+
     asyncio.run(exercise())
 
 

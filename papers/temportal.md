@@ -25,7 +25,7 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture 與舊 Worker queue rollback 測試已完成，部署程序 rollback／舊 run 排空待驗；TP25–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-27）
 
@@ -893,7 +893,7 @@ Starlette／AnyIO deprecation warning；`pip check`、compileall、`git diff --c
 backend skip 為個別 provider/write-live opt-in 案例；本次 run-chain/GC 不屬 skip，已由隔離
 Service 實際執行。TP24 版本相容測試接續見下節，TP25–TP30 仍待辦。
 
-## TP24 進度：Workflow replay 與 rollback guard（部分受控驗收完成，2026-10-28）
+## TP24 進度：Workflow replay 與 rollback guard（隔離程序演練完成，2026-10-28）
 
 現有 V1／V2／V3 使用不同 workflow type 與 task queue；V1 legacy、V2 human、V3 approval
 分開受理，持久 protocol／queue 不依目前環境設定重新選擇。真實 Service／Worker 整合測試已
@@ -908,8 +908,14 @@ Workflow ID、task queue、worker identity，並清除 stack trace 與本機路�
 
 回滾隔離測試啟動 V3 approval Workflow，同時只讓舊 V1 Worker poll 舊 steps queue；History 保持
 V3 workflow type／approval queue，沒有 Activity 被 V1 Worker 認領。未知持久 protocol version 的
-dispatch guard 同樣要求 StartWorkflow 前拒絕。此證明 queue/type 隔離和協定拒絕，但尚未模擬
-部署包替換、舊 Worker 逐步退出及既有 runs 排空；TP24 因而仍部分完成。
+dispatch guard 同樣要求 StartWorkflow 前拒絕。
+
+另新增跨程序 Service 演練：舊 Worker subprocess 在既有 V1 run 的 bootstrap Activity 開始後直接
+終止；新 Worker subprocess 以相同 V1 workflow type／steps queue 啟動，接手重試並完成原 run。
+驗證 task/submission 終態、Activity 至少兩次啟動及替換後 History 可 replay。與固定 fixture、V3
+舊 queue 隔離測試合計本輪指定回歸 **5 passed**。演練使用隔離 CLI development Service 與受控 provider；
+舊程序由測試 harness 模擬，沒有安裝／回退實際部署包。可重現的程序替換及舊 run 排空行為已驗收；
+正式發佈回滾、Worker fleet drain 和生產流量仍留 TP26–TP27。
 
 ## 15. 官方參考資料
 
