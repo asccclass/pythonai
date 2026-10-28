@@ -86,6 +86,18 @@ class TextAttachmentTranslationTests(unittest.TestCase):
         with self.assertRaises(ValueError):read_file(files[0]['path'],offset=-1,limit=10)
         with self.assertRaises(ValueError):read_file(files[0]['path'],limit=100000)
 
+    def test_reported_attachment_typo_and_write_file_request_use_chunked_translation(self):
+        from agent_execution.companion.attachment_translation import eligible
+        goal = '將赴黨翻譯成繁體中文，並寫入檔案中'
+        source = ''.join(f'English source paragraph {number:04d}\n' for number in range(450))+'END_SENTINEL\n'
+        message = self.message(source,goal=goal)
+        self.assertTrue(eligible([message]))
+        self.assertLess(message_tokens([message]),2000)
+        reply = self.run_translation(message)
+        self.assertIn('KapathyWikiv2_zh.txt',reply)
+        self.assertEqual((self.root/'KapathyWikiv2_zh.txt').read_text(encoding='utf-8'),
+                         source.replace('English','繁體中文').replace('END_SENTINEL','完整末段'))
+
     def test_translation_of_windows_text_does_not_duplicate_newlines(self):
         source = 'English paragraph\r\n\r\n'*140
         self.run_translation(self.message(source))
