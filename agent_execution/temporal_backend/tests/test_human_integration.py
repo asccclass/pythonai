@@ -101,6 +101,9 @@ def test_answer_survives_worker_restart_and_duplicate_signal(server, configured,
         history = await handle.fetch_history()
         assert 'private' not in history.to_json()
         assert 'note.txt' not in history.to_json()
+        if not lose_reply:
+            from agent_execution.temporal_backend.tests.replay_fixtures import save
+            save('v2',history,row['id'])
         await Replayer(workflows=[AgentTaskWorkflowV2]).replay_workflow(history)
         fallback.assert_not_called()
     asyncio.run(exercise())

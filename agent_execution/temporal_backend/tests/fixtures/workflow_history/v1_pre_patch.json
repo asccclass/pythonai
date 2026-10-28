@@ -1,0 +1,475 @@
+{
+  "history": {
+    "events": [
+      {
+        "eventId": "1",
+        "eventTime": "2026-10-28T14:06:40.032192700Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "taskId": "1048587",
+        "workflowExecutionStartedEventAttributes": {
+          "attempt": 1,
+          "firstExecutionRunId": "01a182d5-9da0-72f0-a2be-7f776c68c9fc",
+          "firstWorkflowTaskBackoff": "0s",
+          "identity": "pythonai-replay-fixture",
+          "input": {
+            "payloads": [
+              {
+                "data": "eyJzY2hlbWFfdmVyc2lvbiI6MSwic3VibWlzc2lvbl9pZCI6IjFmZWQ3ZWE0MWY4MzQyNWY4YzExMmExMzE5MGU2YjIxIn0=",
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                }
+              }
+            ]
+          },
+          "originalExecutionRunId": "01a182d5-9da0-72f0-a2be-7f776c68c9fc",
+          "priority": {},
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_NORMAL",
+            "name": "pythonai-replay-fixture-queue"
+          },
+          "workflowExecutionExpirationTime": "2026-10-28T14:16:39.940Z",
+          "workflowExecutionTimeout": "599.908620s",
+          "workflowId": "pythonai/replay-fixture/v1_pre_patch",
+          "workflowRunTimeout": "599.908620s",
+          "workflowTaskTimeout": "10s",
+          "workflowType": {
+            "name": "AgentTaskWorkflowV1"
+          }
+        }
+      },
+      {
+        "eventId": "2",
+        "eventTime": "2026-10-28T14:06:40.032192700Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "taskId": "1048588",
+        "workflowTaskScheduledEventAttributes": {
+          "attempt": 1,
+          "startToCloseTimeout": "10s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_NORMAL",
+            "name": "pythonai-replay-fixture-queue"
+          }
+        }
+      },
+      {
+        "eventId": "3",
+        "eventTime": "2026-10-28T14:06:41.332902Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+        "taskId": "1048594",
+        "workflowTaskStartedEventAttributes": {
+          "historySizeBytes": "537",
+          "identity": "pythonai-replay-fixture",
+          "requestId": "d4ca7842-091c-46e6-a942-7b1d63661a64",
+          "scheduledEventId": "2",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "eventId": "4",
+        "eventTime": "2026-10-28T14:06:41.457862600Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "taskId": "1048599",
+        "workflowTaskCompletedEventAttributes": {
+          "identity": "pythonai-replay-fixture",
+          "meteringMetadata": {},
+          "scheduledEventId": "2",
+          "sdkMetadata": {
+            "coreUsedFlags": [
+              3,
+              2,
+              1
+            ],
+            "sdkName": "temporal-python",
+            "sdkVersion": "1.34.0"
+          },
+          "startedEventId": "3",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "activityTaskScheduledEventAttributes": {
+          "activityId": "1",
+          "activityType": {
+            "name": "pythonai_step_bootstrap_v1"
+          },
+          "header": {},
+          "heartbeatTimeout": "45s",
+          "input": {
+            "payloads": [
+              {
+                "data": "eyJzY2hlbWFfdmVyc2lvbiI6MSwic3VibWlzc2lvbl9pZCI6IjFmZWQ3ZWE0MWY4MzQyNWY4YzExMmExMzE5MGU2YjIxIn0=",
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                }
+              }
+            ]
+          },
+          "priority": {},
+          "retryPolicy": {
+            "backoffCoefficient": 2.0,
+            "initialInterval": "1s",
+            "maximumAttempts": 3,
+            "maximumInterval": "100s"
+          },
+          "scheduleToCloseTimeout": "599.908620s",
+          "scheduleToStartTimeout": "599.908620s",
+          "startToCloseTimeout": "599.908620s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_NORMAL",
+            "name": "pythonai-replay-fixture-queue"
+          },
+          "useWorkflowBuildId": true,
+          "workflowTaskCompletedEventId": "4"
+        },
+        "eventId": "5",
+        "eventTime": "2026-10-28T14:06:41.458423500Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "taskId": "1048600"
+      },
+      {
+        "activityTaskStartedEventAttributes": {
+          "attempt": 1,
+          "identity": "pythonai-replay-fixture",
+          "requestId": "bfe644a1-e04a-4f6a-a4dc-43b3dc33310e",
+          "scheduledEventId": "5",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        },
+        "eventId": "6",
+        "eventTime": "2026-10-28T14:06:41.458968500Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "taskId": "1048604"
+      },
+      {
+        "activityTaskCompletedEventAttributes": {
+          "identity": "pythonai-replay-fixture",
+          "result": {
+            "payloads": [
+              {
+                "data": "eyJuZXh0X2tpbmQiOiJtb2RlbCIsInJldmlzaW9uIjowLCJzY2hlbWFfdmVyc2lvbiI6MSwic3RhdGVfcmVmIjp7ImJ5dGVzIjoxNjUsImlkIjoiZDIzMzVmMDk5YjRkNDkxMDliNTNmZTBlNzc5YzNhNTIiLCJzY2hlbWFfdmVyc2lvbiI6MSwic2hhMjU2IjoiYTYxNmE2YzFhNjM1ZDc3NzVmZmM1NDc2MjE5OTgxYTYzZTFjMjUxZWQyMjc3NTdhMDJkZTQ2MDMwZjc1NjhlMyJ9LCJzdWJtaXNzaW9uX2lkIjoiMWZlZDdlYTQxZjgzNDI1ZjhjMTEyYTEzMTkwZTZiMjEifQ==",
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                }
+              }
+            ]
+          },
+          "scheduledEventId": "5",
+          "startedEventId": "6"
+        },
+        "eventId": "7",
+        "eventTime": "2026-10-28T14:06:41.895081100Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "taskId": "1048605"
+      },
+      {
+        "eventId": "8",
+        "eventTime": "2026-10-28T14:06:41.895081100Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "taskId": "1048606",
+        "workflowTaskScheduledEventAttributes": {
+          "attempt": 1,
+          "startToCloseTimeout": "10s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_STICKY",
+            "name": "pythonai-replay-fixture",
+            "normalName": "pythonai-replay-fixture-queue"
+          }
+        }
+      },
+      {
+        "eventId": "9",
+        "eventTime": "2026-10-28T14:06:41.921531Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+        "taskId": "1048610",
+        "workflowTaskStartedEventAttributes": {
+          "historySizeBytes": "1708",
+          "identity": "pythonai-replay-fixture",
+          "requestId": "d12ffd9d-3df0-47a6-954f-a2f133e84076",
+          "scheduledEventId": "8",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "eventId": "10",
+        "eventTime": "2026-10-28T14:06:41.948105900Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "taskId": "1048615",
+        "workflowTaskCompletedEventAttributes": {
+          "identity": "pythonai-replay-fixture",
+          "meteringMetadata": {},
+          "scheduledEventId": "8",
+          "sdkMetadata": {},
+          "startedEventId": "9",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "activityTaskScheduledEventAttributes": {
+          "activityId": "2",
+          "activityType": {
+            "name": "pythonai_step_model_v1"
+          },
+          "header": {},
+          "heartbeatTimeout": "45s",
+          "input": {
+            "payloads": [
+              {
+                "data": "eyJuZXh0X2tpbmQiOiJtb2RlbCIsInJldmlzaW9uIjowLCJzY2hlbWFfdmVyc2lvbiI6MSwic3RhdGVfcmVmIjp7ImJ5dGVzIjoxNjUsImlkIjoiZDIzMzVmMDk5YjRkNDkxMDliNTNmZTBlNzc5YzNhNTIiLCJzY2hlbWFfdmVyc2lvbiI6MSwic2hhMjU2IjoiYTYxNmE2YzFhNjM1ZDc3NzVmZmM1NDc2MjE5OTgxYTYzZTFjMjUxZWQyMjc3NTdhMDJkZTQ2MDMwZjc1NjhlMyJ9LCJzdWJtaXNzaW9uX2lkIjoiMWZlZDdlYTQxZjgzNDI1ZjhjMTEyYTEzMTkwZTZiMjEifQ==",
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                }
+              }
+            ]
+          },
+          "priority": {},
+          "retryPolicy": {
+            "backoffCoefficient": 2.0,
+            "initialInterval": "1s",
+            "maximumAttempts": 1,
+            "maximumInterval": "100s"
+          },
+          "scheduleToCloseTimeout": "599.908620s",
+          "scheduleToStartTimeout": "599.908620s",
+          "startToCloseTimeout": "599.908620s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_NORMAL",
+            "name": "pythonai-replay-fixture-queue"
+          },
+          "useWorkflowBuildId": true,
+          "workflowTaskCompletedEventId": "10"
+        },
+        "eventId": "11",
+        "eventTime": "2026-10-28T14:06:41.948105900Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "taskId": "1048616"
+      },
+      {
+        "eventId": "12",
+        "eventTime": "2026-10-28T14:06:42.622876400Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED",
+        "taskId": "1048619",
+        "workflowExecutionCancelRequestedEventAttributes": {
+          "identity": "pythonai-replay-fixture"
+        }
+      },
+      {
+        "eventId": "13",
+        "eventTime": "2026-10-28T14:06:42.622876400Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "taskId": "1048620",
+        "workflowTaskScheduledEventAttributes": {
+          "attempt": 1,
+          "startToCloseTimeout": "10s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_STICKY",
+            "name": "pythonai-replay-fixture",
+            "normalName": "pythonai-replay-fixture-queue"
+          }
+        }
+      },
+      {
+        "eventId": "14",
+        "eventTime": "2026-10-28T14:06:42.647675600Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+        "taskId": "1048624",
+        "workflowTaskStartedEventAttributes": {
+          "historySizeBytes": "2614",
+          "identity": "pythonai-replay-fixture",
+          "requestId": "53131d2f-bcc1-4a61-b468-f74f2da65f10",
+          "scheduledEventId": "13",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "eventId": "15",
+        "eventTime": "2026-10-28T14:06:42.679903200Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "taskId": "1048629",
+        "workflowTaskCompletedEventAttributes": {
+          "identity": "pythonai-replay-fixture",
+          "meteringMetadata": {},
+          "scheduledEventId": "13",
+          "sdkMetadata": {},
+          "startedEventId": "14",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "activityTaskCancelRequestedEventAttributes": {
+          "scheduledEventId": "11",
+          "workflowTaskCompletedEventId": "15"
+        },
+        "eventId": "16",
+        "eventTime": "2026-10-28T14:06:42.679903200Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED",
+        "taskId": "1048630"
+      },
+      {
+        "activityTaskScheduledEventAttributes": {
+          "activityId": "3",
+          "activityType": {
+            "name": "pythonai_step_recover_v1"
+          },
+          "header": {},
+          "heartbeatTimeout": "45s",
+          "input": {
+            "payloads": [
+              {
+                "data": "eyJuZXh0X2tpbmQiOiJtb2RlbCIsInJldmlzaW9uIjowLCJzY2hlbWFfdmVyc2lvbiI6MSwic3RhdGVfcmVmIjp7ImJ5dGVzIjoxNjUsImlkIjoiZDIzMzVmMDk5YjRkNDkxMDliNTNmZTBlNzc5YzNhNTIiLCJzY2hlbWFfdmVyc2lvbiI6MSwic2hhMjU2IjoiYTYxNmE2YzFhNjM1ZDc3NzVmZmM1NDc2MjE5OTgxYTYzZTFjMjUxZWQyMjc3NTdhMDJkZTQ2MDMwZjc1NjhlMyJ9LCJzdWJtaXNzaW9uX2lkIjoiMWZlZDdlYTQxZjgzNDI1ZjhjMTEyYTEzMTkwZTZiMjEifQ==",
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                }
+              }
+            ]
+          },
+          "priority": {},
+          "retryPolicy": {
+            "backoffCoefficient": 2.0,
+            "initialInterval": "1s",
+            "maximumAttempts": 3,
+            "maximumInterval": "100s"
+          },
+          "scheduleToCloseTimeout": "599.908620s",
+          "scheduleToStartTimeout": "599.908620s",
+          "startToCloseTimeout": "599.908620s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_NORMAL",
+            "name": "pythonai-replay-fixture-queue"
+          },
+          "useWorkflowBuildId": true,
+          "workflowTaskCompletedEventId": "15"
+        },
+        "eventId": "17",
+        "eventTime": "2026-10-28T14:06:42.679903200Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "taskId": "1048631"
+      },
+      {
+        "activityTaskStartedEventAttributes": {
+          "attempt": 1,
+          "identity": "pythonai-replay-fixture",
+          "requestId": "a8bdc964-5d13-4f96-9e7a-76271c4f2b39",
+          "scheduledEventId": "17",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        },
+        "eventId": "18",
+        "eventTime": "2026-10-28T14:06:42.679903200Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "taskId": "1048633"
+      },
+      {
+        "activityTaskFailedEventAttributes": {
+          "failure": {
+            "applicationFailureInfo": {
+              "nonRetryable": true,
+              "type": "OperationUncertain"
+            },
+            "message": "OperationUncertain",
+            "stackTrace": "<redacted local stack trace>"
+          },
+          "identity": "pythonai-replay-fixture",
+          "retryState": "RETRY_STATE_NON_RETRYABLE_FAILURE",
+          "scheduledEventId": "17",
+          "startedEventId": "18"
+        },
+        "eventId": "19",
+        "eventTime": "2026-10-28T14:06:42.810542200Z",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_FAILED",
+        "taskId": "1048634"
+      },
+      {
+        "eventId": "20",
+        "eventTime": "2026-10-28T14:06:42.810542200Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "taskId": "1048635",
+        "workflowTaskScheduledEventAttributes": {
+          "attempt": 1,
+          "startToCloseTimeout": "10s",
+          "taskQueue": {
+            "kind": "TASK_QUEUE_KIND_STICKY",
+            "name": "pythonai-replay-fixture",
+            "normalName": "pythonai-replay-fixture-queue"
+          }
+        }
+      },
+      {
+        "eventId": "21",
+        "eventTime": "2026-10-28T14:06:42.839581Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+        "taskId": "1048639",
+        "workflowTaskStartedEventAttributes": {
+          "historySizeBytes": "5005",
+          "identity": "pythonai-replay-fixture",
+          "requestId": "8f1618d8-caeb-4107-9827-8ac71c5f2695",
+          "scheduledEventId": "20",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "eventId": "22",
+        "eventTime": "2026-10-28T14:06:42.865913300Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "taskId": "1048643",
+        "workflowTaskCompletedEventAttributes": {
+          "identity": "pythonai-replay-fixture",
+          "meteringMetadata": {},
+          "scheduledEventId": "20",
+          "sdkMetadata": {},
+          "startedEventId": "21",
+          "workerVersion": {
+            "buildId": "6061de06142459bfa212d92ca99b8484"
+          }
+        }
+      },
+      {
+        "eventId": "23",
+        "eventTime": "2026-10-28T14:06:42.865913300Z",
+        "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_FAILED",
+        "taskId": "1048644",
+        "workflowExecutionFailedEventAttributes": {
+          "failure": {
+            "activityFailureInfo": {
+              "activityId": "3",
+              "activityType": {
+                "name": "pythonai_step_recover_v1"
+              },
+              "identity": "pythonai-replay-fixture",
+              "retryState": "RETRY_STATE_NON_RETRYABLE_FAILURE",
+              "scheduledEventId": "17",
+              "startedEventId": "18"
+            },
+            "cause": {
+              "applicationFailureInfo": {
+                "nonRetryable": true,
+                "type": "OperationUncertain"
+              },
+              "message": "OperationUncertain",
+              "stackTrace": "<redacted local stack trace>"
+            },
+            "message": "Activity task failed"
+          },
+          "retryState": "RETRY_STATE_RETRY_POLICY_NOT_SET",
+          "workflowTaskCompletedEventId": "22"
+        }
+      }
+    ]
+  },
+  "workflow_id": "pythonai-replay-fixture-v1_pre_patch"
+}

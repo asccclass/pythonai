@@ -103,6 +103,9 @@ def test_real_cancellation_reaps_descendants_and_fences_late_provider(server, co
                 store.workflow_closed(row['id'], row['owner'], status.name)
                 history = await handle.fetch_history()
                 assert 'late-private-result' not in history.to_json()
+                if entry == 'remote_legacy':
+                    from agent_execution.temporal_backend.tests.replay_fixtures import save
+                    save('v1_pre_patch',history,row['id'])
                 from agent_execution.temporal_backend.contracts import STEP_ACTIVITIES
                 names = [event.activity_task_scheduled_event_attributes.activity_type.name
                          for event in history.events if event.HasField('activity_task_scheduled_event_attributes')]

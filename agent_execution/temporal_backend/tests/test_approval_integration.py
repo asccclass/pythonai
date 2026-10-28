@@ -20,13 +20,48 @@ from agent_execution.policy import current_context
 from agent_execution.approvals import ApprovalStore, human_command
 from agent_execution.temporal_backend.approval_gate import ApprovalGate
 from agent_execution.temporal_backend.approval_outbox import pending
-from agent_execution.temporal_backend.contracts import STEP_ACTIVITIES, APPROVAL_SIGNAL
+from agent_execution.temporal_backend.contracts import (STEP_ACTIVITIES, STEP_TOOLS,
+    APPROVAL_SIGNAL, APPROVAL_WORKFLOW_NAME)
 from agent_execution.temporal_backend.ledger import Ledger
 from agent_execution.temporal_backend.step_activities import ACTIVITIES, approval
 from agent_execution.temporal_backend.store import Store
-from agent_execution.temporal_backend.workflows import AgentTaskWorkflowV3
+from agent_execution.temporal_backend.workflows import AgentTaskWorkflowV1,AgentTaskWorkflowV3
 from agent_execution.temporal_backend.tests.test_integration import configured, server
 from exceptions import TaskSuspendedException
+
+
+def test_v3_task_is_not_claimed_by_rolled_back_v1_worker(server,configured,monkeypatch):
+    from agent_execution.temporal_backend.client import dispatch
+    from agent_execution.temporal_backend.config import Settings
+
+    monkeypatch.setenv('AGENT_TEMPORAL_ENGINE','approval')
+    async def exercise():
+        client=await server.client()
+        store=Store()
+        context=current_context()
+        owner=task_owner(context)
+        store.bind(owner,context.task_id,'temporal')
+        approvals=ApprovalStore()
+        scope={'source':context.source,'identity':context.identity,'session':context.session,
+            'conversation':context.conversation,'project':context.project,'workspace':str(configured),
+            'allowed_tools':sorted(STEP_TOOLS),'approval_db':str(approvals.path.resolve())}
+        row=store.submit(owner,context.task_id,[{'role':'user','content':'Read note.txt'}],scope,'admin',Settings.load())
+        assert store.workflow_type(row)==APPROVAL_WORKFLOW_NAME
+        assert row['queue']==store.queue_for('approval')
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            async with Worker(client,task_queue=store.queue_for('steps'),workflows=[AgentTaskWorkflowV1],
+                              activities=ACTIVITIES,activity_executor=executor):
+                handle=await dispatch(store,row,client)
+                await asyncio.sleep(.5)
+                assert (await handle.describe()).status.name=='RUNNING'
+                history=await handle.fetch_history()
+                started=next(event.workflow_execution_started_event_attributes for event in history.events
+                    if event.HasField('workflow_execution_started_event_attributes'))
+                assert started.workflow_type.name==APPROVAL_WORKFLOW_NAME
+                assert started.task_queue.name==store.queue_for('approval')
+                assert not any(event.HasField('activity_task_scheduled_event_attributes') for event in history.events)
+                await handle.terminate('isolated Worker rollback drill')
+    asyncio.run(exercise())
 
 
 def provider():
@@ -87,6 +122,9 @@ def test_restart_duplicate_notification_and_human_decision(server, configured, m
         assert approvals.decision_state(key, 'local', current_context().session) == ('consumed' if decision == 'approve' else 'denied')
         history = await handle.fetch_history()
         assert 'private' not in history.to_json() and 'note.txt' not in history.to_json()
+        if decision == 'approve':
+            from agent_execution.temporal_backend.tests.replay_fixtures import save
+            save('v3',history,row['id'])
         schedules = [e.activity_task_scheduled_event_attributes for e in history.events if e.HasField('activity_task_scheduled_event_attributes')]
         assert all(e.retry_policy.maximum_attempts == 1 for e in schedules if e.activity_type.name in
                    {STEP_ACTIVITIES['model'],STEP_ACTIVITIES['tool'],STEP_ACTIVITIES['evaluation']})

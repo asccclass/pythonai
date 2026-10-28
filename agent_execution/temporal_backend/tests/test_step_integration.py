@@ -75,6 +75,9 @@ def test_step_workflow_real_io_cached_projection_and_replay(server,configured,mo
         assert requests==3
         history=await client.get_workflow_handle(row['workflow_id']).fetch_history()
         assert 'step-private-evidence' not in history.to_json()
+        if not lose_reply:
+            from agent_execution.temporal_backend.tests.replay_fixtures import save
+            save('v1',history,row['id'])
         names=[e.activity_task_scheduled_event_attributes.activity_type.name for e in history.events
                if e.HasField('activity_task_scheduled_event_attributes')]
         assert names.count(STEP_ACTIVITIES['recover'])==int(lose_reply)

@@ -271,10 +271,27 @@ Histories for each version; the TP14 legacy patch branch also replays under the 
 now has a regression proving that an unsupported persisted protocol version is rejected before
 `StartWorkflow`, so a downgraded or mixed-version Worker cannot silently reinterpret it.
 
-The step-store suite passed **32 tests**, and the isolated real-Service legacy-patch replay passed.
-TP24 still needs committed sanitized replay fixtures and an explicit Worker upgrade/rollback plus
-old-run drain drill; current replay Histories are generated during tests and do not yet prove a
-deployment rollback.
+Checked-in, sanitized replay fixtures now cover V1, pre-TP14-patch V1, V2, and V3. An isolated
+Service rollback drill starts a V3 approval Workflow while a V1 Worker polls only the old steps
+queue; the V3 execution remains on its pinned approval queue, with no Activity claimed by V1.
+Fixture replay passed **4 cases**, and the V3-on-old-Worker drill passed.
+
+Regenerate fixtures only from the controlled local Service tests:
+
+```powershell
+$env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
+$env:PYTHONAI_WRITE_TEMPORAL_REPLAY_FIXTURES = '1'
+.\venv\Scripts\python.exe -m pytest `
+  'agent_execution\temporal_backend\tests\test_step_integration.py::test_step_workflow_real_io_cached_projection_and_replay[False]' `
+  'agent_execution\temporal_backend\tests\test_cancellation_integration.py::test_real_cancellation_reaps_descendants_and_fences_late_provider[remote_legacy]' `
+  'agent_execution\temporal_backend\tests\test_human_integration.py::test_answer_survives_worker_restart_and_duplicate_signal[False]' `
+  'agent_execution\temporal_backend\tests\test_approval_integration.py::test_restart_duplicate_notification_and_human_decision[approve]'
+Remove-Item Env:PYTHONAI_WRITE_TEMPORAL_REPLAY_FIXTURES
+.\venv\Scripts\python.exe -m pytest agent_execution\temporal_backend\tests\test_replay_fixtures.py -q
+```
+
+The process-level Worker upgrade/rollback and old-run drain procedure still needs a repeatable
+deployment artifact and remains outstanding for TP24.
 
 ## 目前入口的限定接入驗收（TP11.7）
 
