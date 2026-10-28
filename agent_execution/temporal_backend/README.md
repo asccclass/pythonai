@@ -300,17 +300,26 @@ Use the existing operator diagnostics from the configured application environmen
 .\venv\Scripts\python.exe -m agent_execution.operations traces
 ```
 
-`readiness` checks local dependencies, workspace writability, and configured SQLite accessibility; it
-does not probe the model provider or prove Temporal Worker pollers are healthy. The authenticated
-admin-only `/api/ops/readiness` and `/api/ops/traces` routes expose the same diagnostics. If readiness
+`readiness` checks local dependencies, workspace writability, and configured SQLite accessibility. With
+the Temporal backend selected, it also requires fresh workflow and activity pollers for the configured
+new-task queue and any active bound queues. It does not probe the model provider or prove task execution
+progress. The authenticated admin-only `/api/ops/readiness`, `/api/ops/traces`, and `/api/ops/metrics`
+routes expose the same diagnostics and aggregate metrics. If readiness
 fails, stop admitting new Temporal work, preserve configured DBs and Worker logs, verify the same
 TaskStore paths/namespace, and restart only after storage/access checks pass. For a stuck run,
 correlate task/submission state, Temporal UI History, queue, `workflow_activity` span, child model spans,
 and operation ledger; classify unknown side effects as `uncertain` and do not replay them manually.
 
-This completes trace correlation and local redaction evidence only. Exportable metrics, provider-level
-correlation, configured alert delivery, and a live poller-aware readiness endpoint are still open TP25
-work; generic local readiness must not be used as a production deployment gate.
+The authenticated admin-only `/api/ops/metrics` route provides low-cardinality aggregate span counters
+and latency summaries without owner/task labels. When `AGENT_EXECUTION_BACKEND=temporal`, readiness also
+queries Temporal Service `DescribeTaskQueue` for fresh workflow and activity pollers on the configured
+new-task queue and queues with active submissions, plus approximate backlog count/age. Poller identities
+and raw queue names are omitted. The check uses a 60-second freshness window and fails closed on a missing
+or mismatched local host binding.
+
+Provider-specific spans, configured alert delivery, and production Service/Worker observability remain
+open TP25 work. The local queue probe verifies recent poller observations from the Service; it does not
+prove provider health, task execution progress, or production deployment health.
 
 ### TP26 isolated backup/restore progress
 

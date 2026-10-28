@@ -61,8 +61,30 @@ class OperationsTests(unittest.TestCase):
         with patch.dict(os.environ,{'AGENT_API_TOKENS':json.dumps({'a'*32:'admin'})}),patch('agent_execution.api.get_user_role',return_value='admin'):
             self.assertEqual(authenticated_api('/api/ops/readiness','GET',None,{})[0],401)
             self.assertEqual(authenticated_api('/api/ops/readiness','GET',None,headers)[0],200)
+            self.assertEqual(authenticated_api('/api/ops/metrics','GET',None,headers)[0],200)
             with patch('agent_execution.api.get_user_role',return_value='viewer'):
                 self.assertEqual(authenticated_api('/api/ops/traces','GET',None,headers)[0],403)
+
+    def test_metrics_are_aggregate_and_temporal_readiness_requires_pollers(self):
+        from agent_execution.api import authenticated_api
+        from agent_execution.temporal_backend.readiness import inspect_sync
+        with execution_scope(task_id='private-metric-task'),span('workflow_activity','private-queue',{'api_key':'private-secret'}):
+            pass
+        headers={'Authorization':'Bearer '+'a'*32}
+        with patch.dict(os.environ,{'AGENT_API_TOKENS':json.dumps({'a'*32:'admin'})}),\
+                patch('agent_execution.api.get_user_role',return_value='admin'):
+            status,report=authenticated_api('/api/ops/metrics','GET',None,headers)
+        self.assertEqual(status,200);self.assertGreaterEqual(report['spans_total'],1)
+        self.assertGreaterEqual(report['workflow_activity_spans_total'],1)
+        self.assertNotIn('private-metric-task',json.dumps(report))
+        self.assertNotIn('private-secret',json.dumps(report))
+        with patch.dict(os.environ,{'AGENT_EXECUTION_BACKEND':'temporal'}),\
+                patch('agent_execution.temporal_backend.readiness.inspect_sync',return_value={
+                    'connected':True,'ready':False,'queues':[]} ) as probe:
+            report=readiness()
+        probe.assert_called_once()
+        self.assertFalse(report['ready'])
+        self.assertFalse(report['checks']['temporal_pollers'])
     def test_backup_restore_preserves_data_and_never_overwrites_or_accepts_tampering(self):
         path=self.database();destination=self.root/'backup';manifest=backup([path],destination)
         with closing(sqlite3.connect(path)) as conn,conn:conn.execute("INSERT INTO data VALUES('later')")

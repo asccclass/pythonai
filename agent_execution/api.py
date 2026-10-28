@@ -56,6 +56,9 @@ def authenticated_api(path, method, body, headers):
             if route=='/api/ops/readiness':
                 from .operations.doctor import readiness
                 report=readiness();return (200 if report['ready'] else 503),report
+            if route=='/api/ops/metrics':
+                from .operations.metrics import snapshot
+                return 200,snapshot()
             if route=='/api/ops/traces':
                 from .operations.tracing import TraceStore
                 store=TraceStore();return 200,{'summary':store.summary(),'spans':store.list()}

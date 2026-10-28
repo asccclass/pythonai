@@ -262,6 +262,47 @@ def test_temporal_isolated_canary_dispatch_latency_and_completion(server, config
     asyncio.run(exercise())
 
 
+def test_temporal_readiness_requires_fresh_workflow_and_activity_pollers(server, configured):
+    import threading
+    from agent_execution.temporal_backend.readiness import inspect as temporal_readiness
+    from agent_execution.temporal_backend.tests.test_integration import prepare
+
+    async def exercise():
+        client = await server.client()
+        settings = Settings.load()
+        store = Store()
+        missing = await temporal_readiness(settings, client)
+        assert missing['connected'] is True and missing['ready'] is False
+        assert missing['queues'][0]['workflow_pollers'] == 0
+        with execution_scope(task_id='readiness-probe'):
+            _, row = prepare(settings)
+        started = threading.Event()
+
+        @activity.defn(name=ACTIVITY_NAME)
+        def run(envelope: dict) -> dict:
+            started.set()
+            time.sleep(.5)
+            return {'ok': True}
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            async with Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],
+                              activities=[run], activity_executor=executor):
+                handle = await dispatch(store, row, client)
+                assert await asyncio.to_thread(started.wait, 10)
+                live = await temporal_readiness(settings, client)
+                assert await handle.result() == {'ok': True}
+        assert live['connected'] is True and live['ready'] is True, live
+        assert live['queues'][0]['workflow_pollers'] >= 1
+        assert live['queues'][0]['activity_pollers'] >= 1
+        assert 'identity' not in json.dumps(live)
+        from agent_execution.operations.doctor import readiness
+        operator_report = readiness()
+        assert operator_report['ready'] is True, operator_report
+        assert operator_report['checks']['temporal_pollers'] is True
+
+    asyncio.run(exercise())
+
+
 def test_activity_failure_is_not_replayed_automatically(server):
     store, row = prepare(Settings.load())
     attempts = []

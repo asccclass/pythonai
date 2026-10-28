@@ -31,7 +31,27 @@ def readiness():
                 with tempfile.TemporaryFile(dir=parent):pass
             checks[variable]=True
         except Exception as error:checks[variable]=False;errors.append({'check':variable,'error':type(error).__name__})
-    return {'ready':all(checks.values()),'checks':checks,'errors':errors,'provider':'not probed','scope':'local readiness; not an external service guarantee'}
+    temporal = None
+    from ..temporal_backend.config import selected_backend
+    try:
+        backend = selected_backend()
+    except Exception as error:
+        checks['backend_config'] = False
+        errors.append({'check':'backend_config','error':type(error).__name__})
+        backend = None
+    if backend == 'temporal':
+        try:
+            from ..temporal_backend.readiness import inspect_sync
+            temporal = inspect_sync()
+        except Exception as error:
+            temporal = {'connected': False, 'ready': False, 'error_type': type(error).__name__,
+                        'scope': 'Temporal poller probe failed; details omitted'}
+        checks['temporal_service'] = temporal.get('connected', False)
+        checks['temporal_pollers'] = temporal.get('ready', False)
+    report = {'ready':all(checks.values()),'checks':checks,'errors':errors,'provider':'not probed','scope':'local readiness; not an external service guarantee'}
+    if temporal is not None:
+        report['temporal'] = temporal
+    return report
 
 
 def dependency_doctor():

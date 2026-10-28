@@ -93,7 +93,7 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP22 | 已完成明確 lifecycle 意圖、guarded merge 取消保護、worktree 封存／還原及孤兒治理，見 12.14 |
 | TP23 | Continue-As-New、DAG History retention 與隔離 Service／累積容量邊界驗收已完成；正式長時間 canary 留 TP27 |
 | TP24 | V1/V2/V3 固定 History fixture、舊 patch replay、未知協定拒絕派送、V3 queue rollback 及隔離 Service 跨程序 V1 run 接手已驗收；正式 fleet rollout 留 TP26–27 |
-| TP25 | 部分完成：Temporal Activity→model attempt redacted trace correlation 已經隔離 Service 驗證；metrics export、provider spans、告警投遞、poller-aware readiness 尚未完成 |
+| TP25 | 部分完成：Activity trace、低基數 metrics API、poller-aware readiness 已隔離驗證；provider spans、外送告警及正式觀測尚未完成 |
 | TP26 | 部分完成：隔離 development Service＋TaskStore 備份至新目錄、還原後查回／replay 已驗證；Cloud／自管選型、正式服務原生備份與生產還原演練未做 |
 | TP27 | 部分完成：8-run 隔離 Service canary 0 failure，History schedule-to-start p95 1.086083 秒；正式壓測、逐 owner 放量及 7 日觀察未做 |
 | TP28 | 待辦：repo 沒有 frozen-app build spec／PyInstaller；目前只有 Windows venv 與 CLI 驗證，沒有 Linux／frozen binary 證據 |
@@ -932,10 +932,14 @@ arguments 或 credentials。隔離程序升級測試檢查 trace/parent 關係�
 不進 TraceStore，**1 passed**。通用 operations 回歸 **9 passed、5 subtests passed**；`pip check`、
 compileall、diff check 通過。
 
-README 增補 local diagnostics/runbook：readiness、traces 查詢、停收新任務、核對相同 TaskStore／
-namespace、對照 Temporal History 與 ledger、未知副作用維持 uncertain。明確標示通用 readiness
-不探測 provider 或 Worker pollers；尚無 metrics exporter、provider span、外送告警或 poller-aware
-readiness，因此 TP25 仍部分完成，這些功能補齊後才可算 milestone 完成。
+README 增補 local diagnostics/runbook：readiness、traces、aggregate metrics 查詢、停收新任務、
+核對相同 TaskStore／namespace、對照 Temporal History 與 ledger、未知副作用維持 uncertain。Temporal
+模式 readiness 以 DescribeTaskQueue 檢查目前新任務 queue 及 active bindings 的 workflow/activity
+pollers freshness（60 秒）與 backlog；空 queue 初始會報 not-ready，直到 Service 觀察到 poller。
+真實隔離 Service 測試驗證無 poller 時不 ready、啟動受控 run 後 pollers 出現並 ready；再由同步
+operations readiness bridge 重查成功，**1 passed**。metrics admin API 聚合計數不含 owner/task
+label；operations 組更新為 **10 passed、5 subtests passed**。Provider spans、告警投遞與正式觀測仍缺，
+TP25 尚未全部完成。
 
 同時新增 TP26 隔離 restore drill：停止 Worker／development Service 後，以 SQLite backup API
 保存 TaskStore 與 Temporal Service DB；還原至新路徑、啟動還原後的 Service，原 workflow result
