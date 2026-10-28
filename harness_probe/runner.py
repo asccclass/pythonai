@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -27,10 +28,13 @@ def read_json(path):
 def files_in(root):
     """Reject links instead of accidentally copying files outside task material."""
     root = Path(root)
-    if root.is_symlink() or root.is_junction() or not root.is_dir():
+    def linked(path):
+        return path.is_symlink() or bool(getattr(path.lstat(), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+    if not root.is_dir() or linked(root):
         raise ValueError(f'Expected a regular directory: {root}')
     for path in sorted(root.rglob('*')):
-        if path.is_symlink() or path.is_junction():
+        if linked(path):
             raise ValueError(f'Links are unsupported: {path}')
         if path.is_file():
             yield path.relative_to(root).as_posix(), path.read_bytes()

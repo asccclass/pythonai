@@ -8,6 +8,25 @@ import pytest
 from harness_probe.runner import ProbeRunner, read_json, trajectory
 
 
+def test_files_in_rejects_root_and_nested_reparse_points(tmp_path, monkeypatch):
+    import stat
+    from types import SimpleNamespace
+    from harness_probe.runner import files_in
+
+    nested = tmp_path / 'nested'
+    nested.mkdir()
+    (nested / 'source.txt').write_bytes(b'keep')
+    assert dict(files_in(tmp_path)) == {'nested/source.txt': b'keep'}
+    original = Path.lstat
+    for target in (tmp_path, nested):
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, 'lstat', lambda path, *args, **kwargs:
+                SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                if path == target else original(path, *args, **kwargs))
+            with pytest.raises(ValueError, match='regular directory|Links are unsupported'):
+                list(files_in(tmp_path))
+
+
 @pytest.fixture
 def real_worker(monkeypatch):
     original = subprocess.Popen
