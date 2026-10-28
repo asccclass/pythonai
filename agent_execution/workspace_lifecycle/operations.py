@@ -68,6 +68,16 @@ def check_items(store,plan,conn):
         from agent_execution.temporal_backend.dag_erasure import preview as dag_preview
         if dag_preview(conn,owners)!=plan['payload'].get('dags',[]):
             raise ValueError('DAG targets changed; preview again')
+        from agent_execution.companion.outputs import preview as output_preview
+        expected = plan['payload'].get('outputs', [])
+        actual = output_preview(store, conn)
+        # A manually removed output is safe; additions, replacements or changed
+        # contents require a new concrete deletion preview.
+        if {r['id'] for r in expected} != {r['id'] for r in actual}:
+            raise ValueError('Output files changed; preview again')
+        for old, new in zip(sorted(expected,key=lambda r:r['id']), sorted(actual,key=lambda r:r['id'])):
+            if not new['missing'] and new != old:
+                raise ValueError('Output files changed; preview again')
     for kept in plan['payload']['kept']:
         row=store.get(kept['id'],conn)
         refs=sorted(r[0] for r in conn.execute('SELECT session FROM wl_refs WHERE directory=?',(row['id'],)))
@@ -197,6 +207,10 @@ def resume(store,key):
                     conn.execute("UPDATE wl_directories SET original_relative=COALESCE(original_relative,relative),relative=?,state='purged',generation=generation+1 WHERE id=?",('@purged/'+row['id'],row['id']))
                 else:
                     conn.execute('UPDATE wl_directories SET state=?,generation=generation+1 WHERE id=?',(final,row['id']))
+        if plan['action'] == 'delete_session':
+            from agent_execution.companion.outputs import purge
+            fenced()
+            purge(store, plan['payload'].get('outputs', []))
         with closing(store.connect()) as conn,conn:
             if plan['action']=='delete_session':
                 for item in plan['payload']['kept']:

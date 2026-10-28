@@ -53,6 +53,17 @@ class WebSocketServerTests(unittest.TestCase):
         self.assertIn('"role":"admin"', diagnostic)
         self.assertIn('"tool":"websocket_connect"', diagnostic)
 
+    def test_cancelled_connection_cleans_up_session_without_leaking_cancellation(self):
+        from unittest.mock import AsyncMock
+        from types import SimpleNamespace
+        from websocket_server import ws_endpoint
+        ws = SimpleNamespace(accept=AsyncMock(),send_text=AsyncMock(),
+            receive_text=AsyncMock(return_value='{"type":"hello","payload":{"token":"token","device_id":"cancelled"}}'),
+            receive=AsyncMock(side_effect=asyncio.CancelledError()))
+        with patch('websocket_server.websocket_tokens',return_value={'token':'andy'}):
+            asyncio.run(ws_endpoint(ws))
+        self.assertIsNone(hub.sessions[('andy','default','cancelled')].ws)
+
     def test_ping_returns_pong_with_ref(self):
         with patch.dict("os.environ", {"COMPANION_WS_TOKENS": "token-1"}, clear=False):
             with TestClient(app).websocket_connect("/ws/v1") as ws:

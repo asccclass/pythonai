@@ -76,3 +76,28 @@ class LifecycleWebSocketTests(unittest.TestCase):
                 result=self.send(alice,'session.delete.confirm',{'plan_id':plan})
                 self.assertEqual(result['type'],'error')
                 self.assertTrue(self.root.joinpath('temporary').exists())
+
+    def test_document_download_is_scoped_and_deleted_with_conversation(self):
+        import base64
+        from base import write_file
+        from permissions import set_current_role
+        with self.scope(), set_current_role('admin'):
+            item = write_file('prompt_zh.txt','繁體中文翻譯')['artifacts'][0]
+            write_file('removed.txt','removed manually')
+            (self.root/'removed.txt').unlink()
+        with TestClient(app) as client:
+            with client.websocket_connect('/ws/v1') as alice, client.websocket_connect('/ws/v1') as other:
+                self.hello(alice)
+                self.hello(other,device='b',conversation='two')
+                chunk = self.send(alice,'file.get',{'file_id':item['id'],'offset':0})
+                self.assertEqual(chunk['type'],'file.chunk')
+                self.assertEqual(base64.b64decode(chunk['payload']['data']).decode('utf-8'),'繁體中文翻譯')
+                denied = self.send(other,'file.get',{'file_id':item['id'],'offset':0})
+                self.assertEqual(denied['payload']['code'],'file_unavailable')
+                plan = self.send(alice,'session.delete.preview')['payload']
+                self.assertEqual(len(plan['outputs']),2)
+                result = self.send(alice,'session.delete.confirm',{'plan_id':plan['plan_id']})
+                self.assertEqual(result['payload']['state'],'deleted',result)
+                self.assertFalse((self.root/'prompt_zh.txt').exists())
+                gone = self.send(alice,'file.get',{'file_id':item['id'],'offset':0})
+                self.assertEqual(gone['payload']['code'],'file_unavailable')

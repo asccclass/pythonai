@@ -44,7 +44,7 @@ def relative(value):
 def root():
     from base import workspace_root
     value = workspace_root()
-    if value.is_symlink() or value.is_junction():
+    if value.is_symlink() or getattr(value.lstat(), 'st_file_attributes', 0) & 0x400:
         raise PermissionError('Linked write workspace')
     return value
 
@@ -54,7 +54,7 @@ def state(path,directory=False):
         info = path.lstat()
     except FileNotFoundError:
         return {'kind':'missing'}
-    if stat.S_ISLNK(info.st_mode) or path.is_junction():
+    if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
         raise PermissionError('Linked write target or ancestor')
     identity = {'device':info.st_dev,'inode':info.st_ino}
     if stat.S_ISDIR(info.st_mode):
@@ -246,6 +246,9 @@ def execute_bound(name,arguments,function):
     assert_consumed(ledger,step,name,arguments,plan)
     verify(plan)
     paths,data = request(name,arguments,plan['before'])
+    from agent_execution.companion.outputs import assert_writable
+    if data is not None:
+        assert_writable(root()/paths[0])
     if {p:({'kind':'directory'} if data is None else {'kind':'file','bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}) for p in paths}!=plan['expected']:
         raise PermissionError('Write content differs from approved digest')
     from agent_execution.workspace_lifecycle import prepare_write, program_build, LifecycleStore
@@ -324,7 +327,10 @@ def execute_bound(name,arguments,function):
         finally:
             if stage is not None:
                 stage.unlink(missing_ok=True)
+    from agent_execution.companion.outputs import register
+    output = register(root()/paths[0], plan['before'][paths[0]]['kind']=='missing') if data is not None else None
     return {'success':True,'path':str(root()/paths[0]) if data is not None else None,
+            'artifacts': [output] if output else [],
             'directories':[str(root()/p) for p in paths] if data is None else [],
             'action':name,'evidence':{'kind':'temporal_file_write','operation':step,
                                     'plan_digest':digest(plan),'observed':observed}}

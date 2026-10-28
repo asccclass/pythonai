@@ -3,6 +3,38 @@ import json
 from pathlib import Path
 
 
+def recovered_output_failure(step, steps, root):
+    """A refused duplicate write is harmless only with the same verified delivery."""
+    try:
+        failed = json.loads(step.get('result') or '{}')
+        args = json.loads(step['input'])
+        if (step['name'] != 'write_file' or step['state'] != 'failed'
+                or failed.get('evidence', {}).get('kind') != 'repeat_prevented'
+                or failed.get('side_effects', {}).get('status') != 'none'):
+            return False
+        from agent_execution.policy import current_context
+        if current_context().source != 'websocket':
+            return False
+        from agent_execution.companion.outputs import available
+        verified = {row['id']: row for row in available(current_context().task_id)}
+        target = (Path(root) / args['path']).resolve()
+        if not target.is_relative_to(Path(root).resolve()) or target.read_text(encoding='utf-8') != args['content']:
+            return False
+        for other in steps:
+            if other is step or other['name'] != 'write_file' or other['state'] != 'completed':
+                continue
+            output = json.loads(other.get('result') or '{}')
+            evidence = output.get('evidence', {})
+            if (json.loads(other['input']) == args and output.get('success') is True
+                    and evidence.get('kind') == 'workspace_output'
+                    and evidence.get('id') in verified
+                    and evidence.get('sha256') == verified[evidence['id']]['sha256']):
+                return True
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
+        pass
+    return False
+
+
 def recovered_directory_failure(step, steps, root):
     try:
         result = json.loads(step.get('result') or '{}')

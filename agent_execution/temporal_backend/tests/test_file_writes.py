@@ -53,6 +53,15 @@ def task(tmp_path,monkeypatch):
             yield store,steps,row,ledger,cursor,approvals,roles
 
 
+def test_reparse_attribute_is_rejected_without_python312_path_api(tmp_path):
+    import stat
+    from types import SimpleNamespace
+    from agent_execution.temporal_backend.file_writes import state
+    info = SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+    with patch.object(Path,'lstat',return_value=info), pytest.raises(PermissionError,match='Linked write'):
+        state(tmp_path)
+
+
 def approved(task,name='write_file',arguments=None):
     arguments = {'path':'program/note.md','content':'繁體中文\nfirst line\n'} if arguments is None else arguments
     gate,cursor,intent = wait(task,name,arguments)

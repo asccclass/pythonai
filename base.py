@@ -126,13 +126,18 @@ def list_files(path: str | Path = ".") -> list[str]:
 
 def write_file(path: str | Path, content: str) -> dict:
     target = resolve_workspace_path(path)
+    from agent_execution.companion.outputs import assert_writable, register
+    assert_writable(target)
+    newly_created = not target.exists()
     from agent_execution.workspace_lifecycle import prepare_write,program_build,LifecycleStore
     from contextlib import nullcontext
     key=prepare_write(target)
     with program_build(LifecycleStore(),key) if key else nullcontext():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-    return {'success': True, 'path': str(target), 'action': 'written'}
+    output = register(target, newly_created)
+    return {'success': True, 'path': str(target), 'action': 'written',
+            **({'artifacts': [output], 'evidence': {'kind': 'workspace_output', **output}} if output else {})}
 
 def edit_file(path: str | Path, old_str: str, new_str: str) -> dict[str, str]:
     target = resolve_workspace_path(path)

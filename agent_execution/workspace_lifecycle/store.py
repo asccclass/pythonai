@@ -90,6 +90,8 @@ class LifecycleStore:
                 resource TEXT NOT NULL,session TEXT NOT NULL,PRIMARY KEY(resource,session));''')
             conn.execute('CREATE TABLE IF NOT EXISTS wl_transports (session TEXT,owner TEXT,path TEXT,PRIMARY KEY(session,owner,path))')
             conn.execute('CREATE TABLE IF NOT EXISTS wl_audit (operation TEXT PRIMARY KEY,principal TEXT,session TEXT,result TEXT,files INTEGER,bytes INTEGER,created REAL)')
+        from agent_execution.companion.outputs import initialize
+        initialize(self)
 
     def connect(self):
         return self.tasks.connect()
@@ -315,6 +317,8 @@ class LifecycleStore:
                 'schedules':schedules(owners) if action=='delete_session' else [],
                 'temporal':temporal_preview(conn,owners) if action=='delete_session' else [],
                 'dags':dag_preview(conn,owners) if action=='delete_session' else []}
+            from agent_execution.companion.outputs import preview as output_preview
+            payload['outputs'] = output_preview(self, conn) if action == 'delete_session' else []
             plan = uuid.uuid4().hex
             conn.execute('INSERT INTO wl_plans(id,session,principal,action,payload,expires) VALUES(?,?,?,?,?,?)',
                 (plan,session,principal(),action,json.dumps(payload),time.time()+300))
@@ -359,4 +363,5 @@ class LifecycleStore:
 
 
 def public_payload(payload):
-    return {**payload,'items':[{k:v for k,v in item.items() if k!='manifest'} for item in payload['items']]}
+    return {**payload,'items':[{k:v for k,v in item.items() if k!='manifest'} for item in payload['items']],
+            'outputs': [{k: row[k] for k in ('id','name','size','missing')} for row in payload.get('outputs', [])]}

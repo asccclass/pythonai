@@ -47,7 +47,10 @@ class PinnedTree:
             if not self.kernel.GetFileInformationByHandleEx(handle,18,C.byref(identifier),C.sizeof(identifier)) or not self.kernel.GetFileInformationByHandleEx(handle,0,C.byref(basic),C.sizeof(basic)):
                 raise OSError(C.get_last_error(),'Cannot verify pinned file identity')
             actual=[identifier.volume,int.from_bytes(bytes(identifier.identifier),'little')]
-            if actual!=expected or basic.attributes & 0x400:
+            # CPython 3.11 exposes the 32-bit volume serial in st_dev, while
+            # FILE_ID_INFO reports its 64-bit form. Keep the full file ID check.
+            volume_matches = expected[0] in {actual[0], actual[0] & 0xffffffff}
+            if not volume_matches or actual[1]!=expected[1] or basic.attributes & 0x400:
                 raise PermissionError('Object was replaced or became a reparse point while opening')
         except BaseException:
             self.kernel.CloseHandle(handle)

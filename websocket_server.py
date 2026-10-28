@@ -398,6 +398,8 @@ async def brain_reply_stream(user_text: str, session: Session) -> AsyncIterator[
                 from agent_execution.temporal_backend.runtime_state import frontend_end
                 end = frontend_end({"text":result.reply,"episode_id":result.episode_id,"suspended":result.suspended,
                     "failed":result.reply.startswith("Error:"),"emotion":"neutral","action":"none"})
+                from agent_execution.companion.outputs import available
+                end['files'] = available(session.request_id)
             emit("end",end)
         except Exception as error:
             try:
@@ -532,7 +534,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 continue
             data = parse_text_message(text)
             await handle_client_message(session, data)
-    except (WebSocketDisconnect, asyncio.TimeoutError):
+    except (WebSocketDisconnect, asyncio.TimeoutError, asyncio.CancelledError):
         pass
     except CapacityError:
         await ws.close(code=4429, reason='Companion capacity reached; ACK required')
@@ -542,7 +544,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
     finally:
         if stream_pump is not None:
             stream_pump.cancel()
-            await asyncio.gather(stream_pump,return_exceptions=True)
+            try:
+                await asyncio.gather(stream_pump,return_exceptions=True)
+            except asyncio.CancelledError:
+                pass  # Complete synchronous connection cleanup during server shutdown.
         if session is not None and session.ws is ws:
             for future, connection in list(session.desktop_requests.values()):
                 if not future.done():
@@ -568,6 +573,15 @@ async def handle_client_message(session: Session, data: dict[str, Any]) -> None:
         return
     if isinstance(message_type,str) and message_type.startswith(('workspace.','session.delete.')):
         await handle_lifecycle_message(session,data)
+    elif message_type == 'file.get':
+        from agent_execution.companion.outputs import read_chunk
+        def download():
+            with lifecycle_scope(session):
+                return read_chunk(payload.get('file_id'), payload.get('offset', 0))
+        try:
+            await session.send('file.chunk', await asyncio.to_thread(download), ref=message_id)
+        except (ValueError, OSError, sqlite3.Error) as error:
+            await session.send('error', {'code': 'file_unavailable', 'message': str(error), 'retryable': False}, ref=message_id)
     elif message_type == "ping":
         await session.send("pong", {}, ref=message_id)
     elif message_type == "ack":

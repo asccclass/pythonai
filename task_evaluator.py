@@ -419,9 +419,20 @@ class TaskEvaluator:
         if self.client is None or not self.model:
             return True, 1.0, "LLM-as-a-Judge 未配置，略過此項。"
 
+        execution_summary = self._judge_execution_summary(user_goal, messages)
+        from agent_execution.policy import current_context
+        files = []
+        if current_context().source == 'websocket':
+            from agent_execution.companion.outputs import available
+            files = available(current_context().task_id)
+        if files:
+            execution_summary += ('\n[Backend verified downloadable workspace outputs]: ' + json.dumps(files, ensure_ascii=False)
+                + '\nFile delivery policy: a requested generated document is delivered in the workspace with a desktop download link; '
+                  'the input file directory is not the required output directory. Verify content quality separately. '
+                  'These file hashes were checked by the backend, independently of final-answer claims.')
         judge_prompt = load_text(
             'instructions.json', 'judge_request', user_goal=user_goal,
-            execution_summary=self._judge_execution_summary(user_goal, messages), final_reply=final_reply,
+            execution_summary=execution_summary, final_reply=final_reply,
             current_date=date.today().isoformat(),
         )
         try:
@@ -488,12 +499,13 @@ class TaskEvaluator:
         if active:
             # Executor checkpoints are trusted facts; model prose is never evidence.
             steps=active[0].steps(active[1],active[2])
-            from agent_execution.turn_control.recovery import recovered_directory_failure, recovered_edit_failure, recovered_read_failure
+            from agent_execution.turn_control.recovery import recovered_directory_failure, recovered_edit_failure, recovered_read_failure, recovered_output_failure
             for step in steps:
                 if step['state']!='completed':
                     if (recovered_directory_failure(step, steps, self.workspace_root) or
                             recovered_edit_failure(step, steps, self.workspace_root) or
-                            recovered_read_failure(step, steps, self.workspace_root)):
+                            recovered_read_failure(step, steps, self.workspace_root) or
+                            recovered_output_failure(step, steps, self.workspace_root)):
                         continue
                     issues.append(f"Tool step not successful: {step['id']}")
                     try:
@@ -505,6 +517,12 @@ class TaskEvaluator:
         source_evidence=public_web_source_evidence(steps) if active else []
         criteria['source_evidence:public_web']=bool(source_evidence)
         evidence.extend(source_evidence)
+        output_evidence = []
+        from agent_execution.policy import current_context
+        if active and current_context().source == 'websocket':
+            from agent_execution.companion.outputs import available
+            output_evidence = [{'kind': 'workspace_output', **item} for item in available(current_context().task_id)]
+            evidence.extend(output_evidence)
         permission_denied = any('PermissionError' in issue or '工具權限不足' in issue or self._permission_denied(issue) for issue in issues) or any(
             msg.get('role') == 'tool' and self._permission_denied(str(msg.get('content') or ''))
             for msg in messages)
@@ -535,7 +553,7 @@ class TaskEvaluator:
             feedback=final_feedback,
             criteria_met=criteria,
             side_effects=side_effects,
-            verified=overall_success and ((bool(checks) and all(checks.values())) or bool(source_evidence)),
+            verified=overall_success and ((bool(checks) and all(checks.values())) or bool(source_evidence) or bool(output_evidence)),
             retryable=not llm_feedback.startswith('Judge unavailable:') and not permission_denied,
             evidence=evidence,
         )
