@@ -30,10 +30,6 @@ def preview(conn,owners):
 
 async def erase(graphs,session):
     from datetime import timedelta
-    from temporalio.client import WorkflowExecutionStatus
-    from temporalio.service import RPCError,RPCStatusCode
-    from temporalio.api.workflowservice.v1 import DeleteWorkflowExecutionRequest
-    from temporalio.api.common.v1 import WorkflowExecution
     from .client import connect
     from .config import Settings
     timeout=timedelta(seconds=10)
@@ -48,12 +44,6 @@ async def erase(graphs,session):
         graph=graphs.get(key)
         graphs.configuration(graph)
         graphs.stop(key)
-        root=client.get_workflow_handle(graphs.workflow_id(key))
-        try:
-            if (await root.describe(rpc_timeout=timeout)).status==WorkflowExecutionStatus.RUNNING:
-                await root.cancel(rpc_timeout=timeout)
-        except RPCError as error:
-            if error.status!=RPCStatusCode.NOT_FOUND:raise
         with closing(graphs.coordinator.connect()) as conn:
             nodes=graphs.nodes(conn,graph)
             if busy(conn,[graph['owner']]) or any((n['expires'] or 0)>time.time() for n in nodes):
@@ -64,29 +54,60 @@ async def erase(graphs,session):
             operations=operation_ids(conn,key)
         targets += [Lifecycle.workflow_id(operation) for operation in operations]
         for workflow_id in targets:
-            handle=client.get_workflow_handle(workflow_id)
-            try:
-                description=await handle.describe(rpc_timeout=timeout)
-                handle=client.get_workflow_handle(workflow_id,run_id=description.run_id)
-                if description.status==WorkflowExecutionStatus.RUNNING:
-                    await handle.terminate('Authorized session erasure',rpc_timeout=timeout)
-                await client.workflow_service.delete_workflow_execution(DeleteWorkflowExecutionRequest(
-                    namespace=graph['namespace'],workflow_execution=WorkflowExecution(workflow_id=workflow_id,run_id=description.run_id)),
-                    timeout=timeout)
-            except RPCError as error:
-                if error.status!=RPCStatusCode.NOT_FOUND:raise
-            try:await handle.describe(rpc_timeout=timeout)
-            except RPCError as error:
-                if error.status!=RPCStatusCode.NOT_FOUND:raise
-            else:raise ErasurePending('DAG History deletion pending')
-            async for _ in client.list_workflows(query="WorkflowId = '"+workflow_id+"'",limit=1,rpc_timeout=timeout):
-                raise ErasurePending('DAG visibility deletion pending')
+            await delete_history(client,graph['namespace'],workflow_id,timeout,terminate_running=True)
         with closing(graphs.coordinator.connect()) as conn,conn:
             if sorted(n['id'] for n in graphs.nodes(conn,graph))!=sorted(n['id'] for n in nodes):
                 raise ErasurePending('DAG targets changed during erasure')
             if operation_ids(conn,key)!=operations:
                 raise ErasurePending('DAG lifecycle targets changed during erasure')
             conn.execute('UPDATE temporal_agent_graphs SET remote_deleted=1,updated=? WHERE id=?',(time.time(),key))
+
+
+async def delete_history(client,namespace,workflow_id,timeout,*,terminate_running=False):
+    """Delete every run in a Workflow ID chain, including runs closed by Continue-As-New."""
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError,RPCStatusCode
+    from temporalio.api.workflowservice.v1 import DeleteWorkflowExecutionRequest
+    from temporalio.api.common.v1 import WorkflowExecution
+
+    run_ids=set()
+    latest=client.get_workflow_handle(workflow_id)
+    try:
+        latest_description=await latest.describe(rpc_timeout=timeout)
+        run_ids.add(latest_description.run_id)
+    except RPCError as error:
+        if error.status!=RPCStatusCode.NOT_FOUND:raise
+    async for execution in client.list_workflows(
+            query="WorkflowId = '"+workflow_id+"'",rpc_timeout=timeout):
+        if execution.run_id:run_ids.add(execution.run_id)
+
+    for run_id in sorted(run_ids):
+        handle=client.get_workflow_handle(workflow_id,run_id=run_id)
+        try:
+            description=await handle.describe(rpc_timeout=timeout)
+        except RPCError as error:
+            if error.status==RPCStatusCode.NOT_FOUND:continue
+            raise
+        if description.status==WorkflowExecutionStatus.RUNNING:
+            if not terminate_running:
+                raise ErasurePending('DAG Workflow run is still open')
+            await handle.terminate('Authorized session erasure',rpc_timeout=timeout)
+        try:
+            await client.workflow_service.delete_workflow_execution(DeleteWorkflowExecutionRequest(
+                namespace=namespace,workflow_execution=WorkflowExecution(workflow_id=workflow_id,run_id=run_id)),
+                timeout=timeout)
+        except RPCError as error:
+            if error.status!=RPCStatusCode.NOT_FOUND:raise
+        try:
+            await handle.describe(rpc_timeout=timeout)
+        except RPCError as error:
+            if error.status==RPCStatusCode.NOT_FOUND:continue
+            raise
+        raise ErasurePending('DAG History deletion pending')
+
+    async for _ in client.list_workflows(
+            query="WorkflowId = '"+workflow_id+"'",rpc_timeout=timeout):
+        raise ErasurePending('DAG visibility deletion pending')
 
 
 def guard(store,session):
@@ -114,6 +135,8 @@ def scrub(store,session):
             for table in ('temporal_agent_processes','temporal_dag_operations'):
                 if conn.execute('SELECT 1 FROM sqlite_master WHERE name=?',(table,)).fetchone():
                     conn.execute(f'DELETE FROM {table} WHERE graph_id=?',(key,))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_dag_gc'").fetchone():
+                conn.execute('DELETE FROM temporal_dag_gc WHERE graph_id=?',(key,))
             conn.execute('DELETE FROM temporal_agent_graphs WHERE id=?',(key,))
 
 

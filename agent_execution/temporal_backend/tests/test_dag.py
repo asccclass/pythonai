@@ -452,6 +452,68 @@ def test_even_finished_dag_keeps_root_budget_out_of_ordinary_retention(setup):
         assert not eligible(conn,{'owner':s.owner,'task_id':'root'},time.time())
 
 
+def test_dag_retention_deletes_closed_history_and_fences_new_lifecycle(setup,monkeypatch):
+    import time
+    from agent_execution.temporal_backend.admission import owner_key
+    from agent_execution.temporal_backend.dag_retention import candidates,collect
+    from agent_execution.temporal_backend.dag_lifecycle import Lifecycle
+    from temporalio.service import RPCError,RPCStatusCode
+
+    s=setup
+    node=submit(s)
+    result(s,node)
+    s.graphs.seal(group(s)['id'])
+    assert s.graphs.snapshot(group(s)['id'])['done']
+    graph_id=group(s)['id']
+    before=time.time()-30*86400
+    with closing(s.store.connect()) as conn,conn:
+        conn.execute("UPDATE tasks SET state='completed',lease_owner=NULL,lease_until=NULL WHERE owner=? AND id='root'",(s.owner,))
+        conn.execute('UPDATE temporal_agent_graphs SET updated=? WHERE id=?',(before-10,graph_id))
+        from agent_execution.coordinator import node_task_owner
+        conn.execute('''INSERT INTO tasks(owner,id,goal,criteria,state,phase,checkpoint,episode,reply,
+            lease_owner,lease_until,attempts,updated) VALUES(?,?,?,'{"version":1,"checks":[]}',
+            'completed','done','{}',0,'done',NULL,NULL,1,?)''',
+            (node_task_owner(s.store.get(s.owner,node)['payload']),'subagent:'+node,'goal',time.time()))
+    digest=owner_key(s.owner)
+    assert candidates(s.graphs,digest,before)==[graph_id]
+
+    class Client:
+        def __init__(self,open_run=False):self.open_run=open_run
+        async def list_workflows(self,**kwargs):
+            if self.open_run:yield NS(run_id='still-open')
+        namespace='pythonai-dev'
+        def get_workflow_handle(self,*args,**kwargs):return Handle(self.open_run)
+    class Handle:
+        def __init__(self,open_run):self.open_run=open_run
+        async def describe(self,**kwargs):
+            if self.open_run:return NS(run_id='still-open',status=WorkflowExecutionStatus.RUNNING)
+            raise RPCError('not found',RPCStatusCode.NOT_FOUND,b'')
+    async def connect_open(_settings):return Client(open_run=True)
+    async def connect_closed(_settings):return Client()
+    from temporalio.client import WorkflowExecutionStatus
+    from agent_execution.temporal_backend.erasure import ErasurePending
+    monkeypatch.setattr('agent_execution.temporal_backend.client.connect',connect_open)
+    with pytest.raises(ErasurePending,match='still open'):
+        asyncio.run(collect(s.graphs,graph_id,digest,before))
+    with closing(s.store.connect()) as conn:
+        assert conn.execute('SELECT state FROM temporal_dag_gc WHERE graph_id=?',(graph_id,)).fetchone()[0]=='pending'
+    with closing(s.store.connect()) as conn,conn:
+        conn.execute('UPDATE temporal_agent_graphs SET updated=? WHERE id=?',(time.time(),graph_id))
+    assert candidates(s.graphs,digest,before)==[graph_id], 'pending GC must remain resumable after the original age cutoff'
+    with pytest.raises(PermissionError,match='History retention'):
+        Lifecycle(s.graphs).request(graph_id,node,'archive')
+    monkeypatch.setattr('agent_execution.temporal_backend.client.connect',connect_closed)
+    receipt=asyncio.run(collect(s.graphs,graph_id,digest,before))
+    assert receipt['state']=='history_collected'
+    with closing(s.store.connect()) as conn:
+        row=conn.execute('SELECT remote_deleted FROM temporal_agent_graphs WHERE id=?',(graph_id,)).fetchone()
+        gc=conn.execute('SELECT state,receipt FROM temporal_dag_gc WHERE graph_id=?',(graph_id,)).fetchone()
+        assert row['remote_deleted']==1 and gc['state']=='completed'
+        assert json.loads(gc['receipt'])['history']=='not_found_verified'
+    with pytest.raises(PermissionError,match='History retention'):
+        Lifecycle(s.graphs).request(graph_id,node,'archive')
+
+
 def test_dag_erasure_requires_remote_proof_and_keeps_hashed_receipt(setup):
     from agent_execution.workspace_lifecycle import LifecycleStore
     from agent_execution.temporal_backend.dag_erasure import scrub,receipts
@@ -472,6 +534,47 @@ def test_dag_erasure_requires_remote_proof_and_keeps_hashed_receipt(setup):
         assert proof and key not in json.dumps(proof)
         assert not conn.execute('SELECT 1 FROM temporal_agent_graphs').fetchone()
     with pytest.raises(PermissionError):submit(s)
+
+
+def test_dag_history_erasure_deletes_every_continue_as_new_run():
+    from datetime import timedelta
+    from types import SimpleNamespace as NS
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError,RPCStatusCode
+    from agent_execution.temporal_backend.dag_erasure import delete_history
+    from agent_execution.temporal_backend.erasure import ErasurePending
+
+    class Client:
+        def __init__(self):
+            self.runs={'old-run':WorkflowExecutionStatus.COMPLETED,
+                       'current-run':WorkflowExecutionStatus.RUNNING}
+            self.deleted=[]
+            self.workflow_service=NS(delete_workflow_execution=self.delete)
+        async def list_workflows(self,query,**kwargs):
+            for run_id in list(self.runs):yield NS(run_id=run_id)
+        def get_workflow_handle(self,workflow_id,run_id=None):
+            return Handle(self,run_id or 'current-run')
+        async def delete(self,request,timeout):
+            run_id=request.workflow_execution.run_id
+            self.deleted.append(run_id)
+            self.runs.pop(run_id,None)
+
+    class Handle:
+        def __init__(self,client,run_id):self.client,self.run_id=client,run_id
+        async def describe(self,**kwargs):
+            if self.run_id not in self.client.runs:
+                raise RPCError('not found',RPCStatusCode.NOT_FOUND,b'')
+            return NS(run_id=self.run_id,status=self.client.runs[self.run_id])
+        async def terminate(self,*args,**kwargs):
+            self.client.runs[self.run_id]=WorkflowExecutionStatus.TERMINATED
+
+    client=Client()
+    with pytest.raises(ErasurePending,match='still open'):
+        asyncio.run(delete_history(client,'test-namespace','pythonai/dag/example',timedelta(seconds=1)))
+    asyncio.run(delete_history(client,'test-namespace','pythonai/dag/example',timedelta(seconds=1),
+                               terminate_running=True))
+    assert client.deleted==['current-run','old-run']
+    assert client.runs=={}
 
 
 def test_frozen_session_plan_includes_exact_dag_targets(setup):

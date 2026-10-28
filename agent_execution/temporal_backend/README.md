@@ -231,12 +231,30 @@ its persisted graph snapshot. It continues with the same opaque `graph_id` only 
 child handle is settled. The next run re-reads SQLite as authority for graph state, root
 budget, idempotency records, and cancellation; active children are never orphaned by parent
 Continue-As-New. The SDK control exception is explicitly re-raised instead of entering the
-DAG stop/fence path.
+DAG stop/fence path. Session erasure now enumerates every visible run for each DAG Workflow ID,
+so prior runs in a Continue-As-New chain are verified and deleted too.
+
+`dag_retention_cli` adds bounded, owner-scoped History retention for completed DAGs. It defaults
+to dry-run and only selects sealed graphs past the requested age with completed roots/nodes,
+drained local processes and leases, and no unresolved lifecycle operations. `--apply` persists
+a target digest before deleting histories and fences new lifecycle operations; RPC uncertainty
+leaves a resumable pending intent. Local node results, worktrees and SQLite artifacts are kept.
+Their local cleanup remains under the explicit TP18 retention/session-erasure flow.
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_retention_cli --owner-hash <sha256> --days 30 --limit 100
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.dag_retention_cli --owner-hash <sha256> --days 30 --limit 100 --apply
+```
 
 Per-artifact (2 MiB), total ledger/artifact storage (256 MiB), and operation-count
-(100,000) limits remain enforced. TP18 retention/erasure owns cleanup after references drain.
-Automatic DAG GC and isolated real-Service run-chain/pressure validation remain outstanding;
-this is a partial TP23 implementation, not a completed capacity-governance milestone.
+(100,000) limits remain enforced. This operator-driven History cleanup does not remove local
+results, worktrees, backups, or archived histories. Isolated real-Service run-chain/retention
+validation and broader artifact pressure validation remain outstanding; TP23 is still partial.
+
+Verification on 2026-10-28: the Temporal backend suite passed **495 tests** with **72 skipped**;
+the full venv suite passed **1466 tests**, with **81 skipped** and **95 subtests passed**.
+The remaining warning is the existing Starlette/AnyIO deprecation. Real Service/Worker cases
+were skipped because `PYTHONAI_TEMPORAL_TEST_CLI` was not configured.
 
 ## 目前入口的限定接入驗收（TP11.7）
 

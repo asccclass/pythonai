@@ -154,6 +154,9 @@ class Lifecycle:
         graph = self.graphs.get(graph_id, operator=True)
         with closing(self.store.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='temporal_dag_gc'").fetchone() and conn.execute(
+                    "SELECT 1 FROM temporal_dag_gc WHERE graph_id=?", (graph_id,)).fetchone():
+                raise PermissionError('DAG is fenced by completed or pending History retention')
             self.graphs.authority(conn, graph, admission=False)
             node = self.store.get(graph['owner'], node_id)
             if node['root'] != graph['root']:

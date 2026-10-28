@@ -91,7 +91,7 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP20 | 舊唯讀排程 preview／paused staging／cutover／rollback、UTC fence／DST／離線重入；驗收見 12.11 |
 | TP21 | 已完成 opt-in DAG 父／子 Workflow、shared budget、獨立 Reviewer 與取消／刪除整合，見 12.12 |
 | TP22 | 已完成明確 lifecycle 意圖、guarded merge 取消保護、worktree 封存／還原及孤兒治理，見 12.14 |
-| TP23 | Continue-As-New 安全切換已部分實作；自動 DAG GC 與 Service/Worker run-chain 驗收待完成 |
+| TP23 | Continue-As-New 與 dry-run-first DAG History retention 已部分實作；真實 Service run-chain/GC 與壓力驗收待完成 |
 | TP24–TP30 | 待辦；History/artifact 完整治理、版本、正式部署、多機及其他副作用能力尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
@@ -871,11 +871,18 @@ child handle 已 settled 才從 main Workflow 呼叫 Continue-As-New，並以原
 去重及取消狀態維持唯一權威；不把它們複製到 History，也不在新 run 重建仍在執行的 Child。
 Continue-As-New 的 control exception 會被原樣傳回 Temporal，不觸發 DAG stop/fence 路徑。
 
-既有每份 artifact 2 MiB、ledger/artifact 合計 256 MiB 與 operation 100,000 筆上限仍生效；
-TP18 retention/erasure 仍負責引用排空後清理，TP23 尚未增加自動 DAG GC。審批／排程事件去重
-由持久化 outbox／ledger 管理，這些有限執行目前不使用 Continue-As-New。已新增觸發條件及
-新 run command-path 單元回歸；尚待隔離真實 Service/Worker 的 run-chain、artifact 壓力／GC
-邊界與完整回歸，因此本節只記錄部分交付，不代表 TP23 完成。
+新增 `dag_retention_cli`：預設 dry-run、owner hash／天數／批次上限範圍檢查，僅選已封存且
+完成、root/node 成功、程序與 lease 排空、無未決 lifecycle 的 DAG；apply 先保存目標摘要並
+fence 後續 lifecycle 操作，逐一核對刪除整個 run chain 的 History 與 visibility。未知 RPC
+保留可續跑 intent，不清除本機 node 結果、worktree、artifact、備份或 archival。
+TP18 的 session/retention 清理仍是本機內容刪除權威。審批／排程事件去重由持久化 outbox／
+ledger 管理，這些有限執行目前不使用 Continue-As-New。真實 Service run-chain/GC 與容量壓力
+驗收尚未完成，因此 TP23 仍未結案。
+
+本輪驗證：Temporal backend **495 passed、72 skipped**；完整 venv pytest **1466 passed、
+81 skipped、95 subtests passed**，唯一為既有 Starlette／AnyIO deprecation warning；`pip check`、
+compileall、`git diff --check` 通過。需要 Temporal CLI 的 Service/Worker 案例因未設定
+`PYTHONAI_TEMPORAL_TEST_CLI` 而 skip，故不宣稱真實 run-chain retention 驗收完成。
 
 ## 15. 官方參考資料
 
