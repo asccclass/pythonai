@@ -25,7 +25,7 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25 已完成隔離 trace hierarchy／redaction 驗證，metrics／告警／poller readiness 尚待完成；TP26 已完成隔離 TaskStore＋Temporal Service backup/restore 驗證，正式服務選型／原生備份／還原仍待驗；TP27 已有 8-run 隔離 canary（2-slot Worker）受控測量，實際放量／長時觀察尚待驗；TP28–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 固定 V1/V2/V3 replay fixture、舊 Worker queue rollback 及隔離 Service 的跨程序既有 V1 run 接手已完成；正式部署包回滾與生產環境排空仍待驗；TP25 已完成隔離 trace hierarchy／redaction 驗證，metrics／告警／poller readiness 尚待完成；TP26 已完成隔離 TaskStore＋Temporal Service backup/restore 驗證，正式服務選型／原生備份／還原仍待驗；TP27 已有 8-run 隔離 canary（2-slot Worker）受控測量，實際放量／長時觀察尚待驗；TP28 尚無 frozen/Linux 實機驗證；TP29 multi-host 保持關閉；TP30 僅有只讀本機 drain inventory，legacy removal 尚未授權**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-27）
 
@@ -96,7 +96,9 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP25 | 部分完成：Temporal Activity→model attempt redacted trace correlation 已經隔離 Service 驗證；metrics export、provider spans、告警投遞、poller-aware readiness 尚未完成 |
 | TP26 | 部分完成：隔離 development Service＋TaskStore 備份至新目錄、還原後查回／replay 已驗證；Cloud／自管選型、正式服務原生備份與生產還原演練未做 |
 | TP27 | 部分完成：8-run 隔離 Service canary 0 failure，History schedule-to-start p95 1.086083 秒；正式壓測、逐 owner 放量及 7 日觀察未做 |
-| TP28–TP30 | 待辦；跨平台包裝、多機共享資料面及 legacy 排空尚未交付 |
+| TP28 | 待辦：repo 沒有 frozen-app build spec／PyInstaller；目前只有 Windows venv 與 CLI 驗證，沒有 Linux／frozen binary 證據 |
+| TP29 | 未交付：Settings 僅允許 loopback、state/artifact/workspace 為 same-host；禁止遠端 Worker，直到集中化資料與路由完成 |
+| TP30 | 部分完成：新增只讀 drain inventory／無 identifiers 測試；沒有刪除輪詢／旗標，須等 TP27 生產放量及外部 drain 證明 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -943,6 +945,12 @@ readiness，因此 TP25 仍部分完成，這些功能補齊後才可算 milesto
 TP27 受控 canary 在隔離 CLI Service 使用 8 個新 bridge run、2 個 Activity slots；以 History
 排除 provider latency 後計算 queue wait，8/8 completed、0 failure、p95 1.086083 秒，低於計畫
 2 秒停止門檻。這不是壓力測試或正式逐 owner 放量；7 日觀察、告警及生產回滾仍未驗收。
+
+TP30 新增 `drain_status` 唯讀報告與兩項契約測試（**2 passed**）：按本機 TaskStore 統計 legacy/
+unbound task、V1 bridge 與 Temporal submission 的非終態數，以及 pending cancellation delivery；
+不回傳識別值、不修改 DB，而且即使本機數量皆為零，仍固定輸出不得移除 Worker，並列出必需的遠端
+execution、schedule、其他 Worker fleet 與 rollback-window 檢查。TP28 本輪發現 repo/venv 沒有
+PyInstaller/frozen packaging 入口；TP29 Settings 維持 loopback-only，這兩項都沒有冒充實機完成。
 
 ## 15. 官方參考資料
 

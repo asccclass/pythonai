@@ -351,6 +351,28 @@ uncertain side-effect increase, replay error, sustained queue latency above targ
 capacity trend outside agreed limits. Production rollout still requires per-owner allowlisting, durable
 telemetry/alert delivery, a tested rollback window, and at least seven days or one full schedule cycle.
 
+### TP28–TP30 boundary and legacy inventory
+
+No PyInstaller/frozen-app build spec or frozen executable is present in this repository, and PyInstaller
+is not installed in the project venv. Linux/Windows frozen launch parity therefore remains unverified;
+do not treat a normal venv smoke test as packaged-app evidence. Temporal Settings also deliberately
+reject non-loopback addresses, and the Worker uses same-host SQLite/workspace state. Multi-host Worker
+routing must remain disabled until TP29 centralizes authoritative storage, artifacts, secrets, and
+workspace routing.
+
+For TP30, a read-only local inventory is available:
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.temporal_backend.drain_status
+```
+
+It reports only counts for SQLite/unbound task states, Temporal submission states/protocols, unresolved
+V1 bridge submissions, and pending cancellation deliveries. It opens the configured TaskStore in
+read-only mode, emits no owner/task/submission identifiers, and never returns `safe_to_remove_legacy_worker=true`.
+Even empty local counts cannot prove remote executions, schedules, other Worker fleets, unmanaged
+legacy tasks, or expiry of the rollback retention window. TP30 must wait for TP27 production evidence
+and a complete external inventory; no legacy polling or flags have been removed.
+
 Regenerate fixtures only from the controlled local Service tests:
 
 ```powershell
