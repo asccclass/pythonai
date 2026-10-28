@@ -44,5 +44,3 @@ def save(name, history, submission_id):
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + '\n'
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     (FIXTURE_DIR / (name + '.json')).write_text(encoded, encoding='utf-8')
-
-
