@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import tempfile
 
 
 def snapshot(path=None):
@@ -68,3 +69,23 @@ def prometheus(path=None):
     )
     return ''.join(f'# HELP {name} {help_text}\n# TYPE {name} gauge\n{name} {value}\n'
                    for name, help_text, value in metrics)
+
+
+def write_prometheus(destination, path=None):
+    """Atomically replace an explicitly selected textfile-collector .prom file."""
+    target = Path(destination).expanduser().absolute()
+    if target.suffix != '.prom' or target.is_symlink() or not target.parent.is_dir():
+        raise ValueError('Destination must be a .prom file in an existing directory, not a symlink')
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n',
+                dir=target.parent, prefix=f'.{target.name}.', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(prometheus(path))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        return {'written': True, 'format': 'prometheus', 'scope': 'local retained trace window'}
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

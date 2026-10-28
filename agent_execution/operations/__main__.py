@@ -7,11 +7,13 @@ def main():
     parser=argparse.ArgumentParser(description='Local operations; stop workers before database migration')
     commands=parser.add_subparsers(dest='action',required=True)
     for name in ('readiness','doctor','traces','syntax','benchmark'):commands.add_parser(name)
-    metrics=commands.add_parser('metrics');metrics.add_argument('--format',choices=('json','prometheus'),default='json')
+    metrics=commands.add_parser('metrics');metrics.add_argument('--format',choices=('json','prometheus'),default='json');metrics.add_argument('--output')
     backup=commands.add_parser('backup');backup.add_argument('--database',action='append',required=True);backup.add_argument('--destination',required=True)
     restore=commands.add_parser('restore');restore.add_argument('--source',required=True);restore.add_argument('--destination',required=True)
     migrate=commands.add_parser('migrate');migrate.add_argument('--kind',required=True);migrate.add_argument('--database',required=True);migrate.add_argument('--destination',required=True);migrate.add_argument('--offline',action='store_true')
     args=parser.parse_args()
+    if args.action=='metrics' and args.output and args.format!='prometheus':
+        parser.error('--output requires --format prometheus')
     if args.action in {'doctor','readiness'}:
         from .doctor import readiness,dependency_doctor
         result=readiness() if args.action=='readiness' else dependency_doctor()
@@ -19,8 +21,9 @@ def main():
         from .tracing import TraceStore
         store=TraceStore();result={'summary':store.summary(),'spans':store.list()}
     elif args.action=='metrics':
-        from .metrics import prometheus,snapshot
-        result=prometheus() if args.format=='prometheus' else snapshot()
+        from .metrics import prometheus,snapshot,write_prometheus
+        if args.output:result=write_prometheus(args.output)
+        else:result=prometheus() if args.format=='prometheus' else snapshot()
     elif args.action=='syntax':
         from .syntax import check_syntax
         result=check_syntax(Path.cwd())

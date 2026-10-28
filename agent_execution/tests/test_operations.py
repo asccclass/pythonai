@@ -104,6 +104,18 @@ class OperationsTests(unittest.TestCase):
         self.assertNotIn('owner', exposition)
         self.assertNotIn('task_id', exposition)
 
+    def test_prometheus_textfile_is_atomically_written_to_explicit_prom_path(self):
+        from agent_execution.operations.metrics import write_prometheus
+        with patch.dict(os.environ, {'AGENT_TRACE_DB': str(self.root/'missing.db')}):
+            destination=self.root/'collector'/'pythonai.prom'
+            destination.parent.mkdir()
+            result=write_prometheus(destination)
+        self.assertTrue(result['written'])
+        self.assertIn('agent_execution_trace_store_available 0',destination.read_text(encoding='utf-8'))
+        with self.assertRaises(ValueError):write_prometheus(self.root/'bad.txt')
+        with patch('agent_execution.operations.metrics.Path.is_symlink',return_value=True):
+            with self.assertRaises(ValueError):write_prometheus(destination)
+
     def test_backup_restore_preserves_data_and_never_overwrites_or_accepts_tampering(self):
         path=self.database();destination=self.root/'backup';manifest=backup([path],destination)
         with closing(sqlite3.connect(path)) as conn,conn:conn.execute("INSERT INTO data VALUES('later')")

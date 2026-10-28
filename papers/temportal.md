@@ -941,10 +941,10 @@ operations readiness bridge 重查成功，**1 passed**。metrics admin API 聚�
 label；operations 組更新為 **12 passed、5 subtests passed**。Provider spans、告警投遞與正式觀測仍缺，
 TP25 尚未全部完成。
 
-追加 Prometheus textfile exposition：`operations metrics --format prometheus` 僅輸出無 label 的
-retained-window gauges，可供外部 textfile collector wrapper 讀取；不包含 scrape endpoint、collector
-設定或 alert delivery。operations 回歸更新為 **12 passed、5 subtests passed**，仍須隔離 Service live
-poller 測試與外部告警／正式觀測驗收。
+追加 Prometheus textfile exposition：`operations metrics --format prometheus` 輸出無 label 的
+retained-window gauges；`--output <file.prom>` 會在既有目錄內原子替換輸出檔，供已設定的外部
+textfile collector 讀取。此功能不含 scrape endpoint、collector 設定或 alert delivery。operations
+回歸更新為 **13 passed、5 subtests passed**，仍須隔離 Service live poller 測試與外部告警／正式觀測驗收。
 
 同時新增 TP26 隔離 restore drill：停止 Worker／development Service 後，以 SQLite backup API
 保存 TaskStore 與 Temporal Service DB；還原至新路徑、啟動還原後的 Service，原 workflow result
