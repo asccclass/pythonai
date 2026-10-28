@@ -102,13 +102,22 @@ def looks_like_path_argument(value: str) -> bool:
     return path.is_absolute() or value.startswith(("..", ".", "~")) or "/" in value or "\\" in value
 
 
-def read_file(path: str | Path) -> str:
+def read_file(path: str | Path, offset: int = 0, limit: int | None = None) -> str:
+    if type(offset) is not int or offset < 0 or (limit is not None and (type(limit) is not int or not 1 <= limit <= 4096)):
+        raise ValueError('read_file requires offset >= 0 and limit between 1 and 4096 characters')
     try:
         target=resolve_workspace_path(path)
         from agent_execution.workspace_lifecycle import LifecycleStore
         LifecycleStore().assert_access(target)
-        with open(target, "r", encoding="utf-8") as f:
-            return f.read()
+        with open(target, "r", encoding="utf-8", newline='' if offset or limit is not None else None) as f:
+            if offset:
+                remaining = offset
+                while remaining:
+                    skipped = f.read(min(remaining,4096))
+                    if not skipped:
+                        return ''
+                    remaining -= len(skipped)
+            return f.read(limit) if limit is not None else f.read()
     except FileNotFoundError:
         print(f"File not found: {path}")
     except Exception as e:
@@ -477,7 +486,11 @@ TOOLS_SCHEMAS = [
                         "path": {
                             "type": "string",
                             "description": load_tool_text('read_file/parameters/properties/path/description')
-                        }
+                        },
+                        "offset": {"type":"integer", "minimum":0,
+                                   "description":load_tool_text('read_file/parameters/properties/offset/description')},
+                        "limit": {"type":"integer", "minimum":1, "maximum":4096,
+                                  "description":load_tool_text('read_file/parameters/properties/limit/description')}
                     },
                     "required": ["path"]
                 }

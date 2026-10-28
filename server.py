@@ -180,6 +180,11 @@ def run_agent(
         task_evaluator=copy(task_evaluator)
         task_evaluator.workspace_root=workspace_root()
     if hook_manager is None:hook_manager=default_hook_manager()
+    from agent_execution.companion.attachment_translation import eligible, run as translate_attachment
+    if eligible(messages,step_controller):
+        return translate_attachment(messages,client=get_client(),model=OLLAMA_MODEL,resume_state=resume_state,
+            event_callback=event_callback,check_cancelled=check_cancelled,task_evaluator=task_evaluator,
+            hook_manager=hook_manager,memory=memory,episode_id=episode_id)
     resume_state = resume_state or {}
     from agent_execution.turn_control.environment import refresh_environment
     from agent_configuration import refresh_instructions, tool_schemas

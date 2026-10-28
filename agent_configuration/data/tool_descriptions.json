@@ -4,7 +4,9 @@
   },
   "read_file": {
     "/description": "Read a text file inside the Agent workspace and return its contents.",
-    "/parameters/properties/path/description": "The workspace-relative path to the file to read"
+    "/parameters/properties/path/description": "The workspace-relative path to the file to read",
+    "/parameters/properties/offset/description": "Skip this many Unicode characters, starting at zero. Use for large uploaded text references.",
+    "/parameters/properties/limit/description": "Read at most this many Unicode characters (1..4096); use 1024 for long attachments and advance offset until all required content is read."
   },
   "list_files": {
     "/description": "List files and directories inside the Agent workspace.",

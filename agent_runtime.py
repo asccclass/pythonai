@@ -38,7 +38,6 @@ TEXT_ATTACHMENT_TYPES = {
     "application/x-yaml",
     "text/csv",
 }
-MAX_TEXT_ATTACHMENT_CHARS = 12000
 MAX_BINARY_ATTACHMENT_BASE64_CHARS = 12000
 
 
@@ -290,12 +289,15 @@ def build_user_message(user_input: str, attachments: list[Any] | tuple[Any, ...]
         return {"role": "user", "content": user_input}
 
     content: list[dict[str, Any]] = [{"type": "text", "text": user_input}]
+    from agent_execution.companion.text_attachments import traditional_translation
+    from agent_execution.policy import current_context
     for attachment in attachments:
-        content.extend(attachment_content_parts(attachment))
+        content.extend(attachment_content_parts(attachment, stage_translation=(
+            current_context().source=='websocket' and traditional_translation(user_input))))
     return {"role": "user", "content": content}
 
 
-def attachment_content_parts(attachment: Any) -> list[dict[str, Any]]:
+def attachment_content_parts(attachment: Any, stage_translation=False) -> list[dict[str, Any]]:
     filename = str(getattr(attachment, "filename", "uploaded-file") or "uploaded-file")
     content_type = str(
         getattr(attachment, "content_type", None)
@@ -312,8 +314,9 @@ def attachment_content_parts(attachment: Any) -> list[dict[str, Any]]:
         ]
     if content_type.startswith("text/") or content_type in TEXT_ATTACHMENT_TYPES:
         decoded = decode_text_attachment(data)
-        if len(decoded) > MAX_TEXT_ATTACHMENT_CHARS:
-            decoded = decoded[:MAX_TEXT_ATTACHMENT_CHARS] + "\n[truncated]"
+        from agent_execution.companion.text_attachments import INLINE_BYTES, stage_text
+        if stage_translation or len(decoded.encode('utf-8')) > INLINE_BYTES:
+            return [stage_text(filename, decoded)]
         return [
             {
                 "type": "text",
