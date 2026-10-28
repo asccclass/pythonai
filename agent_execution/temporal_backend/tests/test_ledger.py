@@ -271,6 +271,19 @@ def test_capacity_failure_after_execution_remains_uncertain(ledger, monkeypatch,
     assert rows(ledger, 'SELECT * FROM temporal_artifacts') == []
 
 
+def test_accumulated_artifact_pressure_preserves_prior_results_and_fences_new_result(ledger,monkeypatch):
+    completed(ledger)
+    prior=rows(ledger,'SELECT id,data FROM temporal_artifacts ORDER BY id')
+    monkeypatch.setenv('AGENT_TEMPORAL_LEDGER_STORAGE_BYTES','5000')
+    execute=Mock(return_value={'output':'x'*5000})
+    with pytest.raises(CapacityError):
+        ledger.run('next-step','tool',{},execute)
+    execute.assert_called_once()
+    assert ledger.get('step')['state']=='completed'
+    assert ledger.get('next-step')['state']=='uncertain'
+    assert rows(ledger,'SELECT id,data FROM temporal_artifacts ORDER BY id')==prior
+
+
 def test_operation_count_limit_rejects_before_execution(ledger, monkeypatch):
     monkeypatch.setenv('AGENT_TEMPORAL_OPERATION_LIMIT', '1')
     ledger.prepare('first', 'tool', {})

@@ -224,7 +224,7 @@ TP22 新增 31 項（25 單元／契約、6 真實 Service）全數通過；最�
 真實 Service／Worker 與受控 Reviewer 結果；非 Windows 的破壞性清理、正式 provider、
 Docker／多機或正式部署未實機驗收。
 
-## TP23：DAG History Continue-As-New（部分交付）
+## TP23：DAG History Continue-As-New（隔離 Service 驗收完成）
 
 `CoordinatorDAG` checks the SDK's `is_continue_as_new_suggested()` hint after reconciling
 its persisted graph snapshot. It continues with the same opaque `graph_id` only when every
@@ -247,14 +247,22 @@ Their local cleanup remains under the explicit TP18 retention/session-erasure fl
 ```
 
 Per-artifact (2 MiB), total ledger/artifact storage (256 MiB), and operation-count
-(100,000) limits remain enforced. This operator-driven History cleanup does not remove local
-results, worktrees, backups, or archived histories. Isolated real-Service run-chain/retention
-validation and broader artifact pressure validation remain outstanding; TP23 is still partial.
+(100,000) limits remain enforced. An accumulated-capacity regression fills the ledger with prior
+results, then confirms that a later result is fenced as uncertain without deleting earlier artifacts.
+The isolated Service test lowers the History suggestion threshold, observes at least three runs
+under the same Workflow ID, and verifies one child execution plus stable SQLite budget state across
+rotation. A separate real-Service retention test confirms History and visibility deletion after
+pending retries while preserving local node results. This operator-driven History cleanup does not
+remove local results, worktrees, backups, or archived histories. Production load trends and canary
+soak remain TP27 operational acceptance; TP23 controlled acceptance is complete.
 
-Verification on 2026-10-28: the Temporal backend suite passed **495 tests** with **72 skipped**;
-the full venv suite passed **1466 tests**, with **81 skipped** and **95 subtests passed**.
-The remaining warning is the existing Starlette/AnyIO deprecation. Real Service/Worker cases
-were skipped because `PYTHONAI_TEMPORAL_TEST_CLI` was not configured.
+Verification on 2026-10-28: with the local Temporal CLI 1.9.1 (embedded Server 1.32.0), the
+Temporal backend suite passed **565 tests** with **4 skipped** and one existing Starlette/AnyIO
+deprecation warning. The DAG Service/Worker module passed **15 tests**; the strengthened three-run
+chain and accumulated-pressure test passed in the subsequent focused rerun. The remaining skipped
+cases require separate provider or write-live opt-in. The final full venv run passed **1467 tests**,
+with **83 skipped** and **95 subtests passed**; its only warning was the same existing deprecation.
+`pip check`, `compileall`, and `git diff --check` passed.
 
 ## 目前入口的限定接入驗收（TP11.7）
 

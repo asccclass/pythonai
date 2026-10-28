@@ -3,6 +3,7 @@ import asyncio
 from contextlib import closing,asynccontextmanager
 from datetime import timedelta
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -13,7 +14,7 @@ pytest.importorskip('temporalio')
 from temporalio import activity
 from temporalio.worker import Worker,Replayer
 from temporalio.client import WorkflowFailureError,WorkflowExecutionStatus
-from agent_execution.temporal_backend.tests.test_integration import configured,server
+from agent_execution.temporal_backend.tests.test_integration import LocalServer,configured,server
 from agent_execution.temporal_backend.tests.test_dag import setup,group,submit,other_root
 from agent_execution.temporal_backend.dag import Graphs,reconcile
 from agent_execution.temporal_backend.dag_activities import snapshot,fence,stop,execute
@@ -47,8 +48,92 @@ async def eventually(predicate,seconds=45):
     raise AssertionError('DAG condition timed out')
 
 
+@pytest.fixture
+def continue_as_new_server(configured,monkeypatch):
+    binary=os.environ.get('PYTHONAI_TEMPORAL_TEST_CLI')
+    if not binary:pytest.skip('Set PYTHONAI_TEMPORAL_TEST_CLI for real service tests')
+    directory=configured/'.system_generated'/'continue-as-new-service'
+    directory.mkdir()
+    instance=LocalServer(str(Path(binary).resolve()),directory)
+    instance.dynamic_config=('limit.historyCount.suggestContinueAsNew=20',)
+    monkeypatch.setenv('AGENT_TEMPORAL_ADDRESS',instance.address)
+    instance.start()
+    try:yield instance
+    finally:instance.stop()
+
+
 def configure_index(s,monkeypatch):
     monkeypatch.setenv('AGENT_CODE_INDEX_DIR',str(s.root/'code-index'))
+
+
+def test_real_continue_as_new_rotates_dag_run_and_preserves_graph(continue_as_new_server,setup):
+    s=setup
+    server=continue_as_new_server
+    node=submit(s)
+    key=group(s)['id']
+    async def exercise():
+        client=await server.client()
+        async with worker(client,s):
+            handle=await s.graphs.dispatch(key,client)
+            query="WorkflowId = '"+s.graphs.workflow_id(key)+"'"
+            deadline=time.monotonic()+45
+            run_ids=set()
+            while time.monotonic()<deadline and len(run_ids)<3:
+                run_ids={item.run_id async for item in client.list_workflows(query=query)}
+                if len(run_ids)<3:await asyncio.sleep(.2)
+            assert len(run_ids)>=3, (server.directory/'server.log').read_text(errors='replace')
+            assert group(s)['state']=='running'
+            task=s.store.get(s.owner,node)
+            assert task['state']=='completed' and task['attempts']==1
+            budget=s.budget.snapshot()
+            await asyncio.sleep(.5)
+            assert s.budget.snapshot()==budget
+            assert s.store.get(s.owner,node)['attempts']==1
+            with closing(s.store.connect()) as conn:
+                assert conn.execute('SELECT count(*) FROM temporal_agent_graphs WHERE id=?',(key,)).fetchone()[0]==1
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError):await asyncio.wait_for(handle.result(),30)
+        assert group(s)['state'] in {'cancelling','cancelled'}
+    asyncio.run(exercise())
+
+
+def test_real_dag_retention_deletes_history_and_preserves_local_results(server,setup,monkeypatch):
+    s=setup
+    configure_index(s,monkeypatch)
+    node=submit(s,'planner','private retention result')
+    key=group(s)['id']
+    s.graphs.seal(key)
+    async def exercise():
+        client=await server.client()
+        async with worker(client,s):
+            handle=await s.graphs.dispatch(key,client)
+            assert await asyncio.wait_for(handle.result(),90)=={'graph_id':key}
+        assert group(s)['state']=='completed'
+        with closing(s.store.connect()) as conn:
+            root=conn.execute('SELECT lease_owner FROM tasks WHERE owner=? AND id=?',(s.owner,'root')).fetchone()
+        s.store.tasks.finish(s.owner,'root',root['lease_owner'],'completed','root finished')
+        from agent_execution.temporal_backend.admission import owner_key
+        from agent_execution.temporal_backend.dag_retention import candidates,collect
+        from agent_execution.temporal_backend.erasure import ErasurePending
+        owner_hash=owner_key(s.owner)
+        before=time.time()-60
+        with closing(s.store.connect()) as conn,conn:
+            conn.execute('UPDATE temporal_agent_graphs SET updated=0 WHERE id=?',(key,))
+        assert candidates(s.graphs,owner_hash,before)==[key]
+        deadline=time.monotonic()+60
+        while True:
+            try:
+                outcome=await collect(s.graphs,key,owner_hash,before)
+                break
+            except ErasurePending:
+                if time.monotonic()>=deadline:raise
+                await asyncio.sleep(.5)
+        assert outcome['state']=='history_collected'
+        assert s.store.get(s.owner,node)['state']=='completed'
+        assert group(s)['remote_deleted']==1
+        query="WorkflowId = '"+s.graphs.workflow_id(key)+"'"
+        assert not [item async for item in client.list_workflows(query=query)]
+    asyncio.run(exercise())
 
 
 def test_real_dag_planner_coder_reviewer_shared_budget_replay_and_guarded_merge(server,setup,monkeypatch):

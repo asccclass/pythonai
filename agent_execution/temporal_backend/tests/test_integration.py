@@ -51,12 +51,16 @@ class LocalServer:
         self.port = frontend_port()
         self.address = f'127.0.0.1:{self.port}'
         self.process = None
+        self.dynamic_config = ()
 
     def start(self):
         self.log = (self.directory / 'server.log').open('ab')
-        self.process = subprocess.Popen([
+        command = [
             self.binary, 'server', 'start-dev', '--ip', '127.0.0.1', '--port', str(self.port),
-            '--headless', '--namespace', 'pythonai-dev', '--db-filename', str(self.directory / 'temporal.db')],
+            '--headless', '--namespace', 'pythonai-dev', '--db-filename', str(self.directory / 'temporal.db')]
+        for value in self.dynamic_config:
+            command.extend(['--dynamic-config-value', value])
+        self.process = subprocess.Popen(command,
             stdout=self.log, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
 
