@@ -25,7 +25,7 @@ Temporal 在本專案是「可選、預設關閉的耐久工作流後端」，�
 * 預算與取消：沿用既有 task budget、deadline、角色與工具 allowlist；Temporal 不會重置配額。取消會阻止後續 I/O，但已送出的模型或外部請求無法保證撤回。
 * 後端綁定不可切換：任務一旦綁定 Temporal，legacy SQLite executor 不可接手；這是為了防止兩個執行器同時執行同一工具。
 
-狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
+狀態：**M0 Windows 同機唯讀橋接、TP09–TP12 已實作；TP13 人工回答／唯讀操作審批、TP14 取消／heartbeat／程序清理及 TP15 持久串流／finalization 去重已完成；TP16 封閉試用路由及真實 provider 唯讀 E2E 已完成；TP17 首批同機檔案審批寫入已實作；TP18 同機 erasure／retention 已實作；TP19 新排程 CRUD 與唯讀 occurrence、TP20 舊唯讀排程遷移／切換／回滾已完成；TP21 多 Agent DAG 父／子 Workflow 與 shared budget 已完成；TP11.7 原始長任務完整產物已由限定接入補驗；TP22 worktree／merge／取消與孤兒治理已完成；TP23 已完成隔離 Service run-chain／GC 與容量邊界驗收；TP24 版本相容與拒絕未知協定的受控測試進行中；TP25–TP30 待辦**。SDK 已作 optional 安裝，CLI 與隔離持久化 development service 已驗證；未修改使用者 `.env`、未啟用正式環境、未遷移使用者資料。下方完整目標架構含尚未交付項目，實際能力以本節進度及 `agent_execution/temporal_backend/README.md` 為準。
 
 ### 目前導入進度（2026-10-27）
 
@@ -92,7 +92,8 @@ LLM provider，TP11 的逾時外部驗收仍保留為未完成。
 | TP21 | 已完成 opt-in DAG 父／子 Workflow、shared budget、獨立 Reviewer 與取消／刪除整合，見 12.12 |
 | TP22 | 已完成明確 lifecycle 意圖、guarded merge 取消保護、worktree 封存／還原及孤兒治理，見 12.14 |
 | TP23 | Continue-As-New、DAG History retention 與隔離 Service／累積容量邊界驗收已完成；正式長時間 canary 留 TP27 |
-| TP24–TP30 | 待辦；History/artifact 完整治理、版本、正式部署、多機及其他副作用能力尚未交付 |
+| TP24 | V1/V2/V3 type／queue pin 與舊 patch History Replayer 案例已有；新增不支援協定拒絕派送回歸，固定 history fixtures 與 Worker 降版／回滾演練待完成 |
+| TP25–TP30 | 待辦；監控、正式部署、canary、跨平台、多機及 legacy 排空尚未交付 |
 
 M0 僅對明確啟用的新唯讀 Agent 任務生效。Skill、scheduler/coordinator 與 M0 未完成任務 manual resume 會拒絕；human V2 僅開放已確認人工回答邊界的續行，不開放未知效果手動重跑。已完成結果可在服務停止時由同機儲存取回。輸入上限 1 MiB、結果上限 2 MiB 是當前橋接的本機限制，TP10 已提供限額內的 JSON result/evidence 引用；大型附件／圖片與完整 retention／刪除治理仍待後續階段。完整驗收結果與安裝指令見同目錄 README；不要把本表解讀為整份導入計畫完成。
 
@@ -890,7 +891,22 @@ Starlette／AnyIO deprecation warning；DAG Service／Worker 組 **15 passed**�
 亦通過。最終完整 venv pytest **1467 passed、83 skipped、95 subtests passed**，僅有同一項既有
 Starlette／AnyIO deprecation warning；`pip check`、compileall、`git diff --check` 通過。4 項
 backend skip 為個別 provider/write-live opt-in 案例；本次 run-chain/GC 不屬 skip，已由隔離
-Service 實際執行。TP24–TP30 仍待辦。
+Service 實際執行。TP24 版本相容測試接續見下節，TP25–TP30 仍待辦。
+
+## TP24 進度：Workflow replay 與 rollback guard（進行中，2026-10-28）
+
+現有 V1／V2／V3 使用不同 workflow type 與 task queue；V1 legacy、V2 human、V3 approval
+分開受理，持久 protocol／queue 不依目前環境設定重新選擇。真實 Service／Worker 整合測試已
+各自產生 V1、V2、V3 History 並由 SDK Replayer 重播；TP14 patch 的舊版分支也有先以
+`workflow.patched=False` 產生舊 History，再用現行程式 Replayer 的測試。
+
+本輪增加 rollback guard：把已持久化 protocol version 改成未知值後呼叫 dispatch，必須在
+StartWorkflow 前拒絕，不呼叫 Temporal client，避免降版或混合版本時將執行錯派到相容性未知
+的 Workflow。step-store 組 **32 passed**，隔離 Service 的舊 TP14 patch History 案例 **1 passed**。
+
+TP24 尚未完成：需把去識別舊 History 固化為可重播 fixtures，並執行可重現的 Worker 新版部署、
+回滾及舊 run 排空演練；目前是 Service 測試中動態產生 History，尚無跨版本固定 fixture 或
+部署層 rollback 證據。
 
 ## 15. 官方參考資料
 

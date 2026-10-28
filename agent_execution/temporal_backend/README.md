@@ -264,6 +264,18 @@ cases require separate provider or write-live opt-in. The final full venv run pa
 with **83 skipped** and **95 subtests passed**; its only warning was the same existing deprecation.
 `pip check`, `compileall`, and `git diff --check` passed.
 
+## TP24: Workflow compatibility and rollback guard (in progress)
+
+V1/V2/V3 keep separate Workflow types and queues. Existing isolated Service tests generate and replay
+Histories for each version; the TP14 legacy patch branch also replays under the current code. Dispatch
+now has a regression proving that an unsupported persisted protocol version is rejected before
+`StartWorkflow`, so a downgraded or mixed-version Worker cannot silently reinterpret it.
+
+The step-store suite passed **32 tests**, and the isolated real-Service legacy-patch replay passed.
+TP24 still needs committed sanitized replay fixtures and an explicit Worker upgrade/rollback plus
+old-run drain drill; current replay Histories are generated during tests and do not yet prove a
+deployment rollback.
+
 ## 目前入口的限定接入驗收（TP11.7）
 
 使用現有 `/ws/v1` 路由、真實本機 provider 與獨立 Worker 程序；所有 DB、owner、角色設定及

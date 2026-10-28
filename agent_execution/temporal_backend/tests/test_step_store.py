@@ -1,7 +1,9 @@
 from contextlib import closing
+import asyncio
 import copy
 import json
 import sqlite3
+from unittest.mock import Mock
 
 import pytest
 
@@ -211,6 +213,18 @@ def test_unknown_schema_and_protocol_are_not_downgraded(task):
         conn.execute('UPDATE temporal_protocols SET version=99')
     with pytest.raises(ValueError): StepStore(store)
     with pytest.raises(ValueError): store.workflow_type(row)
+
+
+def test_unsupported_protocol_is_not_dispatched_during_rollback(task):
+    from agent_execution.temporal_backend.client import dispatch
+    store,steps,row,ledger,cursor=task
+    with closing(store.tasks.connect()) as conn,conn:
+        conn.execute('UPDATE temporal_protocols SET version=99 WHERE submission_id=?',(row['id'],))
+    client=Mock()
+    with pytest.raises(ValueError,match='Unsupported Temporal execution protocol'):
+        asyncio.run(dispatch(store,row,client))
+    client.start_workflow.assert_not_called()
+    client.get_workflow_handle.assert_not_called()
 
 
 def test_snapshot_counters_are_not_boolean_or_negative(task):
