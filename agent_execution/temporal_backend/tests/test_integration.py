@@ -216,6 +216,52 @@ def test_temporal_service_and_taskstore_backup_restore_drill(server, configured,
     asyncio.run(exercise())
 
 
+def test_temporal_isolated_canary_dispatch_latency_and_completion(server, configured):
+    """Small controlled cohort checks dispatch overhead and hard stop thresholds."""
+    from math import ceil
+
+    settings = Settings.load()
+    store = Store()
+    rows = []
+    for index in range(8):
+        with execution_scope(task_id=f'canary-{index}'):
+            _, row = prepare(settings)
+            rows.append(row)
+    @activity.defn(name=ACTIVITY_NAME)
+    def run(envelope: dict) -> dict:
+        time.sleep(.025)
+        return run_submission(validate_envelope(envelope), settings,
+                              runner=lambda messages, saved: 'controlled-canary-result')
+
+    async def exercise():
+        client = await server.client()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            async with Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],
+                              activities=[run], activity_executor=executor,
+                              max_concurrent_activities=2):
+                handles = await asyncio.gather(*(dispatch(store, row, client) for row in rows))
+                results = await asyncio.wait_for(asyncio.gather(*(handle.result() for handle in handles)), 30)
+        assert results == [{'submission_id': row['id']} for row in rows]
+        assert all(store.get(row['id'])['state'] == 'completed' for row in rows)
+        queue_wait = []
+        for handle in handles:
+            history = await handle.fetch_history()
+            scheduled = {event.event_id: event.event_time.ToDatetime()
+                         for event in history.events
+                         if event.HasField('activity_task_scheduled_event_attributes')}
+            for event in history.events:
+                if event.HasField('activity_task_started_event_attributes'):
+                    start = event.event_time.ToDatetime()
+                    queue_wait.append((start - scheduled[event.activity_task_started_event_attributes.scheduled_event_id]).total_seconds())
+        p95 = sorted(queue_wait)[ceil(.95 * len(queue_wait)) - 1]
+        print('CANARY_RESULT ' + json.dumps({'cohort_size': len(rows),
+            'queue_wait_p95_seconds': p95, 'workflow_failures': 0}), flush=True)
+        assert p95 < 2.0, {'queue_wait_p95_seconds': p95, 'cohort_size': len(rows)}
+        assert len(queue_wait) == len(rows)
+
+    asyncio.run(exercise())
+
+
 def test_activity_failure_is_not_replayed_automatically(server):
     store, row = prepare(Settings.load())
     attempts = []

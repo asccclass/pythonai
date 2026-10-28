@@ -331,6 +331,26 @@ schedules, communication/EventStore, tenant/profile/memory data, artifacts, work
 and secret references as applicable. Cloud/self-hosted selection, production Service-native backup,
 restore permissions, RPO/RTO, and a real recovery environment remain unverified TP26 requirements.
 
+### TP27 isolated canary progress
+
+An isolated Service test submits eight controlled bridge Workflows through one Worker capped at two
+concurrent Activities. It computes queue wait from each History's Activity scheduled/started timestamps
+(excluding model/provider time), requires every Workflow to complete, and fails if p95 reaches the
+2-second target. Run it with the verified development CLI:
+
+```powershell
+$env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
+.\venv\Scripts\python.exe -m pytest `
+  agent_execution\temporal_backend\tests\test_integration.py::test_temporal_isolated_canary_dispatch_latency_and_completion -q -s
+```
+
+The latest isolated run completed **8/8**, with **0 Workflow failures** and Activity schedule-to-start
+p95 **1.086083 seconds**. This is a small synthetic local cohort, not load/stress testing or an owner
+rollout. Stop conditions for the real canary remain: any budget/approval/erasure invariant failure,
+uncertain side-effect increase, replay error, sustained queue latency above target, or outbox/History/DB
+capacity trend outside agreed limits. Production rollout still requires per-owner allowlisting, durable
+telemetry/alert delivery, a tested rollback window, and at least seven days or one full schedule cycle.
+
 Regenerate fixtures only from the controlled local Service tests:
 
 ```powershell
