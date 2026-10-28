@@ -312,6 +312,25 @@ This completes trace correlation and local redaction evidence only. Exportable m
 correlation, configured alert delivery, and a live poller-aware readiness endpoint are still open TP25
 work; generic local readiness must not be used as a production deployment gate.
 
+### TP26 isolated backup/restore progress
+
+`operations.backup` uses SQLite's backup API, verifies each source and restored database, hashes files,
+and refuses to overwrite a restore target. The isolated drill stops the Worker and development Service,
+backs up the TaskStore database and Temporal Service database, restores them into new paths, starts a
+new Service from the restored database, then retrieves and replays the completed Workflow. Run it with:
+
+```powershell
+$env:PYTHONAI_TEMPORAL_TEST_CLI = 'C:\path\to\verified\temporal.exe'
+.\venv\Scripts\python.exe -m pytest `
+  agent_execution\temporal_backend\tests\test_integration.py::test_temporal_service_and_taskstore_backup_restore_drill -q
+```
+
+This passed against the isolated CLI development Service. The snapshot is per-database; workers and
+Service were quiesced to avoid cross-database drift. A production inventory must also include approvals,
+schedules, communication/EventStore, tenant/profile/memory data, artifacts, worktrees, configuration,
+and secret references as applicable. Cloud/self-hosted selection, production Service-native backup,
+restore permissions, RPO/RTO, and a real recovery environment remain unverified TP26 requirements.
+
 Regenerate fixtures only from the controlled local Service tests:
 
 ```powershell

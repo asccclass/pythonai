@@ -167,6 +167,55 @@ def test_service_duplicate_submission_history_replay_and_persistence(server):
     asyncio.run(exercise())
 
 
+def test_temporal_service_and_taskstore_backup_restore_drill(server, configured, tmp_path, monkeypatch):
+    """Restore an isolated, quiesced Service + task database into new paths."""
+    from agent_execution.operations.backup import backup, restore, verify
+
+    settings = Settings.load()
+    store, row = prepare(settings)
+
+    @activity.defn(name=ACTIVITY_NAME)
+    def run(envelope: dict) -> dict:
+        return run_submission(validate_envelope(envelope), settings, runner=lambda messages, saved: 'restored-result')
+
+    async def exercise():
+        client = await server.client()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            async with Worker(client, task_queue=store.queue, workflows=[ReadOnlyBridge],
+                              activities=[run], activity_executor=executor):
+                handle = await dispatch(store, row, client)
+                assert await asyncio.wait_for(handle.result(), 30) == {'submission_id': row['id']}
+        history = await handle.fetch_history()
+        server.stop()  # The snapshot must include a quiesced Temporal Service.
+
+        snapshot = tmp_path / 'temporal-backup'
+        manifest = backup([store.path, server.directory / 'temporal.db'], snapshot)
+        assert verify(snapshot)['consistency'].startswith('per-database')
+        restored_dir = tmp_path / 'temporal-restored'
+        result = restore(snapshot, restored_dir)
+        assert result['restored'] == 2
+        service_dir = restored_dir / 'service'
+        service_dir.mkdir()
+        import shutil
+        shutil.copyfile(restored_dir / '1.sqlite', service_dir / 'temporal.db')
+        restored_server = LocalServer(server.binary, service_dir)
+        restored_server.start()
+        try:
+            restored_client = await restored_server.client()
+            monkeypatch.setenv('AGENT_TASK_DB', str(restored_dir / '0.sqlite'))
+            restored_store = Store()
+            restored_row = restored_store.get(row['id'], row['owner'])
+            assert restored_row['state'] == 'completed'
+            restored_handle = restored_client.get_workflow_handle(row['workflow_id'])
+            assert await asyncio.wait_for(restored_handle.result(), 15) == {'submission_id': row['id']}
+            replay = await Replayer(workflows=[ReadOnlyBridge]).replay_workflow(await restored_handle.fetch_history())
+            assert replay.replay_failure is None
+        finally:
+            restored_server.stop()
+
+    asyncio.run(exercise())
+
+
 def test_activity_failure_is_not_replayed_automatically(server):
     store, row = prepare(Settings.load())
     attempts = []
