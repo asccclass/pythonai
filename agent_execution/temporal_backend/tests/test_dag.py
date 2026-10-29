@@ -3,6 +3,8 @@ import asyncio
 from contextlib import closing
 import json
 import os
+import subprocess
+import sys
 from types import SimpleNamespace as NS
 from unittest.mock import patch,AsyncMock
 import pytest
@@ -14,8 +16,7 @@ from agent_execution.budgets import budget_scope,BudgetExhausted
 from agent_execution.worktrees import git
 from permissions import set_current_role
 from agent_execution.temporal_backend.dag import Graphs,busy
-from agent_execution.temporal_backend.dag_contracts import envelope,probe
-from agent_execution.temporal_backend.dag_workflow import should_continue_as_new
+from agent_execution.temporal_backend.dag_contracts import envelope,probe,should_continue_as_new
 
 
 @pytest.mark.parametrize(('suggested','active','expected'),[
@@ -24,7 +25,24 @@ def test_dag_continue_as_new_requires_suggestion_and_settled_children(suggested,
     assert should_continue_as_new(suggested,active) is expected
 
 
+def test_dag_contracts_do_not_require_temporal_sdk():
+    script = (
+        "import builtins\n"
+        "original = builtins.__import__\n"
+        "def blocked(name, *args, **kwargs):\n"
+        "    if name == 'temporalio' or name.startswith('temporalio.'):\n"
+        "        raise ModuleNotFoundError(name)\n"
+        "    return original(name, *args, **kwargs)\n"
+        "builtins.__import__ = blocked\n"
+        "from agent_execution.temporal_backend.dag_contracts import should_continue_as_new\n"
+        "assert should_continue_as_new(True, 0) is True\n"
+    )
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_dag_workflow_rotates_run_without_stopping_graph(monkeypatch):
+    pytest.importorskip('temporalio', reason='Temporal workflow SDK is an optional dependency')
     from types import SimpleNamespace
     from temporalio import workflow as sdk_workflow
     import agent_execution.temporal_backend.dag_workflow as dag_workflow

@@ -4,12 +4,8 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy,WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError,ApplicationError,CancelledError
-from .dag_contracts import PARENT,CHILD,SNAPSHOT,RUN,FENCE,STOP,envelope,probe,node_result
-
-
-def should_continue_as_new(suggested, active_children):
-    """Only rotate a parent run at a point where all child handles are settled."""
-    return suggested is True and type(active_children) is int and active_children == 0
+from .dag_contracts import (PARENT,CHILD,SNAPSHOT,RUN,FENCE,STOP,envelope,probe,node_result,
+    should_continue_as_new)
 
 
 async def metadata(name,value):

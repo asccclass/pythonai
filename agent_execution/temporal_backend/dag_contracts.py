@@ -9,6 +9,11 @@ FENCE='pythonai_dag_fence_node_v1'
 STOP='pythonai_dag_stop_v1'
 
 
+def should_continue_as_new(suggested, active_children):
+    """Only rotate a parent run at a point where all child handles are settled."""
+    return suggested is True and type(active_children) is int and active_children == 0
+
+
 def envelope(value,child=False):
     keys={'graph_id','node_id'} if child else {'graph_id'}
     if not isinstance(value,dict) or set(value)!=keys or any(
