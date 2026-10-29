@@ -1,6 +1,6 @@
 # PythonAI 專案現況與 Claude 能力差距盤點
 
-盤點日期：2026-10-29  
+盤點日期：2026-10-29
 盤點基準：本機 `main`／`6b82e12`、專案原始碼與 roadmap、GitHub Actions，以及 Claude／Claude Code 官方公開能力。
 
 ## 1. 結論
