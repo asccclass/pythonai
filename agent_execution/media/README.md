@@ -14,6 +14,20 @@ Profiles persist cookies/storage, not live JS/DOM or unsubmitted form edits.
 AGENT_BROWSER_ROOT defaults to LOCALAPPDATA/PythonAI/browser; OS permissions protect
 that directory. Parent cancellation kills the worker/browser process tree.
 
+Navigation waits for `domcontentloaded` (30-second limit), rather than waiting for
+all network traffic to stop. Polling/analytics or a pending image must not prevent
+reading an already loaded DOM. Dynamic content still requires explicit bounded
+`wait_for`/assertion actions. HTTP 4xx/5xx and genuine navigation timeouts remain
+failures, and actions do not run after those failures. See the
+[Playwright navigation documentation](https://playwright.dev/python/docs/api/class-page#page-goto).
+
+2026-10-30 regression: a real Chromium/local HTTP fixture keeps an image request
+pending while returning readable currency text. The normal browser worker must
+return that text without waiting for the image. The reported exchange-rates.org
+ZAR/TWD URL also returned currency text and its source timestamp in 2.09 seconds
+with an isolated temporary profile. This is a direct source read, not a production
+LLM/Judge or desktop end-to-end replay.
+
 PDF/DOCX/PPTX/XLSX attachments are parsed in a 45 second worker with source units:
 PDF page, Word paragraph (no invented page numbers), slide, worksheet/row. Limits:
 10 MiB input, 200 units/65536 characters, Office archive 2048 entries/32 MiB

@@ -11,15 +11,62 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from agent_execution.policy import execution_scope
 from agent_execution.media.browser import browse
-from agent_execution.media.browser_worker import allowed_url, error_summary
+from agent_execution.media.browser_worker import allowed_url, error_summary, main as browser_main
 from agent_execution.media.documents import parse_document
 from agent_execution.media.audio import AudioTurn,voice_call
 
 
 class BrowserTests(unittest.TestCase):
+    def test_worker_dom_navigation_preserves_http_and_timeout_failures(self):
+        for status, error in ((200, None), (503, None), (200, TimeoutError('Page.goto: Timeout exceeded'))):
+            with self.subTest(status=status, error=error), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);profile=root/'profile';profile.mkdir();artifacts=root/'artifacts';artifacts.mkdir()
+                request=root/'request.json';response=root/'response.json'
+                request.write_text(json.dumps({'url':'https://rates.test/','allowed_hosts':['rates.test'],
+                    'profile':str(profile),'artifacts':str(artifacts),'actions':[],'screenshot':False}),encoding='utf-8')
+                page=MagicMock();page.url='https://rates.test/'
+                page.goto.return_value.status=status
+                page.goto.side_effect=error
+                page.locator.return_value.inner_text.return_value='1 ZAR = 1.96 TWD'
+                context=MagicMock();context.pages=[page];context.storage_state.return_value={'cookies':[]}
+                with patch('playwright.sync_api.sync_playwright') as playwright:
+                    playwright.return_value.__enter__.return_value.chromium.launch_persistent_context.return_value=context
+                    browser_main(request,response)
+                value=json.loads(response.read_text(encoding='utf-8'))
+                page.goto.assert_called_once_with('https://rates.test/',wait_until='domcontentloaded',timeout=30000)
+                context.close.assert_called_once()
+                if status==200 and error is None:
+                    self.assertTrue(value['success']);self.assertIn('1.96',value['text'])
+                else:
+                    self.assertFalse(value['success']);page.locator.assert_not_called()
+                    self.assertIn('HTTP 503' if status==503 else 'TimeoutError',value['error'])
+
+    @unittest.skipUnless(os.environ.get('PYTHONAI_BROWSER_TEST')=='1','actual Chromium opt-in')
+    def test_readable_dom_does_not_wait_for_pending_image(self):
+        release=threading.Event();started=threading.Event()
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):
+                if self.path=='/pending':
+                    started.set();release.wait(40)
+                    self.send_response(200);self.end_headers();return
+                self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers()
+                self.wfile.write(b'<body>1 ZAR = 1.96 TWD<img src="/pending"></body>')
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown);self.addCleanup(release.set)
+        with tempfile.TemporaryDirectory() as directory,patch.dict(os.environ,{
+                'AGENT_BROWSER_ROOT':str(Path(directory)/'profiles'),'AGENT_BROWSER_ALLOWED_HOSTS':'127.0.0.1'}):
+            try:
+                value=browse(f'http://127.0.0.1:{server.server_port}/',[])
+                self.assertTrue(started.wait(2),'fixture image request must remain pending')
+                self.assertTrue(value['success']);self.assertIn('1 ZAR = 1.96 TWD',value['text'])
+                self.assertFalse(release.is_set())
+            finally:release.set()
+
     def test_browser_worker_error_summary_preserves_bounded_cause(self):
         self.assertEqual(error_summary(FileNotFoundError('chromium executable missing')), 'FileNotFoundError: chromium executable missing')
         self.assertLessEqual(len(error_summary(RuntimeError('x' * 2000))), 512 + len('RuntimeError: '))

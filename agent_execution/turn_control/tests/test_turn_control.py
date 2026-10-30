@@ -297,6 +297,51 @@ def test_browser_page_failures_with_different_arguments_are_not_environment_fami
         'url': 'https://three.test', 'vision_prompt': 'different prompt'}) is None
 
 
+def test_read_only_navigation_timeout_blocks_retry_and_restores_fallback_guidance():
+    args={'url':'https://rates.test/zar-twd'}
+    timeout=ToolResult(False,error='Error: TimeoutError: Page.goto: Timeout 30000ms exceeded')
+    progress=TurnProgress()
+    warning=progress.observe('browser_session',args,timeout)
+    assert 'fetch_url' in warning
+    restored=TurnProgress(json.loads(json.dumps(progress.state)))
+    for extra in ({}, {'actions':[]}, {'session_id':'another'}, {'screenshot':True},
+                  {'url':args['url']+'#rates'}):
+        assert 'fetch_url' in restored.before('browser_session',{**args,**extra})
+    assert restored.before('fetch_url',args) is None
+    assert restored.before('browser_session',{'url':'https://other.test'}) is None
+    # Actions have their own side-effect/retry rules; do not classify their timeouts as reads.
+    assert restored.before('browser_session',{**args,'actions':[{'action':'click','selector':'a'}]}) is None
+    assert restored.before('browser_vision',{**args,'vision_prompt':'read'}) is None
+    for invalid in (None, 42, []):
+        assert restored.before('browser_session',{'url':invalid}) is None
+        assert not restored.observe('browser_session',{'url':invalid},timeout)
+
+
+def test_action_timeout_does_not_block_navigation_or_mark_environment_broken():
+    progress=TurnProgress();args={'url':'https://rates.test'}
+    progress.observe('browser_session',args,ToolResult(False,error='Locator.click: Timeout 5000ms exceeded'))
+    assert progress.before('browser_session',args) is None
+    progress.observe('browser_session',{**args,'actions':[{'action':'click','selector':'a'}]},
+                     ToolResult(False,error='Page.goto: Timeout 30000ms exceeded'))
+    assert progress.before('browser_session',args) is None
+
+
+def test_navigation_timeout_then_fetch_can_complete_without_second_browser_call():
+    import server
+    args={'url':'https://rates.test/zar-twd'}
+    raw,create=client([response([call('browser_session',args,'browser')]),
+                       response([call('fetch_url',args,'fetch')]),
+                       response(content='1 ZAR = 1.96 TWD at 08:00 UTC; https://rates.test/zar-twd')])
+    run=Mock(side_effect=[ToolResult(False,error='TimeoutError: Page.goto: Timeout 30000ms exceeded'),
+                          ToolResult(True,'1 ZAR = 1.96 TWD at 08:00 UTC',0,evidence={'kind':'process'})])
+    with patch('server.get_client',return_value=raw),patch('server.run_tool_with_context',run):
+        reply=server.run_agent([{'role':'user','content':'查詢南非幣匯率'}])
+    assert '1.96' in reply
+    assert [item.args[0].function.name for item in run.call_args_list]==['browser_session','fetch_url']
+    assert any('fetch_url on the source URL' in str(message.get('content',''))
+               for message in create.call_args.kwargs['messages'] if message.get('role')=='tool')
+
+
 def test_agent_browser_environment_failure_is_shared_across_public_browser_calls():
     progress = TurnProgress()
     missing = ToolResult(False, error='Browsing failed: agent-browser is unavailable; install agent-browser or Node.js/npx')

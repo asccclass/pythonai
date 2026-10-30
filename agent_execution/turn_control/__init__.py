@@ -76,6 +76,10 @@ class TurnProgress:
             return ('Search provider returned HTTP 429. Do not search it again in this turn, '
                     'including with different keywords. Use existing evidence, another public source, '
                     'or explain that current information could not be verified.')
+        if (name == 'browser_session' and not args.get('actions') and isinstance(args.get('url'), str) and
+                args.get('url', '').split('#', 1)[0] in self.state.get('navigation_timeouts', [])):
+            self.state['blocked'] += 1
+            return self.navigation_timeout_guidance()
         # Successful writes may be repeated after another step changes the file. Only
         # consecutive identical outcomes and failures are blocked; no cached writes replay.
         if key in self.state['blocked_keys'] or environment_blocked or (self.state.get('last_key') == key and record.get('repeats', 0) >= 2) or self.state['failures'].get(self.family(name, args), 0) >= 2:
@@ -86,6 +90,13 @@ class TurnProgress:
         return None
 
     def observe(self, name, args, result):
+        navigation_timeout = (name == 'browser_session' and not args.get('actions') and isinstance(args.get('url'), str) and not result.success
+                              and 'page.goto:' in result.error.casefold() and 'timeout' in result.error.casefold())
+        if navigation_timeout:
+            url = args.get('url', '').split('#', 1)[0]
+            urls = self.state.setdefault('navigation_timeouts', [])
+            if url not in urls:
+                urls.append(url)
         if name == 'search_web' and not result.success and result.evidence.get('http_status') == 429:
             self.state['search_rate_limited'] = True
         if result.success and name in {'write_file', 'edit_file', 'create_directory', 'run_command', 'apply_project_patch'}:
@@ -116,11 +127,21 @@ class TurnProgress:
             self.state['failures'].pop(self.BROWSER_ENVIRONMENT_FAMILY, None)
         elif environment_family:
             self.state['failures'][environment_family] = self.state['failures'].get(environment_family, 0) + 1
+        if navigation_timeout:
+            return self.navigation_timeout_guidance()
         if repeats >= 2 or self.state['failures'][family] >= 2 or (environment_family and self.state['failures'][environment_family] >= 2):
             return ('Progress warning: this operation returned no new result or the same tool family failed twice. '
                     'Reflect on the error and change strategy; do not repeat the same operation. '
                     'Use create_directory for mkdir; use fetched content to answer instead of fetching it again.')
         return ''
+
+    @staticmethod
+    def navigation_timeout_guidance():
+        return ('Browser navigation to this URL already timed out. Do not retry browser_session for this URL, '
+                'including with a different session_id, screenshot option or fragment. '
+                'For this read-only lookup, use fetch_url on the source URL to read its text, '
+                'or open another source from the existing search results. '
+                'Only answer with facts actually present in successful results; do not invent missing current values.')
 
     def reusable_record(self, name, args):
         """Return the successful read that should satisfy a redundant model call."""

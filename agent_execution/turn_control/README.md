@@ -97,3 +97,11 @@ hook 改策略與未驗證 TaskYield 拒絕；真實 Temporal Service 的恢復�
 套用時需重新啟動 PythonAI 的 `communication_server.py`；只重開前端不足以載入已執行中的 Python 模組。本次回歸使用專案 `venv`，未重送正式查詢或驗證即時匯率供應商。
 
 驗證：`.\venv\Scripts\python.exe -m pytest tests/test_base.py tests/test_task_evaluator.py agent_execution/turn_control/tests agent_execution/tests/test_results.py agent_execution/tests/test_tasks.py agent_execution/tests/test_companion_outputs.py -q`：**193 passed、19 subtests passed**；異動 Python 檔案 compileall 與 `git diff --check` 通過。此為相關模組回歸，未執行全專案測試套件。
+
+### 同日後續：browser_session 的 networkidle 逾時
+
+使用者的新錯誤包含同一 ZAR/TWD URL 兩次 `Page.goto` 等待 `networkidle` 30 秒逾時，以及兩次被阻止的重複呼叫。前次修正處理的是驗收證據，未修正瀏覽器的等待條件。現在瀏覽器改等 DOMContentLoaded，HTTP 4xx/5xx 仍失敗；動態頁面繼續使用明確的元素等待／斷言。
+
+純讀取 `browser_session` 的導覽逾時一次後，同任務會直接阻擋該網址的再次導覽，回饋明確引導 `fetch_url` 或現有搜尋結果中的其他來源。改 session_id、screenshot 或 URL fragment 也不重試；紀錄會隨 checkpoint 保存。此限制不將元素互動逾時視為導覽失敗，也不封鎖其他網址或其他工具，不會自動重播互動。替代抓取成功仍須通過既有驗收，沒有匯率就不能宣告完成。部署仍需重啟 `communication_server.py`。
+
+驗證：專案 `venv` 執行 media、base、task_evaluator、turn_control、results、tasks 相關回歸 **197 passed、22 subtests passed**，以 `PYTHONAI_BROWSER_TEST=1` 啟用真實 Chromium。測試程序暫設 `AGENT_TESSERACT_LANGUAGE=chi_tra`，使用本機已安裝的 OCR 語言；未改專案設定。初次擴大回歸的 PDF OCR 測試失敗已用 HEAD 原版重現，原因是本機缺預設 `eng` 資料，並非瀏覽器修正導致。最後補強無效 URL 參數防護後，turn_control 再驗 **46 passed**；compileall 與 diff check 通過。未執行全專案測試或正式桌面端端到端重播。

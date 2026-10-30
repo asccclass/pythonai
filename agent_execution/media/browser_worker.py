@@ -75,7 +75,11 @@ def main(request,response):
                 context.route('**/*',route)
                 context.route_web_socket('**/*',lambda socket:socket.close())
                 page=context.pages[0] if context.pages else context.new_page()
-                page.goto(value['url'],wait_until='networkidle',timeout=30000)
+                # Background analytics/polling need not finish before DOM reads.
+                # Dynamic pages can use the bounded wait_for/assertion actions.
+                navigation=page.goto(value['url'],wait_until='domcontentloaded',timeout=30000)
+                if navigation is not None and navigation.status >= 400:
+                    raise RuntimeError(f'Browser navigation returned HTTP {navigation.status}')
                 actions(page,value['actions'],artifacts)
                 if value['screenshot']:page.screenshot(path=str(artifacts/'page.jpg'),type='jpeg',quality=70)
                 result={'success':True,'url':page.url,'text':page.locator('body').inner_text(timeout=5000)[:65536],
