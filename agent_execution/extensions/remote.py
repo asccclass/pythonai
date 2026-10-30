@@ -18,19 +18,29 @@ class RemoteMCPClient:
             raise ValueError('Remote MCP requires HTTPS')
         self.timeout=float(config.get('timeout',10))
         if not 1<=self.timeout<=30:raise ValueError('MCP timeout must be 1..30 seconds')
+        self.protocol_version=config.get('protocol_version','2025-11-25')
+        if self.protocol_version not in {'2025-11-25','2025-06-18'}:raise ValueError('Unsupported MCP protocol')
+        self.health_method=config.get('health_method','ping')
+        if self.health_method not in {'ping','tools/list'}:raise ValueError('Invalid MCP health method')
         self.token_env=config.get('token_env');self.guard=threading.Lock();self.last_error=None
         self.oauth=None
-        if config.get('oauth'):
-            if self.token_env:raise ValueError('Configure either token_env or OAuth')
+        providers={key for key in ('token_env','oauth','memauth') if key in config and config[key] is not None}
+        if len(providers)>1:
+            raise ValueError('Configure only one MCP authentication provider')
+        if 'oauth' in providers:
             from .oauth import OAuthClient
             self.oauth=OAuthClient(self.url,config['oauth'])
+        if 'memauth' in providers:
+            if not isinstance(config['memauth'],dict):raise ValueError('Invalid MemAuth configuration')
+            from .contactai import ContactAuth
+            self.oauth=ContactAuth(self.url,config['memauth'])
         self.http=httpx.Client(timeout=self.timeout,follow_redirects=False,trust_env=False)
     def start(self):
         with self.guard:
             self.session=None
-            result=self.send_request('initialize',{'protocolVersion':'2025-11-25','capabilities':{},
+            result=self.send_request('initialize',{'protocolVersion':self.protocol_version,'capabilities':{},
                 'clientInfo':{'name':'pythonai','version':'1'}})
-            if result.get('protocolVersion')!='2025-11-25':raise ValueError('Unsupported MCP protocol')
+            if result.get('protocolVersion')!=self.protocol_version:raise ValueError('Unsupported MCP protocol')
             self.send_notification('notifications/initialized',{})
             tools=[];cursor=None
             for _ in range(10):
@@ -45,7 +55,7 @@ class RemoteMCPClient:
         from ..policy import current_context
         cancelled=current_context().check_cancelled
         if cancelled and cancelled():raise InterruptedError('MCP request cancelled')
-        headers={'Accept':'application/json, text/event-stream','MCP-Protocol-Version':'2025-11-25'}
+        headers={'Accept':'application/json, text/event-stream','MCP-Protocol-Version':self.protocol_version}
         token=self.oauth.access_token() if self.oauth else os.environ.get(self.token_env,'') if self.token_env else ''
         if self.token_env and not token:raise PermissionError('MCP OAuth access token required')
         if token:headers['Authorization']='Bearer '+token
@@ -88,7 +98,7 @@ class RemoteMCPClient:
             try:return self.send_request('tools/call',{'name':name,'arguments':arguments})
             except Exception as error:self.last_error=type(error).__name__;raise
     def health(self):
-        try:self.send_request('ping',{});return {'ready':self.running,'error':self.last_error}
+        try:self.send_request(self.health_method,{});return {'ready':self.running,'error':self.last_error}
         except Exception as error:return {'ready':False,'error':type(error).__name__}
     def stop(self):
         self.running=False;self.http.close()

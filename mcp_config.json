@@ -1,5 +1,17 @@
 {
     "mcpServers": {
+        "contactai": {
+            "url": "https://contacts.justdrink.com.tw/mcp",
+            "protocol_version": "2025-06-18",
+            "health_method": "tools/list",
+            "memauth": {
+                "origin": "https://contacts.justdrink.com.tw",
+                "identity": "local",
+                "email_env": "CONTACTAI_EMAIL",
+                "password_env": "CONTACTAI_PASSWORD",
+                "token_env": "CONTACTAI_MEMAUTH_TOKEN"
+            }
+        },
         "aisms": {
             "command": "D:\\myprograms\\aisms\\ais-mcp.exe",
             "args": [],

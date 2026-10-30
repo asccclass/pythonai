@@ -31,6 +31,10 @@ uncertain response. Remote config uses url (HTTPS or loopback HTTP), timeout
 clients support resource metadata discovery, OAuth/OIDC issuer metadata, S256 PKCE,
 one-use owner-bound state, exact redirect validation and serialized refresh rotation.
 Older HTTP+SSE transport remains unsupported.
+ContactAI/MemAuth integration and setup: [contactai/README.md](contactai/README.md).
+Remote `protocol_version` can select `2025-06-18` (default `2025-11-25`);
+`health_method` can select `tools/list` (default `ping`). Authentication providers
+`token_env`, `oauth`, and `memauth` are mutually exclusive.
 Remote responses are capped at 1 MiB; unsupported recursive/$ref/regex schemas
 are rejected without network resolution. No sampling/roots authority advertised.
 
