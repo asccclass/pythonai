@@ -467,6 +467,77 @@ class TaskEvaluatorTests(unittest.TestCase):
         from datetime import date
         self.assertIn(f'trusted current system date is {date.today().isoformat()}', prompt)
 
+    def test_fetch_url_process_output_is_public_web_evidence(self):
+        from task_evaluator import public_web_source_evidence
+        step = {
+            'id': 'fetch', 'name': 'fetch_url', 'state': 'completed',
+            'input': json.dumps({'url': 'https://rates.test/zar-twd'}),
+            'result': json.dumps(ToolResult(True, '1 ZAR = 1.96 TWD', 0,
+                                           evidence={'kind': 'process', 'returncode': 0}).to_dict()),
+        }
+        self.assertEqual(public_web_source_evidence([step]), [{
+            'kind': 'public_web_source', 'url': 'https://rates.test/zar-twd',
+            'characters': len('1 ZAR = 1.96 TWD'),
+        }])
+        for changes in ({'success': False}, {'exit_code': 22}, {'exit_code': None},
+                        {'output': '  '}, {'evidence': {}}):
+            with self.subTest(changes=changes):
+                result = json.loads(step['result'])
+                result.update(changes)
+                self.assertEqual(public_web_source_evidence([{**step, 'result': json.dumps(result)}]), [])
+        for changes in ({'state': 'failed'}, {'input': '{"url":"file:///private"}'}):
+            with self.subTest(changes=changes):
+                self.assertEqual(public_web_source_evidence([{**step, **changes}]), [])
+        self.assertEqual(public_web_source_evidence([step, {'name': 'write_file'}]), [])
+
+    def test_search_failure_then_fetch_is_recovered_but_answer_still_requires_judge(self):
+        from agent_execution.tasks import _active
+        steps = [
+            {'id': 'search-failed', 'name': 'search_web', 'state': 'failed',
+             'input': '{"query":"ZAR TWD"}',
+             'result': json.dumps(ToolResult(False, error='HTTP 429',
+                                            side_effects={'status': 'none'}).to_dict())},
+            {'id': 'fetch', 'name': 'fetch_url', 'state': 'completed',
+             'input': '{"url":"https://rates.test/zar-twd"}',
+             'result': json.dumps(ToolResult(True, '1 ZAR = 1.96 TWD at 08:00 UTC', 0,
+                                            evidence={'kind': 'process', 'returncode': 0}).to_dict())},
+        ]
+        store = MagicMock()
+        store.get.return_value = {'criteria': {'version': 1, 'checks': []}}
+        store.steps.return_value = steps
+        evaluator = TaskEvaluator(self.workspace)
+        token = _active.set((store, 'owner', 'rate-task'))
+        try:
+            for passed in (True, False):
+                with self.subTest(judge_passed=passed), patch.object(
+                        evaluator, 'evaluate_llm_judge', return_value=(passed, float(passed), 'missing rate')):
+                    result = evaluator.evaluate('查詢南非幣匯率', [], 'candidate answer')
+                self.assertEqual(result.success, passed)
+                self.assertEqual(result.verified, passed)
+                self.assertTrue(result.criteria_met['source_evidence:public_web'])
+                self.assertNotIn('Tool step not successful', result.feedback)
+        finally:
+            _active.reset(token)
+
+    def test_unrecovered_tool_failure_includes_name_and_bounded_error(self):
+        from agent_execution.tasks import _active
+        store = MagicMock()
+        store.get.return_value = {'criteria': {'version': 1, 'checks': []}}
+        store.steps.return_value = [{
+            'id': 'failed-fetch', 'name': 'fetch_url', 'state': 'failed',
+            'input': '{"url":"https://rates.test"}',
+            'result': json.dumps(ToolResult(False, error='HTTP 503\n' + 'x' * 400).to_dict()),
+        }]
+        token = _active.set((store, 'owner', 'rate-task'))
+        try:
+            result = TaskEvaluator(self.workspace).evaluate('查詢匯率', [], '查詢失敗')
+        finally:
+            _active.reset(token)
+        self.assertFalse(result.success)
+        self.assertFalse(result.verified)
+        self.assertIn('failed-fetch (fetch_url): HTTP 503', result.feedback)
+        self.assertNotIn('x' * 301, result.feedback)
+
     def test_run_agent_critic_correction_succeeds_on_retry(self):
         eval_attempts = 0
 

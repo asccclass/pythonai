@@ -87,3 +87,13 @@ hook 改策略與未驗證 TaskYield 拒絕；真實 Temporal Service 的恢復�
 - 真實 provider 拒絕 `tools=[]`（HTTP 400）；現在無工具時省略欄位，已在一般與串流收尾請求實測成功，並覆蓋有／無 task budget 的請求邊界測試。
 - 重複成功讀取重用已保存的原始內容與 source tool-call ID，最新觀察即使經過裁剪仍有內容；提示附在工具回覆內，不插入尚未回覆完整的平行呼叫之間。原始工具證據保留於 checkpoint，不以提示文字偽造新讀取或測試成功。
 - 真實 Telegram／桌面端重連未額外實測；服務需重新啟動以載入 Python 程式與 builtin manifest。測試跳過項不代表已通過外部裝置／Docker 部署驗證。
+
+## 2026-10-30：搜尋失敗後的直接讀取與驗收
+
+修正兩個通用缺口：成功的 `fetch_url`（HTTP(S)、process 證據、exit code 0、非空輸出）現在可納入唯讀公開網頁證據；無副作用的搜尋失敗，可由後續成功的直接網頁讀取補救。補救只解除歷史工具失敗，最終答案仍須通過既有規則與 Judge；取得網頁不代表已驗證其中的匯率數字或時效。帶有互動動作的 browser_session、失敗／空白／缺少執行證據的 fetch_url 不適用此補救。
+
+未補救的工具失敗訊息會附工具名稱及最多 300 字元的單行實際錯誤，保留原呼叫 ID 供追查。不增加執行輪數，不變更 HITL 狀態規則，也未加入匯率供應商。此次未取得使用者提供的四個失敗呼叫原始結果，不能以本次修正當作該次事故的完整根因結論。
+
+套用時需重新啟動 PythonAI 的 `communication_server.py`；只重開前端不足以載入已執行中的 Python 模組。本次回歸使用專案 `venv`，未重送正式查詢或驗證即時匯率供應商。
+
+驗證：`.\venv\Scripts\python.exe -m pytest tests/test_base.py tests/test_task_evaluator.py agent_execution/turn_control/tests agent_execution/tests/test_results.py agent_execution/tests/test_tasks.py agent_execution/tests/test_companion_outputs.py -q`：**193 passed、19 subtests passed**；異動 Python 檔案 compileall 與 `git diff --check` 通過。此為相關模組回歸，未執行全專案測試套件。

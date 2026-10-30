@@ -108,6 +108,13 @@ def recovered_read_failure(step, steps, root=None):
                         isinstance(item, dict) and str(item.get('href') or '').startswith(('http://', 'https://'))
                         for item in search_results):
                     return True
+            # A failed search can be replaced by directly reading a source.
+            # This only clears the historical tool error; the final answer must
+            # still pass the independent goal/answer judge.
+            from task_evaluator import public_web_source_evidence
+            for other in steps[steps.index(step) + 1:]:
+                if other.get('name') in {'fetch_url', 'browse_webpage', 'browser_session'} and public_web_source_evidence([other]):
+                    return True
             return False
         web_reads = {'browse_webpage', 'fetch_url', 'browser_session'}
         navigation_only = step['name'] != 'browser_session' or set(args) <= {'url'} or (

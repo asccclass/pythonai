@@ -220,6 +220,29 @@ def test_failed_web_read_is_recovered_by_subsequent_successful_source():
     assert not recovered_read_failure(failed_bot, [failed_bot, failed_xe])
 
 
+def test_failed_search_requires_subsequent_verified_direct_read():
+    from agent_execution.turn_control.recovery import recovered_read_failure
+    failed = {'name': 'search_web', 'state': 'failed', 'input': '{"query":"ZAR TWD"}',
+              'result': json.dumps(ToolResult(False, error='HTTP 429',
+                                             side_effects={'status': 'none'}).to_dict())}
+    fetched = {'name': 'fetch_url', 'state': 'completed', 'input': '{"url":"https://rates.test"}',
+               'result': json.dumps(ToolResult(True, '1 ZAR = 1.96 TWD', 0,
+                                              evidence={'kind': 'process', 'returncode': 0}).to_dict())}
+    assert recovered_read_failure(failed, [failed, fetched])
+    assert not recovered_read_failure(failed, [fetched, failed])
+    for result in (ToolResult(False, error='HTTP 503', exit_code=22),
+                   ToolResult(True, '', 0, evidence={'kind': 'process'}),
+                   ToolResult(True, 'unverified prose')):
+        assert not recovered_read_failure(failed, [failed, {**fetched, 'result': json.dumps(result.to_dict())}])
+    interactive = {'name': 'browser_session', 'state': 'completed',
+                   'input': '{"url":"https://rates.test","actions":[{"type":"click"}]}',
+                   'result': json.dumps(ToolResult(True, json.dumps({'success': True, 'text': 'rate'})).to_dict())}
+    assert not recovered_read_failure(failed, [failed, interactive])
+    uncertain = {**failed, 'result': json.dumps(ToolResult(False, error='unknown effects',
+                                                        side_effects={'status': 'unknown'}).to_dict())}
+    assert not recovered_read_failure(uncertain, [uncertain, fetched])
+
+
 def test_changing_mkdir_paths_stops_same_failure_family_then_allows_recovery():
     progress = TurnProgress()
     for path in ['a', 'b']:

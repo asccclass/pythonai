@@ -32,13 +32,20 @@ def public_web_source_evidence(steps):
         return []
     evidence=[]
     for step in steps:
-        if step.get('name') not in {'browse_webpage', 'browser_session', 'search_web'} or step.get('state') != 'completed':
+        if step.get('state') != 'completed':
             continue
         try:
             args=json.loads(step['input']);result=json.loads(step.get('result') or '{}')
         except (ValueError,TypeError):
             continue
         url=args.get('url','');output=result.get('output','');kind=result.get('evidence',{}).get('kind')
+        if step.get('name') == 'fetch_url':
+            if (result.get('success') is True and result.get('exit_code') == 0
+                    and kind == 'process' and isinstance(url, str)
+                    and url.startswith(('http://', 'https://'))
+                    and isinstance(output, str) and output.strip()):
+                evidence.append({'kind':'public_web_source','url':url,'characters':len(output)})
+            continue
         if step.get('name') == 'search_web':
             if result.get('success') is not True or kind != 'duckduckgo_search':
                 continue
@@ -507,11 +514,14 @@ class TaskEvaluator:
                             recovered_read_failure(step, steps, self.workspace_root) or
                             recovered_output_failure(step, steps, self.workspace_root)):
                         continue
-                    issues.append(f"Tool step not successful: {step['id']}")
                     try:
                         result = json.loads(step.get('result') or '{}')
                     except (ValueError, TypeError):
                         result = {}
+                    error = str(result.get('error') or '') if isinstance(result, dict) else ''
+                    detail = ' '.join(error.split())[:300]
+                    issues.append(f"Tool step not successful: {step['id']} ({step['name']})"
+                                  + (f": {detail}" if detail else ''))
                     if isinstance(result, dict) and self._permission_denied(str(result.get('error') or '')):
                         issues.append(f"工具權限不足 ({step['name']}): {result['error']}")
         source_evidence=public_web_source_evidence(steps) if active else []
