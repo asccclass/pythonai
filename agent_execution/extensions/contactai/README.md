@@ -14,9 +14,34 @@ MemAuth 不是 OAuth/OIDC 授權碼提供者，勿設定成既有 `oauth.issuer`
 `mcp_contactai_create_contact`；實際工具以遠端 discovery 為準。
 健康檢查使用 `tools/list`，因目前 ContactAI 不支援 `ping`。
 
-## 設定與啟動
+## 一次登入與啟動（Windows 建議）
 
-在啟動 PythonAI 的同一個 PowerShell 設定已驗證 Email 的會員帳密。
+執行一次登入指令；Email 會顯示輸入，密碼使用遮蔽輸入：
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.extensions.contactai login
+```
+
+成功時會顯示 `ready: true`、`saved: true` 與 discovery 得到的工具名稱。
+程式不保存 MemAuth 密碼，只將 ContactAI Refresh Token 寫入目前 Windows
+使用者的 Credential Manager，目標名稱為
+`PythonAI/ContactAI/contacts.justdrink.com.tw`。之後正常啟動 PythonAI 即會
+自動取得短效 Access Token，不需要環境變數或保持原 PowerShell 視窗。
+
+可隨時檢查連線或登出：
+
+```powershell
+.\venv\Scripts\python.exe -m agent_execution.extensions.contactai
+.\venv\Scripts\python.exe -m agent_execution.extensions.contactai logout
+```
+
+`logout` 會嘗試撤銷遠端 Refresh Token，並刪除本機 Credential Manager
+憑證。一般 PythonAI 關閉只清除記憶體中的 Access Token，不會登出。
+
+## 暫時登入與相容設定
+
+非 Windows 平台或不希望保存 Refresh Token 時，可在啟動 PythonAI 的同一個
+PowerShell 設定已驗證 Email 的會員帳密。
 密碼透過遮蔽輸入，不要放進 shell 指令歷程、Git 或 `mcp_config.json`：
 
 ```powershell
@@ -37,25 +62,27 @@ Remove-Item Env:CONTACTAI_MEMAUTH_TOKEN -ErrorAction SilentlyContinue
 補入環境變數後需重啟 PythonAI 或明確呼叫 MCP manager reconnect。
 程式不會自動載入 `.env`。
 
-認證與 discovery 的唯讀連線檢查（不搜尋或建立聯絡人）：
+只做一次、不保存的認證與 discovery 唯讀檢查（不搜尋或建立聯絡人）：
 
 ```powershell
 .\venv\Scripts\python.exe -m agent_execution.extensions.contactai --prompt
 # 已設定環境變數時可省略 --prompt。
 ```
 
-此命令只輸出 ready、工具名稱或錯誤類型。檢查結束會嘗試撤銷該次
+此命令只輸出 ready、工具名稱或錯誤類型。`--prompt` 檢查結束會嘗試撤銷該次
 ContactAI Refresh Token，無法把互動式檢查登入傳遞給另一個 PythonAI 程序。
 實際使用仍須讓 PythonAI 程序繼承上述環境變數。
 
 ## 工作階段與權限
 
-Token 僅存在程序記憶體，Access Token 到期前 30 秒使用 ContactAI
-`/api/auth/refresh` 刷新；不儲存密碼或 Token 到檔案。
+Access Token 僅存在程序記憶體；一次登入模式只將 Refresh Token 存入
+Windows Credential Manager，不儲存密碼或 Token 到一般檔案。Access Token
+到期前 30 秒使用 ContactAI `/api/auth/refresh` 刷新。
 若刷新或認證失敗，必須明確重新連線；不重送任何 `tools/call`，
 包含新增聯絡人時遇到的 401、逾時或斷線。
-關閉客戶端時嘗試 `/api/auth/logout`，服務不可用時無法保證撤銷成功。
-Access Token 在到期前仍可能有效。
+暫時登入模式在關閉客戶端時嘗試 `/api/auth/logout`；一次登入模式只在明確
+執行 `logout` 時撤銷。服務不可用時無法保證遠端撤銷成功；Access Token 在
+到期前仍可能有效，但本機儲存的 Refresh Token 仍會刪除。
 
 預設 `memauth.identity=local`，僅允許本機執行身分使用這組憑證。
 其他 identity 的呼叫會在連線前遭拒。指定外部身分需由部署端建立專用客戶端，

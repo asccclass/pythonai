@@ -21,6 +21,26 @@ def jwt(expiry=None):
     return 'header.' + payload + '.signature'
 
 
+class MemoryCredentialStore:
+    def __init__(self, value=None):
+        self.value = value
+        self.writes = []
+        self.deletes = 0
+
+    def read(self):
+        return self.value
+
+    def write(self, value):
+        self.value = value
+        self.writes.append(value)
+
+    def delete(self):
+        existed = self.value is not None
+        self.value = None
+        self.deletes += 1
+        return existed
+
+
 class ContactAITests(unittest.TestCase):
     def setUp(self):
         env = patch.dict(os.environ, {'CONTACTAI_EMAIL': 'member@example.com',
@@ -119,6 +139,68 @@ class ContactAITests(unittest.TestCase):
         self.assertEqual(seen, ['/api/auth/memauth', '/api/auth/refresh'])
         self.assertIsNone(auth.session)
 
+    def test_saved_refresh_token_is_reused_rotated_and_kept_on_close(self):
+        store = MemoryCredentialStore('saved-refresh')
+        seen = []
+        def handler(request):
+            seen.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={'success': True, 'data': {
+                'access_token': jwt(), 'refresh_token': 'rotated-refresh'}})
+        with (patch.dict(os.environ, {'CONTACTAI_EMAIL': '', 'CONTACTAI_PASSWORD': '',
+                                      'CONTACTAI_MEMAUTH_TOKEN': ''}),
+              patch('agent_execution.extensions.contactai.credential_store', return_value=store)):
+            auth = self.auth(handler, {'credential_target': 'PythonAI/ContactAI/test'})
+            auth.access_token()
+            auth.close()
+        self.assertEqual(seen, [('/api/auth/refresh', {'refresh_token': 'saved-refresh'})])
+        self.assertEqual(store.value, 'rotated-refresh')
+        self.assertEqual(store.writes, ['rotated-refresh'])
+        self.assertEqual(store.deletes, 0)
+
+    def test_rejected_saved_refresh_is_deleted(self):
+        store = MemoryCredentialStore('expired-refresh')
+        with (patch.dict(os.environ, {'CONTACTAI_EMAIL': '', 'CONTACTAI_PASSWORD': '',
+                                      'CONTACTAI_MEMAUTH_TOKEN': ''}),
+              patch('agent_execution.extensions.contactai.credential_store', return_value=store)):
+            auth = self.auth(lambda request: httpx.Response(401),
+                             {'credential_target': 'PythonAI/ContactAI/test'})
+            with self.assertRaises(PermissionError):
+                auth.access_token()
+        self.assertIsNone(store.value)
+        self.assertEqual(store.deletes, 1)
+
+    def test_malformed_saved_refresh_is_deleted_without_network_request(self):
+        store = MemoryCredentialStore('invalid refresh\n')
+        with (patch.dict(os.environ, {'CONTACTAI_EMAIL': '', 'CONTACTAI_PASSWORD': '',
+                                      'CONTACTAI_MEMAUTH_TOKEN': ''}),
+              patch('agent_execution.extensions.contactai.credential_store', return_value=store)):
+            auth = self.auth(lambda request: self.fail('must not connect'),
+                             {'credential_target': 'PythonAI/ContactAI/test'})
+            with self.assertRaises(PermissionError):
+                auth.access_token()
+        self.assertIsNone(store.value)
+        self.assertEqual(store.deletes, 1)
+
+    def test_logout_revokes_remote_session_and_deletes_saved_refresh(self):
+        store = MemoryCredentialStore('saved-refresh')
+        seen = []
+        def handler(request):
+            seen.append((request.url.path, json.loads(request.content)))
+            if request.url.path == '/api/auth/refresh':
+                data = {'access_token': jwt(), 'refresh_token': 'saved-refresh'}
+            else:
+                self.assertEqual(request.headers['Authorization'].split()[0], 'Bearer')
+                data = None
+            return httpx.Response(200, json={'success': True, 'data': data})
+        with (patch.dict(os.environ, {'CONTACTAI_EMAIL': '', 'CONTACTAI_PASSWORD': '',
+                                      'CONTACTAI_MEMAUTH_TOKEN': ''}),
+              patch('agent_execution.extensions.contactai.credential_store', return_value=store)):
+            auth = self.auth(handler, {'credential_target': 'PythonAI/ContactAI/test'})
+            auth.logout()
+        self.assertEqual([path for path, _ in seen], ['/api/auth/refresh', '/api/auth/logout'])
+        self.assertIsNone(store.value)
+        self.assertEqual(store.deletes, 1)
+
     def test_remote_discovery_manager_routes_health_and_no_write_replay(self):
         from mcp_manager import MCPManager
         calls = []
@@ -199,6 +281,41 @@ class ContactAITests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue()), {'ready': False, 'error_type': 'PermissionError'})
             self.assertEqual(os.environ['CONTACTAI_EMAIL'], 'member@example.com')
             self.assertEqual(os.environ['CONTACTAI_PASSWORD'], 'private-password')
+
+    def test_cli_login_saves_session_and_logout_removes_it(self):
+        from .__main__ import main
+        from unittest.mock import Mock
+        config = {'mcpServers': {'contactai': {
+            'url': 'https://contacts.example/mcp',
+            'memauth': {'credential_target': 'PythonAI/ContactAI/test'}}}}
+        client = Mock()
+        client.health.return_value = {'ready': True}
+        client.tools = [{'name': 'search_contacts'}]
+        client.oauth.store = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'config.json'
+            source.write_text(json.dumps(config), encoding='utf-8')
+            output = io.StringIO()
+            with (patch('sys.argv', ['contactai', 'login', '--config', str(source)]),
+                  patch('builtins.input', return_value='prompt@example.com'),
+                  patch('getpass.getpass', return_value='prompt-password'),
+                  patch('sys.stdout', output),
+                  patch('agent_execution.extensions.contactai.__main__.RemoteMCPClient', return_value=client)):
+                self.assertEqual(main(), 0)
+            self.assertEqual(json.loads(output.getvalue()), {
+                'ready': True, 'tools': ['search_contacts'], 'saved': True})
+            self.assertEqual(os.environ['CONTACTAI_EMAIL'], 'member@example.com')
+            client.stop.assert_called_once()
+
+            client.reset_mock()
+            output = io.StringIO()
+            with (patch('sys.argv', ['contactai', 'logout', '--config', str(source)]),
+                  patch('sys.stdout', output),
+                  patch('agent_execution.extensions.contactai.__main__.RemoteMCPClient', return_value=client)):
+                self.assertEqual(main(), 0)
+            self.assertEqual(json.loads(output.getvalue()), {'logged_out': True})
+            client.oauth.logout.assert_called_once()
+            client.stop.assert_called_once()
 
     def test_protocol_mismatch_stops_before_discovering_tools(self):
         seen = []

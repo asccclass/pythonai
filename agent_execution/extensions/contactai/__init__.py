@@ -11,10 +11,11 @@ import httpx
 
 from ..oauth import safe_url, origin
 from ...policy import current_context
+from .credentials import credential_store
 
 
 class ContactAuth:
-    """Keep ContactAI tokens in memory; never persist MemAuth credentials."""
+    """Keep access tokens in memory and optionally persist only the refresh token."""
 
     def __init__(self, resource, config):
         parsed = urlsplit(safe_url(resource))
@@ -34,8 +35,13 @@ class ContactAuth:
             if not isinstance(name, str) or not name or len(name) > 128:
                 raise ValueError('Invalid ContactAI credential environment name')
         self.http = httpx.Client(timeout=10, follow_redirects=False, trust_env=False)
+        target = config.get('credential_target')
+        if target is not None and not isinstance(target, str):
+            raise ValueError('Invalid ContactAI credential target')
+        self.store = credential_store(target)
         self.guard = threading.Lock()
         self.session = None
+        self.persistent_session = False
         self.failed = False
 
     def request(self, path, body, token=None):
@@ -97,30 +103,79 @@ class ContactAuth:
                     token = os.environ.get(self.token_env)
                     if token:
                         body = {'token': self.valid_token(token)}
+                        self.session = self.token_session(self.request('/api/auth/memauth', body))
                     else:
                         email = os.environ.get(self.email_env)
                         password = os.environ.get(self.password_env)
-                        if not email or not password:
-                            raise PermissionError('ContactAI MemAuth credentials required in environment')
-                        body = {'email': email, 'password': password}
-                    self.session = self.token_session(self.request('/api/auth/memauth', body))
+                        if email and password:
+                            body = {'email': email, 'password': password}
+                            self.session = self.token_session(self.request('/api/auth/memauth', body))
+                        else:
+                            try:
+                                refresh = self.store.read() if self.store else None
+                            except UnicodeError:
+                                self.store.delete()
+                                raise PermissionError('Stored ContactAI login is invalid; login again') from None
+                            if not refresh:
+                                raise PermissionError('ContactAI login required; run the contactai login command')
+                            try:
+                                refresh = self.valid_token(refresh)
+                            except ValueError:
+                                self.store.delete()
+                                raise PermissionError('Stored ContactAI login is invalid; login again') from None
+                            try:
+                                data = self.request('/api/auth/refresh', {'refresh_token': refresh})
+                            except PermissionError:
+                                self.store.delete()
+                                raise
+                            self.session = self.token_session(data, {'refresh_token': refresh})
+                            self.persistent_session = True
+                    if self.store:
+                        self.store.write(self.session['refresh_token'])
+                        self.persistent_session = True
                 elif self.session['expires'] <= time.time() + 30:
                     old = self.session
                     self.session = None
-                    data = self.request('/api/auth/refresh', {'refresh_token': old['refresh_token']})
+                    try:
+                        data = self.request('/api/auth/refresh', {'refresh_token': old['refresh_token']})
+                    except PermissionError:
+                        if self.persistent_session and self.store:
+                            self.store.delete()
+                        raise
                     self.session = self.token_session(data, old)
+                    if self.persistent_session and self.store:
+                        self.store.write(self.session['refresh_token'])
                 return self.session['access_token']
             except Exception:
                 self.session = None
                 self.failed = True
                 raise
 
+    def logout(self):
+        """Revoke the current stored session and remove its local refresh token."""
+        error = None
+        try:
+            self.access_token()
+            with self.guard:
+                session, self.session = self.session, None
+                if session:
+                    self.request('/api/auth/logout', {'refresh_token': session['refresh_token']},
+                                 session['access_token'])
+        except Exception as caught:
+            error = caught
+        finally:
+            if self.store:
+                self.store.delete()
+            self.failed = True
+        if error:
+            raise error
+
     def close(self):
         with self.guard:
             session, self.session = self.session, None
             self.failed = True
             try:
-                if session:
+                if session and not self.persistent_session:
                     self.request('/api/auth/logout', {'refresh_token': session['refresh_token']},
                                  session['access_token'])
             except Exception:

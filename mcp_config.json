@@ -7,6 +7,7 @@
             "memauth": {
                 "origin": "https://contacts.justdrink.com.tw",
                 "identity": "local",
+                "credential_target": "PythonAI/ContactAI/contacts.justdrink.com.tw",
                 "email_env": "CONTACTAI_EMAIL",
                 "password_env": "CONTACTAI_PASSWORD",
                 "token_env": "CONTACTAI_MEMAUTH_TOKEN"
