@@ -396,6 +396,9 @@ class BudgetEndpoint:
             if not handed_off:slot.__exit__(None,None,None)
 
     def _provider_create(self, endpoint, client, kwargs):
+        if self.kind == 'chat':
+            from .context import provider_messages
+            kwargs = {**kwargs, 'messages': provider_messages(kwargs['messages'])}
         from urllib.parse import urlsplit
         from .operations.tracing import span
         try:

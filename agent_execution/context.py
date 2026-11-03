@@ -8,6 +8,25 @@ class ContextTooLarge(ValueError):
     pass
 
 
+def provider_messages(messages):
+    """Send one leading system message without changing stored conversation state."""
+    systems = [message for message in messages if message.get('role') == 'system']
+    if not systems or (len(systems) == 1 and messages[0].get('role') == 'system'):
+        return messages
+    contents = [message.get('content') or '' for message in systems]
+    if all(isinstance(content, str) for content in contents):
+        content = '\n\n'.join(contents)
+    else:
+        content = []
+        for value in contents:
+            if content:
+                content.append({'type': 'text', 'text': '\n\n'})
+            content.extend(copy.deepcopy(value) if isinstance(value, list)
+                           else [{'type': 'text', 'text': value}])
+    system = {**systems[0], 'content': content}
+    return [system, *[message for message in messages if message.get('role') != 'system']]
+
+
 def count_tokens(value):
     from .budgets import token_upper_bound
     return token_upper_bound(value)

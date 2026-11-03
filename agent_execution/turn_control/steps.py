@@ -26,7 +26,8 @@ def model_step(client, request, messages, *, iteration, attempt=1,
                 event_callback('model.start', {'iteration': iteration, 'model': request['model']})
                 return streamed_completion(budgeted, request['model'], messages,
                                            request['tools'], event_callback, check_cancelled)
-            arguments = {'model': request['model'], 'messages': messages}
+            from agent_execution.context import provider_messages
+            arguments = {'model': request['model'], 'messages': provider_messages(messages)}
             if request['tools']:
                 arguments['tools'] = request['tools']
             return budgeted.chat.completions.create(**arguments).choices[0].message
