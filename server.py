@@ -313,7 +313,29 @@ def run_agent(
                         is_transient = False
                     
                     if not is_transient or attempts >= max_retries:
-                        err_msg = f"⚠️ 遠端 LLM 服務發生錯誤 (連線失敗或伺服器過載)。已達最大重試次數，請稍後再試。\n詳細錯誤: {error}"
+                        if status_code == 404:
+                            reason = (
+                                "HTTP 404：找不到 API 路徑或資源，已停止且不再重試。"
+                                "請檢查 OLLAMA_BASE_URL 是否指向正確的 API 前綴"
+                                "（例如服務要求的 /v1），並確認 OLLAMA_MODEL 是否存在。"
+                            )
+                        elif status_code in (401, 403):
+                            reason = (
+                                f"HTTP {status_code}：驗證失敗或存取遭拒，已停止且不再重試。"
+                                "請檢查 OLLAMA_API_KEY 與模型存取權限。"
+                            )
+                        elif not is_transient:
+                            reason = (
+                                f"HTTP {status_code}：請求遭遠端服務拒絕，已停止且不再重試。"
+                                "請檢查 API 設定與請求內容。"
+                            )
+                        else:
+                            failure = f"HTTP {status_code}" if status_code else "連線失敗或逾時"
+                            reason = (
+                                f"{failure}：已達重試上限（已重試 {attempts} 次），"
+                                "請檢查服務狀態與網路連線，或稍後再試。"
+                            )
+                        err_msg = f"⚠️ 遠端 LLM 服務發生錯誤。{reason}\n詳細錯誤: {error}"
                         print(err_msg)
                         if event_callback:
                             event_callback("error", {"code": "provider_error", "message": "Model provider request failed", "retryable": is_transient})

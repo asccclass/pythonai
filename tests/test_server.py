@@ -219,6 +219,54 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(client.chat.completions.calls, 2)
         self.assertEqual(sleeps, [0.0])
 
+    def test_run_agent_explains_non_retryable_provider_errors_without_retrying(self):
+        for status, hints in (
+            (404, ("找不到 API 路徑或資源", "OLLAMA_BASE_URL", "/v1", "OLLAMA_MODEL")),
+            (401, ("驗證失敗或存取遭拒", "OLLAMA_API_KEY")),
+            (403, ("驗證失敗或存取遭拒", "模型存取權限")),
+            (400, ("請求遭遠端服務拒絕", "請求內容")),
+        ):
+            with self.subTest(status=status):
+                request = httpx.Request("POST", "https://example.test/chat/completions")
+                error = APIStatusError("provider rejected request", response=httpx.Response(status, request=request), body={})
+                with (
+                    patch("server.get_client"),
+                    patch("agent_execution.turn_control.steps.model_step", side_effect=error) as step,
+                    patch("builtins.print"),
+                    patch("server.time.sleep") as sleep,
+                ):
+                    result = server.run_agent([{"role": "user", "content": "hi"}])
+                step.assert_called_once()
+                sleep.assert_not_called()
+                self.assertIn(f"HTTP {status}", result)
+                self.assertIn("不再重試", result)
+                for hint in hints:
+                    self.assertIn(hint, result)
+                self.assertNotIn("已達重試上限", result)
+                self.assertNotIn("伺服器過載", result)
+                self.assertIn(str(error), result)
+
+    def test_run_agent_reports_actual_retry_exhaustion(self):
+        request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+        errors = (
+            APIStatusError("unavailable", response=httpx.Response(503, request=request), body={}),
+            APITimeoutError(request=request),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                with (
+                    patch("server.get_client"),
+                    patch("agent_execution.turn_control.steps.model_step", side_effect=error) as step,
+                    patch("builtins.print"),
+                ):
+                    sleeps = []
+                    result = server.run_agent([{"role": "user", "content": "hi"}], max_retries=2, sleep=sleeps.append)
+                self.assertEqual(step.call_count, 3)
+                self.assertEqual(len(sleeps), 2)
+                self.assertIn("已達重試上限（已重試 2 次）", result)
+                self.assertIn("HTTP 503" if isinstance(error, APIStatusError) else "連線失敗或逾時", result)
+                self.assertIn(str(error), result)
+
     def test_run_agent_logs_tool_call_and_result(self):
         class Function:
             name = "list_files"
