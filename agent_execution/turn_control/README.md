@@ -123,4 +123,22 @@ hook 改策略與未驗證 TaskYield 拒絕；真實 Temporal Service 的恢復�
 驗證：`venv\Scripts\python.exe -m pytest agent_execution/turn_control/tests/test_conversation_context.py`
 涵蓋 schema 壓力、後續工具／critic 回合、不可容納的來源，以及一般／串流的兩輪
 受控 provider 整合測試。測試實際執行 write_file 並比對 TODO.md 全文，不連外部 LLM。
-這項修改保護已載入的上一輪對話，並非無限歷史或服務重啟後的完整聊天還原機制。
+這項修改保護已載入的上一輪對話，並非無限歷史。
+
+## 待答逾時與重新提出要求
+
+任務 deadline 仍為建立起算的硬限制，包含等待人工回答的時間。使用者以新的訊息 ID
+提出要求時，已逾時的 SQLite `waiting_user` 任務會取消，不再吃掉新訊息當舊問題的答案。
+新要求以其原有新 ID 建立獨立任務；舊 deadline、token、request 與 cost 計數全部保留。
+沒有新 ID、重用舊 ID、重播已有新任務、原生工作流程或仍有有效 worker lease 時，
+拒絕自動替換。明確 `/resume` 已逾時任務回覆可讀的重送指引，不偷偷延長期限。
+已完成任務的快取結果仍可讀取。
+
+空 runtime 會在一般聊天入口從同一 owner 最近已完成 checkpoint 還原對話，
+新的系統／developer 原則不從舊資料還原。還原前會處理完整工具配對，不執行歷史呼叫。
+逾時待答交接則可沿用原 checkpoint 的對話資料，未回答的呼叫不會被重新執行。
+`/clear` 保存 conversation_resets 時間界線，重連或重啟不會重新載入清除前的完成紀錄。
+這是有限的會話資料還原，不會跨使用者、專案或會話讀取，也不自動重做失敗副作用。
+
+`test_waits.py` 涵蓋逾時／有效待答、新舊 ID、原生工作流程、live lease、owner 隔離、
+重啟／清除，以及「過期待答 → 新任務 → 實際寫入 TODO.md」整合測試。

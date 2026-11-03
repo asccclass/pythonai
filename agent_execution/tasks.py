@@ -46,6 +46,8 @@ class TaskStore:
                 CREATE TABLE IF NOT EXISTS task_workspaces (
                     owner TEXT NOT NULL, task_id TEXT NOT NULL, repository TEXT NOT NULL,
                     storage TEXT NOT NULL, PRIMARY KEY(owner,task_id));
+                CREATE TABLE IF NOT EXISTS conversation_resets (
+                    owner TEXT PRIMARY KEY, cleared_at REAL NOT NULL);
             ''')
             conn.execute('BEGIN IMMEDIATE')
             columns = {r['name'] for r in conn.execute('PRAGMA table_info(tasks)')}
@@ -220,6 +222,8 @@ class TaskStore:
     def cancel_session(self, owner):
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            conn.execute('INSERT INTO conversation_resets VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET cleared_at=excluded.cleared_at',
+                         (owner,time.time()))
             conn.execute("UPDATE tasks SET state='cancelled',reply='Session cleared',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND state NOT IN ('completed','failed','cancelled')", (time.time(),owner))
             from .temporal_backend.cancellation import request
             request(conn, owner)
@@ -443,6 +447,8 @@ def dispatch_task_input(text, runtime, attachments=None):
                         return AgentTurnResult('Human filesystem observation saved. Task remains fenced; no tool was repeated or task resumed.',row['episode'])
                 store.resolve(owner,key,parts[2],parts[3])
                 return AgentTurnResult('Human result saved. Use /resume to continue; the tool will not be repeated.',row['episode'])
+            from .turn_control.waits import reject_expired_resume
+            reject_expired_resume(store,owner,key)
             with execution_scope(task_id=key):
                 return resume_agent_turn(row['checkpoint']['messages'],runtime,row['episode'])
         except (KeyError,ValueError,PermissionError,TaskBusy,RecoveryRequired) as error:
@@ -451,10 +457,22 @@ def dispatch_task_input(text, runtime, attachments=None):
         suspended = next((row for row in store.list(owner) if row['state']=='suspended'),None)
         if suspended:
             row = store.get(owner,suspended['id'])
+            from .turn_control.waits import retire_expired_wait, restore_dialogue
+            try:
+                retired = retire_expired_wait(store,owner,row['id'],context.task_id)
+            except (TaskBusy,RecoveryRequired) as error:
+                return AgentTurnResult(f'Error: {error}',row['episode'])
+            if retired:
+                # A new human request gets its own task ID, never a reset of the
+                # expired task's deadline or counters. Do not consume an answer.
+                restore_dialogue(store,owner,runtime,retired['checkpoint']['messages'])
+                return None
             messages = row['checkpoint']['messages'] + [{'role':'tool','tool_call_id':row['checkpoint']['suspended_tool_call_id'],'content':text}]
             if attachments:
                 from agent_runtime import build_user_message
                 messages.append(build_user_message('Attached files for this answer', attachments))
             with execution_scope(task_id=row['id']):
                 return resume_agent_turn(messages,runtime,row['episode'])
+        from .turn_control.waits import restore_dialogue
+        restore_dialogue(store,owner,runtime)
     return None

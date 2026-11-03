@@ -23,11 +23,15 @@ def conversation_anchors(blocks, goal=''):
     current = matches[-1] if matches else users[-1]
     protected = {current}
     previous_reply = next((index for index in range(current-1,-1,-1) if any(
-        message.get('role')=='assistant' and text(message).strip() and not message.get('tool_calls')
+        message.get('role')=='assistant' and text(message).strip() and
+        not text(message).lstrip().startswith('Error:') and not message.get('tool_calls')
         for message in blocks[index])),None)
     if previous_reply is None:
         return protected
     protected.add(previous_reply)
+    # A new message may clarify a goal left between the prior answer and this
+    # request (for example, a project path after an expired human wait).
+    protected.update(index for index in users if previous_reply<index<current)
     previous_user = next((index for index in reversed(users) if index<previous_reply),None)
     if previous_user is not None:
         protected.add(previous_user)
