@@ -319,7 +319,9 @@ class BudgetTests(unittest.TestCase):
             return httpx.Response(429,headers={'retry-after':'0'},json={'error':{'message':'capacity'}})
         with httpx.Client(transport=httpx.MockTransport(handler)) as http:
             client=OpenAI(api_key='test',base_url='http://fixture/v1',http_client=http)
-            with budget_scope(),patch('server.get_client',return_value=client),patch('server.TOOLS_SCHEMAS',[]):
+            # Exercise request exhaustion independently of changing prompt size.
+            with patch.dict(os.environ,{'AGENT_TASK_MAX_TOKENS':'100000'}), \
+                 budget_scope(),patch('server.get_client',return_value=client),patch('server.TOOLS_SCHEMAS',[]):
                 result=server.run_agent([{'role':'user','content':'hello'}],max_retries=20)
         self.assertEqual(len(calls),3)
         self.assertIn('budget exhausted',result)
@@ -456,7 +458,8 @@ class ContextTests(unittest.TestCase):
             {'role':'assistant','tool_calls':[{'id':'call','type':'function','function':{'name':'x','arguments':'{}'}}]},
             {'role':'user','content':'hook feedback'},
             {'role':'tool','tool_call_id':'call','content':'approval_required: 123'},
-            {'role':'assistant','content':'old'*1000},{'role':'user','content':'next'}]
+            {'role':'assistant','content':'old'*1000},{'role':'user','content':'recent request'},
+            {'role':'assistant','content':'recent answer'},{'role':'user','content':'next'}]
         result=govern_messages(messages,2000,goal='original goal',criteria={'tests':'must pass'})
         self.assertNotIn('old'*1000,json.dumps(result))
         self.assertIn('original goal',json.dumps(result))
@@ -466,6 +469,8 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(result[index+2]['content'],'hook feedback')
         self.assertEqual(messages[3]['content'],'hook feedback')
         self.assertIn('next',json.dumps(result))
+        self.assertIn('recent request',json.dumps(result))
+        self.assertIn('recent answer',json.dumps(result))
 
     def test_protected_context_cannot_be_silently_truncated(self):
         with self.assertRaises(ContextTooLarge):

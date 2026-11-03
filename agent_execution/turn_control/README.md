@@ -105,3 +105,22 @@ hook 改策略與未驗證 TaskYield 拒絕；真實 Temporal Service 的恢復�
 純讀取 `browser_session` 的導覽逾時一次後，同任務會直接阻擋該網址的再次導覽，回饋明確引導 `fetch_url` 或現有搜尋結果中的其他來源。改 session_id、screenshot 或 URL fragment 也不重試；紀錄會隨 checkpoint 保存。此限制不將元素互動逾時視為導覽失敗，也不封鎖其他網址或其他工具，不會自動重播互動。替代抓取成功仍須通過既有驗收，沒有匯率就不能宣告完成。部署仍需重啟 `communication_server.py`。
 
 驗證：專案 `venv` 執行 media、base、task_evaluator、turn_control、results、tasks 相關回歸 **197 passed、22 subtests passed**，以 `PYTHONAI_BROWSER_TEST=1` 啟用真實 Chromium。測試程序暫設 `AGENT_TESSERACT_LANGUAGE=chi_tra`，使用本機已安裝的 OCR 語言；未改專案設定。初次擴大回歸的 PDF OCR 測試失敗已用 HEAD 原版重現，原因是本機缺預設 `eng` 資料，並非瀏覽器修正導致。最後補強無效 URL 參數防護後，turn_control 再驗 **46 passed**；compileall 與 diff check 通過。未執行全專案測試或正式桌面端端到端重播。
+
+## 承接上一輪規劃與檔案操作
+
+聊天歷史雖已保存在 runtime／checkpoint，原先模型上下文治理會為工具 schema
+裁掉上一輪回覆，造成「請將此規劃寫入 TODO.md」只剩目前指令可見。
+現在保護當前任務起點之前最近一組使用者請求與完整助手回覆；當輪中途的工具結果、
+驗收回饋不會把承接來源換掉。工具 schema 空間不足時，先縮減工具清單，
+保留原始角色及內容，不把舊回覆升格為系統指令，也不以新摘要取代原規劃。
+來源本身超過 context 上限時明確報錯，不靜默刪掉後再詢問使用者同一份內容。
+
+存檔指引優先採用使用者指定目錄，其次使用規劃內建議的目錄；沒有指定時，
+在使用者已授權建立專案檔案的範圍內選擇具描述性的獨立目錄，先檢查既有內容。
+不因 workspace 只有 test_project 就把不相關專案當作寫入位置。
+既有 workspace 所有權、工具權限、批准及預算限制繼續生效。
+
+驗證：`venv\Scripts\python.exe -m pytest agent_execution/turn_control/tests/test_conversation_context.py`
+涵蓋 schema 壓力、後續工具／critic 回合、不可容納的來源，以及一般／串流的兩輪
+受控 provider 整合測試。測試實際執行 write_file 並比對 TODO.md 全文，不連外部 LLM。
+這項修改保護已載入的上一輪對話，並非無限歷史或服務重啟後的完整聊天還原機制。
