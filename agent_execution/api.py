@@ -50,7 +50,10 @@ def authenticated_api(path, method, body, headers):
                 with execution_scope(workspace=project_workspace(project)):
                     return handle(route,method,body)
             except PermissionError as error:return 403,{'error':'cleanup_rejected','message':str(error)}
-            except (ValueError,OSError) as error:return 409,{'error':'cleanup_blocked','message':str(error)}
+            except (ValueError,OSError) as error:
+                payload={'error':'cleanup_blocked','message':str(error),'retryable':getattr(error,'retryable',False)}
+                if hasattr(error,'blockers'):payload['blockers']=error.blockers
+                return 409,payload
         if route.startswith('/api/ops/'):
             if method!='GET' or role!='admin':return 403,{'error':'forbidden'}
             if route=='/api/ops/readiness':

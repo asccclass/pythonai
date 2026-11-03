@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import threading
+import uuid
 from typing import Any
 
 
@@ -22,6 +24,7 @@ def memory_db_path() -> Path:
 
 class MemoryStore:
     def __init__(self, db_path: str | Path | None = None) -> None:
+        self._job_leases = threading.local()
         self.db_path = Path(db_path) if db_path is not None else memory_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
@@ -185,6 +188,8 @@ class MemoryStore:
                 )
                 """
             )
+            from agent_execution.memory_jobs import migrate
+            migrate(connection)
             connection.commit()
 
     def start_episode(self) -> int:
@@ -923,8 +928,7 @@ class MemoryStore:
 
     def pending_memory_jobs(self, job_type: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         query = """
-            SELECT id, job_type, episode_id, status, payload, attempts, last_error,
-                   next_attempt_at, created_at, updated_at
+            SELECT *
             FROM memory_jobs
             WHERE status = 'pending'
               AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
@@ -943,8 +947,7 @@ class MemoryStore:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, job_type, episode_id, status, payload, attempts, last_error,
-                       next_attempt_at, created_at, updated_at
+                SELECT *
                 FROM memory_jobs
                 ORDER BY id DESC
                 LIMIT ?
@@ -954,66 +957,30 @@ class MemoryStore:
         return [_memory_job_from_row(row) for row in rows]
 
     def claim_memory_job(self, job_id: int) -> bool:
-        with closing(self.connect()) as connection:
-            cursor = connection.execute(
-                """
-                UPDATE memory_jobs
-                SET status = 'processing',
-                    attempts = attempts + 1,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                  AND status = 'pending'
-                  AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
-                """,
-                (job_id,),
-            )
-            connection.commit()
-            return cursor.rowcount > 0
+        from agent_execution.memory_jobs import claim
+        token = uuid.uuid4().hex
+        if not claim(self, job_id, token):
+            return False
+        if not hasattr(self._job_leases, 'tokens'):
+            self._job_leases.tokens = {}
+        self._job_leases.tokens[job_id] = token
+        return True
+
+    def _memory_job_token(self, job_id: int) -> str | None:
+        return getattr(self._job_leases, 'tokens', {}).get(job_id)
 
     def complete_memory_job(self, job_id: int) -> None:
-        with closing(self.connect()) as connection:
-            connection.execute(
-                """
-                UPDATE memory_jobs
-                SET status = 'completed',
-                    last_error = NULL,
-                    next_attempt_at = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (job_id,),
-            )
-            connection.commit()
+        from agent_execution.memory_jobs import finish
+        finish(self, job_id, self._memory_job_token(job_id), 'completed')
 
     def defer_memory_job(self, job_id: int, retry_after_seconds: float, error: str | None = None) -> None:
         next_attempt_at = _timestamp_after_seconds(retry_after_seconds)
-        with closing(self.connect()) as connection:
-            connection.execute(
-                """
-                UPDATE memory_jobs
-                SET status = 'pending',
-                    last_error = ?,
-                    next_attempt_at = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (error, next_attempt_at, job_id),
-            )
-            connection.commit()
+        from agent_execution.memory_jobs import finish
+        finish(self, job_id, self._memory_job_token(job_id), 'pending', error, next_attempt_at)
 
     def fail_memory_job(self, job_id: int, error: str | None = None) -> None:
-        with closing(self.connect()) as connection:
-            connection.execute(
-                """
-                UPDATE memory_jobs
-                SET status = 'failed',
-                    last_error = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (error, job_id),
-            )
-            connection.commit()
+        from agent_execution.memory_jobs import finish
+        finish(self, job_id, self._memory_job_token(job_id), 'failed', error)
 
     def provider_cooldown_state(self, provider_name: str) -> dict[str, Any]:
         with closing(self.connect()) as connection:

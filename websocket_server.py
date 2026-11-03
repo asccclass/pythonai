@@ -880,7 +880,10 @@ async def handle_lifecycle_message(session,data):
                 if peer is not session and peer.ws:
                     await peer.send(response,result)
     except (ValueError,PermissionError,OSError,sqlite3.Error) as error:
-        await session.send('error',{'code':'cleanup_blocked','message':str(error),'retryable':False},ref=reference)
+        payload = {'code':'cleanup_blocked','message':str(error),'retryable':getattr(error,'retryable',False)}
+        if hasattr(error,'blockers'):
+            payload['blockers'] = error.blockers
+        await session.send('error',payload,ref=reference)
 
 
 def handle_audio_frame(session: Session, data: bytes) -> None:

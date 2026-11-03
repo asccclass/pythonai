@@ -95,6 +95,55 @@ class LifecycleWebSocketTests(unittest.TestCase):
                 self.assertEqual(self.send(ws,'turn.delete.status',{'request_id':'turn-one'})['payload']['state'],'deleted')
                 self.assertEqual(self.send(ws,'turn.delete',{'request_id':'turn-one'})['payload']['state'],'deleted')
 
+    def test_memory_job_blockers_are_specific_retryable_and_keep_turn_files(self):
+        from base import write_file
+        from memory import MemoryStore
+        from permissions import set_current_role
+        with self.scope(), execution_scope(task_id='turn-one'), set_current_role('admin'):
+            write_file('keep.txt','must remain while worker is active')
+            memory = MemoryStore()
+            job = memory.add_memory_job('memory_review',memory.start_episode())
+            self.assertTrue(memory.claim_memory_job(job))
+        with TestClient(app) as client:
+            with client.websocket_connect('/ws/v1') as ws:
+                self.hello(ws)
+                blocked = self.send(ws,'turn.delete',{'request_id':'turn-one'})['payload']
+                self.assertEqual(blocked['code'],'cleanup_blocked')
+                self.assertTrue(blocked['retryable'])
+                self.assertEqual(blocked['blockers'][0]['job_id'],job)
+                self.assertEqual(blocked['blockers'][0]['status'],'processing')
+                self.assertIn(f'#{job}',blocked['message'])
+                self.assertTrue((self.root/'keep.txt').exists())
+                preview = self.send(ws,'session.delete.preview')['payload']
+                self.assertEqual(preview['blocking_details'][0]['job_id'],job)
+                confirm = self.send(ws,'session.delete.confirm',{'plan_id':preview['plan_id']})['payload']
+                self.assertTrue(confirm['retryable'])
+                self.assertEqual(confirm['blockers'][0]['job_id'],job)
+                with client.websocket_connect('/ws/v1') as other:
+                    self.hello(other,'bob-token',device='other')
+                    other_preview = self.send(other,'session.delete.preview')['payload']
+                    self.assertEqual(other_preview['blocking_details'],[])
+                memory.complete_memory_job(job)
+                self.assertEqual(self.send(ws,'turn.delete',{'request_id':'turn-one'})['payload']['state'],'deleted')
+
+    def test_legacy_memory_job_blocker_requires_maintenance_and_cannot_delete(self):
+        from contextlib import closing
+        from memory import MemoryStore
+        with self.scope():
+            LifecycleStore().ensure_session()
+            memory = MemoryStore()
+            job = memory.add_memory_job('memory_review',memory.start_episode())
+            with closing(memory.connect()) as conn, conn:
+                conn.execute("UPDATE memory_jobs SET status='processing' WHERE id=?",(job,))
+        with TestClient(app) as client:
+            with client.websocket_connect('/ws/v1') as ws:
+                self.hello(ws)
+                blocked = self.send(ws,'turn.delete',{'request_id':'turn-one'})['payload']
+                self.assertFalse(blocked['retryable'])
+                self.assertEqual(blocked['blockers'][0]['owner_state'],'legacy_unowned')
+                self.assertTrue(blocked['blockers'][0]['recovery_required'])
+                self.assertIn('備份',blocked['message'])
+
     def test_document_download_is_scoped_and_deleted_with_conversation(self):
         import base64
         from base import write_file

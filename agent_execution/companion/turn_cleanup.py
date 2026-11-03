@@ -124,12 +124,16 @@ def _delete(task):
         if old and old['expires']>time.time() and old['lease']:
             raise ValueError('Turn file cleanup is already running')
         owners = [r[0] for r in conn.execute('SELECT task_owner FROM wl_session_owners WHERE session=?',(session,))]
-        if conn.execute('SELECT 1 FROM tasks t JOIN wl_session_owners o ON o.task_owner=t.owner '
-                        "WHERE o.session=? AND (t.state='running' OR COALESCE(t.lease_until,0)>?)",(session,time.time())).fetchone():
-            raise ValueError('Wait for conversation tasks to stop before deleting files')
+        from agent_execution.workspace_lifecycle.blockers import CleanupBlocked, WorkerBlocker
+        busy_tasks = conn.execute('SELECT t.id,t.state FROM tasks t JOIN wl_session_owners o ON o.task_owner=t.owner '
+                        "WHERE o.session=? AND (t.state='running' OR COALESCE(t.lease_until,0)>?)",(session,time.time())).fetchall()
+        if busy_tasks:
+            raise CleanupBlocked([WorkerBlocker('task:'+r['id'],
+                {'kind':'task','id':r['id'],'status':r['state'],'retryable':True}) for r in busy_tasks])
         from agent_execution.workspace_lifecycle.erasure import external_blockers
-        if external_blockers(owners,store.path):
-            raise ValueError('Conversation background workers are still using files')
+        blockers = external_blockers(owners,store.path)
+        if blockers:
+            raise CleanupBlocked(blockers)
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if 'agent_nodes' in names:
             from agent_execution.coordinator import SUCCESS, STOPPED

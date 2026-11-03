@@ -43,9 +43,10 @@ def external_blockers(owners,task_db=None):
         path=tenant_memory_path(user,project,session)
         if path.exists():
             identity(path)
-            with closing(sqlite3.connect(path)) as conn:
-                if 'memory_jobs' in tables(conn) and conn.execute("SELECT 1 FROM memory_jobs WHERE status='processing'").fetchone():
-                    result.append('memory-worker:'+session)
+            from agent_execution.memory_jobs import inspect_jobs
+            from .blockers import WorkerBlocker
+            for job in inspect_jobs(path):
+                result.append(WorkerBlocker('memory-worker:'+session+':'+str(job['job_id']),job))
     from communication_store import CommunicationStore
     for owner,path in transports(owners,task_db):result.extend(CommunicationStore(path).lifecycle_blockers(owner))
     return result
@@ -141,7 +142,9 @@ def finalize(store,key,runtime=None,event_store=None):
         records={owner:[dict(r) for r in conn.execute('SELECT id,episode FROM tasks WHERE owner=?',(owner,))] for owner in owners}
     from agent_execution.temporal_backend.erasure import guard_session
     guard_session(store,plan['session'])
-    if external_blockers(owners,store.path):raise ValueError('A transport, schedule or memory worker is still active; cancel/wait before erasure')
+    from .blockers import CleanupBlocked
+    blockers = external_blockers(owners,store.path)
+    if blockers:raise CleanupBlocked(blockers)
     from communication_store import CommunicationStore
     for owner,path in transports(owners,store.path):CommunicationStore(path).erase_session(owner)
     erase_schedules(owners)

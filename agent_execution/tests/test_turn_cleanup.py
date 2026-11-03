@@ -130,7 +130,7 @@ class TurnCleanupTests(unittest.TestCase):
         store = TaskStore(); owner = task_owner(current_context())
         token = store.claim(owner,'request','goal',[])
         try:
-            with self.assertRaisesRegex(ValueError,'stop'):delete('request')
+            with self.assertRaisesRegex(ValueError,'running'):delete('request')
             self.assertTrue((self.root/'translated.txt').exists())
         finally:store.finish(owner,'request',token,'completed','done')
 
@@ -139,7 +139,7 @@ class TurnCleanupTests(unittest.TestCase):
         store = TaskStore(); owner = task_owner(current_context())
         token = store.claim(owner,'background','background work',[])
         try:
-            with self.assertRaisesRegex(ValueError,'stop'):delete('request')
+            with self.assertRaisesRegex(ValueError,'running'):delete('request')
             self.assertTrue((self.root/'translated.txt').exists())
             self.assertEqual(store.get(owner,'background')['state'],'running')
         finally:store.finish(owner,'background',token,'completed','done')

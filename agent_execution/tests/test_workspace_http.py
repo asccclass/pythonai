@@ -54,6 +54,23 @@ class WorkspaceHTTPTests(unittest.TestCase):
                 row=conn.execute('SELECT result,files,bytes FROM wl_audit').fetchone()
                 self.assertEqual((row[0],row[1]),('deleted',1))
 
+    def test_memory_worker_conflict_returns_specific_retryable_details(self):
+        from memory import MemoryStore
+        from agent_execution.sessions import tenant_memory_path
+        self.program()
+        # Create a session-owned memory worker recognized by the cleanup guard.
+        memory = MemoryStore(tenant_memory_path('api:alice','default','default:dashboard'))
+        job = memory.add_memory_job('memory_review',memory.start_episode())
+        self.assertTrue(memory.claim_memory_job(job))
+        code,preview = self.api('preview')
+        self.assertEqual(code,200)
+        code,result = self.api('confirm',{'plan_id':preview['plan_id']})
+        self.assertEqual(code,409)
+        self.assertTrue(result['retryable'])
+        self.assertEqual(result['blockers'][0]['job_id'],job)
+        self.assertTrue((self.root/'temporary').exists())
+        memory.complete_memory_job(job)
+
     @unittest.skipUnless(os.environ.get('PYTHONAI_BROWSER_TEST')=='1','opt-in Chromium management UI')
     def test_chromium_preview_cancel_confirm_and_reload_status(self):
         from playwright.sync_api import sync_playwright
