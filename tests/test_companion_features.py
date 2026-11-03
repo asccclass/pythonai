@@ -99,7 +99,9 @@ class CompanionFeaturesTests(unittest.TestCase):
         attachment = decode_attachments([{'filename': 'answer.txt', 'content_type': 'text/plain', 'data_base64': base64.b64encode(b'attached answer').decode()}])
         row = {'id': 'suspended-task', 'state': 'suspended', 'episode': 42,
                'checkpoint': {'messages': [], 'suspended_tool_call_id': 'ask-user'}}
-        with patch('agent_execution.tasks.TaskStore') as store, patch('agent_runtime.resume_agent_turn', return_value='resumed') as resume:
+        with patch('agent_execution.tasks.TaskStore') as store, \
+             patch('agent_execution.turn_control.waits.retire_expired_wait',return_value=None), \
+             patch('agent_runtime.resume_agent_turn', return_value='resumed') as resume:
             store.return_value.list.return_value = [row]
             store.return_value.get.return_value = row
             self.assertEqual(dispatch_task_input('answer', SimpleNamespace(), attachments=attachment), 'resumed')

@@ -104,6 +104,8 @@ def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None, im
     last_user=next((index for index in range(len(blocks)-1,-1,-1) if any(m.get('role')=='user' for m in blocks[index])),None)
     if last_user is not None:
         protected.add(last_user)
+    from .turn_control.context import conversation_anchors
+    protected.update(conversation_anchors(blocks, goal))
     constraints=[]
     if goal or criteria:
         # These are task data in a user message; a summary never gains system authority.
@@ -125,7 +127,7 @@ def govern_messages(messages, max_tokens, tools=None, goal='', criteria=None, im
                                  lambda values: message_tokens(values, image_tokens))
     if fitted is not None:
         return fitted
-    raise ContextTooLarge('Protected instructions, goal, approvals or latest input exceed model context budget')
+    raise ContextTooLarge('Protected instructions, goal, previous conversation exchange, approvals or latest input exceed model context budget')
 
 
 def fit_tool_schemas(messages, max_tokens, tools, goal='', criteria=None, image_tokens=None):

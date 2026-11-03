@@ -224,7 +224,9 @@ class LifecycleStore:
             for owner in owners:
                 if conn.execute("SELECT 1 FROM tasks WHERE owner=? AND (state NOT IN ('completed','failed','cancelled') OR COALESCE(lease_until,0)>?)",(owner,time.time())).fetchone():raise ValueError('A task still needs termination')
             from .erasure import external_blockers
-            if external_blockers(owners,self.path):raise ValueError('A worker is still active')
+            from .blockers import CleanupBlocked
+            blockers = external_blockers(owners,self.path)
+            if blockers:raise CleanupBlocked(blockers)
             conn.execute("UPDATE wl_directories SET build_state='failed',generation=generation+1 WHERE id=?",(key,))
 
     def assert_writable(self, target):
@@ -310,11 +312,14 @@ class LifecycleStore:
             from .erasure import external_blockers,schedules,transports
             from communication_store import CommunicationStore
             blocking.extend(external_blockers(owners,self.path))
+            from .blockers import CleanupBlocked
+            blocking_details = CleanupBlocked(blocking).blockers if blocking else []
             known={Path(r[0]).parts[0] for r in conn.execute('SELECT relative FROM wl_directories WHERE root=?',(root,))}
             unmanaged_count=sum(p.is_dir() and p.name not in known and p.name!='.git' for p in path.iterdir())
             from agent_execution.temporal_backend.retention import preview as temporal_preview
             from agent_execution.temporal_backend.dag_erasure import preview as dag_preview
             payload = {'session':session,'action':action,'items':items,'kept':kept,'blocking_tasks':blocking,'unmanaged_count':unmanaged_count,
+                'blocking_details':blocking_details,
                 'resources':self.resources(conn),
                 'transports':[CommunicationStore(path).lifecycle_summary(owner) for owner,path in transports(owners,self.path)],
                 'schedules':schedules(owners) if action=='delete_session' else [],
@@ -339,7 +344,10 @@ class LifecycleStore:
         from agent_execution.approvals import ApprovalStore
         plan=self.plan(key)
         if plan['expires']<=time.time():raise ValueError('Preview expired; preview again')
-        if plan['payload']['blocking_tasks']:raise ValueError('Finish/cancel active tasks before cleanup')
+        if plan['payload']['blocking_tasks']:
+            from .blockers import CleanupBlocked, WorkerBlocker
+            details = plan['payload'].get('blocking_details')
+            raise CleanupBlocked([WorkerBlocker('',item) for item in details] if details else plan['payload']['blocking_tasks'])
         context=current_context()
         approval=ApprovalStore().request(context.identity,context.session,'workspace:'+key,public_payload(plan['payload']))
         with closing(self.connect()) as conn,conn:conn.execute('UPDATE wl_plans SET approval=? WHERE id=?',(approval,key))

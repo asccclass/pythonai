@@ -233,6 +233,9 @@ class MemoryBackgroundWorker:
     ) -> int:
         if memory is None or not hasattr(memory, "pending_memory_jobs"):
             return 0
+        if isinstance(memory, MemoryStore):
+            from agent_execution.memory_jobs import recover
+            recover(memory.db_path)
         if hasattr(memory,'db_path'):
             with self._review_sources_lock:
                 self._review_sources[str(memory.db_path.resolve())] = (memory,memory_classifier,semantic_extractor,procedure_matcher)
@@ -275,6 +278,9 @@ class MemoryBackgroundWorker:
     ) -> int:
         if memory is None or self.embedding_provider is None or not hasattr(memory, "pending_memory_jobs"):
             return 0
+        if isinstance(memory, MemoryStore):
+            from agent_execution.memory_jobs import recover
+            recover(memory.db_path)
         jobs = memory.pending_memory_jobs(job_type="embedding_backfill", limit=limit)
         for job in jobs:
             semantic_memory_id = job.get("payload", {}).get("semantic_memory_id")
@@ -322,6 +328,30 @@ class MemoryBackgroundWorker:
                 self.queue.task_done()
 
     def _process_item(self, item: tuple[Any, ...]) -> None:
+        if item and isinstance(item[0],str) and item[0] in {'memory_review', 'embedding_backfill'}:
+            job_id, memory = item[1:3]
+        elif len(item) == 6:
+            job_id, memory = item[:2]
+        else:
+            job_id, memory = None, None
+        if job_id is not None and isinstance(memory, MemoryStore):
+            if not memory.claim_memory_job(job_id):
+                return
+            from agent_execution.memory_jobs import heartbeat, release_after_execution
+            token = memory._memory_job_token(job_id)
+            with heartbeat(memory, job_id):
+                try:
+                    self._process_claimed_item(item)
+                except Exception as error:
+                    # Classifier construction and setup can fail before the
+                    # inner handler. They must not strand a claimed job.
+                    self._fail_job(memory, job_id, str(error))
+                finally:
+                    release_after_execution(memory, job_id, token)
+        else:
+            self._process_claimed_item(item)
+
+    def _process_claimed_item(self, item: tuple[Any, ...]) -> None:
         if item and item[0] == "embedding_backfill":
             _, job_id, memory, semantic_memory_id, *rest = item
             episode_id = rest[0] if rest else None
@@ -488,6 +518,9 @@ class MemoryBackgroundWorker:
         return safe_memory_call(memory.add_memory_job, "memory_review", episode_id=episode_id)
 
     def _claim_job(self, memory: MemoryStore, job_id: int | None) -> bool:
+        if isinstance(memory, MemoryStore) and job_id is not None:
+            # The outer execution scope already claimed and started heartbeat.
+            return memory._memory_job_token(job_id) is not None
         if job_id is None or not hasattr(memory, "claim_memory_job"):
             return True
         return bool(safe_memory_call(memory.claim_memory_job, job_id))

@@ -17,6 +17,7 @@ profile.db-*
 memory/*.db
 memory/*.db-*
 background_worker.lock
+memory-job-backups/
 memory/*.lock
 communication/*.db
 communication/*.db-*

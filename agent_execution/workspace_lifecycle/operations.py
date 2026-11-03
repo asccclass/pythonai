@@ -57,7 +57,9 @@ def check_items(store,plan,conn):
         if conn.execute("SELECT 1 FROM tasks WHERE owner=? AND (state NOT IN ('completed','failed','cancelled') OR COALESCE(lease_until,0)>?)",(owner,time.time())).fetchone():
             raise ValueError('Task still active; wait for confirmed termination')
     from .erasure import external_blockers
-    if external_blockers(owners,store.path):raise ValueError('Cancel/wait for transport, schedule or memory work before cleanup')
+    from .blockers import CleanupBlocked
+    blockers = external_blockers(owners,store.path)
+    if blockers:raise CleanupBlocked(blockers)
     from .erasure import schedules
     if plan['action']=='delete_session' and schedules(owners)!=plan['payload'].get('schedules',[]):
         raise ValueError('Schedules changed; preview again')
@@ -152,7 +154,9 @@ def resume(store,key):
                 current=schedules(owners)
                 if current:
                     disable_schedules(owners,plan['payload'].get('schedules',[]))
-            if external_blockers(owners,store.path):raise ValueError('Waiting for workers to stop; files retained')
+            from .blockers import CleanupBlocked
+            blockers = external_blockers(owners,store.path)
+            if blockers:raise CleanupBlocked(blockers)
         for item in plan['payload']['items']:
             fenced()
             with closing(store.connect()) as conn,conn:
@@ -226,6 +230,9 @@ def resume(store,key):
     except Exception as error:
         with closing(store.connect()) as conn,conn:
             conn.execute("UPDATE wl_operations SET state='blocked',error=?,updated=? WHERE id=?",(str(error),time.time(),key))
-        return {'operation_id':key,'state':'blocked','action':plan['action'],'error':str(error)}
+        result = {'operation_id':key,'state':'blocked','action':plan['action'],'error':str(error),
+                  'retryable':getattr(error,'retryable',False)}
+        if hasattr(error,'blockers'):result['blockers']=error.blockers
+        return result
     finally:
         with closing(store.connect()) as conn,conn:conn.execute('DELETE FROM wl_leases WHERE operation=? AND token=?',(key,lease))
