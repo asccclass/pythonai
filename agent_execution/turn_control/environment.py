@@ -1,6 +1,7 @@
 """Backend-detected execution facts; never infer them from user or model prose."""
 from agent_configuration import load_json, load_text
 from functools import lru_cache
+from datetime import datetime
 import json
 import platform
 import re
@@ -49,7 +50,9 @@ def environment_context():
         rules.append(load_text('environment.json', 'unknown_os'))
     if mode == 'container':
         rules.append(load_text('environment.json', 'container'))
-    facts = {'host': host, 'run_command': command_details, 'host_workspace': str(workspace_root())}
+    now = datetime.now().astimezone()
+    facts = {'current_date': now.date().isoformat(), 'timezone': str(now.tzinfo),
+             'host': host, 'run_command': command_details, 'host_workspace': str(workspace_root())}
     return START + '\n' + json.dumps(facts, ensure_ascii=False) + '\n' + '\n'.join(rules) + '\n' + END
 
 

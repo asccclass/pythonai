@@ -1,5 +1,6 @@
 """Readable, bounded web evidence for the model rather than HTML navigation chrome."""
 from urllib.parse import urlsplit
+import json
 import re
 
 
@@ -51,6 +52,37 @@ def _focused(content, contains, limit):
 
 
 def readable_content(content, url, limit=24000, contains=''):
+    # Pretty-print API responses so adjacent fields do not look like one value.
+    # A focused JSON read retains root metadata (base, date, provider) together
+    # with the requested field instead of returning the entire rates table.
+    try:
+        data = json.loads(content)
+    except (ValueError, TypeError):
+        data = None
+    if isinstance(data, (dict, list)):
+        if contains:
+            needle = contains.strip('\\"\' ').casefold()
+            def select(value):
+                if isinstance(value, dict):
+                    selected = {}
+                    for key, item in value.items():
+                        if key.casefold() == needle:
+                            selected[key] = item
+                        elif isinstance(item, (dict, list)):
+                            child = select(item)
+                            if child:
+                                selected[key] = child
+                    return selected
+                if isinstance(value, list):
+                    return [child for item in value if (child := select(item))]
+                return None
+            selected = select(data)
+            if selected:
+                if isinstance(data, dict):
+                    selected = {**{key: value for key, value in data.items()
+                                   if not isinstance(value, (dict, list))}, **selected}
+                return _bounded(json.dumps(selected, ensure_ascii=False, indent=2), limit)
+        content = json.dumps(data, ensure_ascii=False, indent=2)
     if re.search(r'<(?:!doctype html|html|body|article)\b', content[:2000], re.I):
         from bs4 import BeautifulSoup
         import markdownify

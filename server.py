@@ -231,6 +231,10 @@ def run_agent(
             return 'Error: Task deadline exhausted'
         return "Task was cancelled by the user."
 
+    def requests_left():
+        budget = active_budget()
+        return budget.max_requests - budget.snapshot()['requests'] if budget else float('inf')
+
     while iteration < max_iterations or (step_controller is not None and bool(resume_state)):
         if check_cancelled and check_cancelled():
             return stopped_reply()
@@ -248,7 +252,9 @@ def run_agent(
                 if step_controller is not None:
                     checkpoint('step_preparing', next_kind='model')
                 iteration += 1
-                concluding = iteration >= max_iterations or progress.state['blocked'] >= 2
+                concluding = (iteration >= max_iterations or progress.state['blocked'] >= 2
+                              or progress.state.get('read_reuses', 0) >= 2
+                              or requests_left() <= 1 + int(task_evaluator is not None))
                 if concluding:
                     messages.append({'role':'user','content':load_text('instructions.json', 'execution_limit')})
                 elif iteration == max_iterations - 2:
@@ -312,7 +318,8 @@ def run_agent(
                     if isinstance(error, APIStatusError) and status_code not in TRANSIENT_STATUS_CODES:
                         is_transient = False
                     
-                    if not is_transient or attempts >= max_retries:
+                    if (not is_transient or attempts >= max_retries
+                            or (task_evaluator is not None and requests_left() <= 1)):
                         if status_code == 404:
                             reason = (
                                 "HTTP 404：找不到 API 路徑或資源，已停止且不再重試。"
@@ -328,6 +335,11 @@ def run_agent(
                             reason = (
                                 f"HTTP {status_code}：請求遭遠端服務拒絕，已停止且不再重試。"
                                 "請檢查 API 設定與請求內容。"
+                            )
+                        elif requests_left() <= int(task_evaluator is not None) and attempts < max_retries:
+                            reason = (
+                                f"服務請求失敗；剩餘請求額度不足以繼續重試並完成驗收，"
+                                f"已停止重試（已重試 {attempts} 次）。請稍後再試。"
                             )
                         else:
                             failure = f"HTTP {status_code}" if status_code else "連線失敗或逾時"
@@ -386,7 +398,9 @@ def run_agent(
 
             checkpoint('model_received')
         if assistant_message.tool_calls:
-            if iteration >= max_iterations or progress.state['blocked'] >= 2:
+            if (iteration >= max_iterations or progress.state['blocked'] >= 2
+                    or progress.state.get('read_reuses', 0) >= 2
+                    or requests_left() <= int(task_evaluator is not None)):
                 return 'Error: Agent could not conclude within its execution budget. Repeated tool operations or remaining work require a new strategy. No additional tools were executed; inspect prior tool errors and saved progress before continuing.'
             suspend_request = None
             for tool_call in assistant_message.tool_calls:
@@ -617,7 +631,9 @@ def run_agent(
                 event_callback("task.evaluation", {"success": eval_res.success, "score": eval_res.score, "feedback": eval_res.feedback,'verified':getattr(eval_res,'verified',False)})
 
             if not eval_res.success:
-                if eval_retries < max_eval_retries and getattr(eval_res,'retryable',True) and iteration < max_iterations and progress.state['blocked'] < 2:
+                if (eval_retries < max_eval_retries and getattr(eval_res,'retryable',True)
+                        and iteration < max_iterations and progress.state['blocked'] < 2
+                        and requests_left() >= 2):
                     eval_retries += 1
                     critic_feedback = (
                         load_text('instructions.json', 'critic_feedback', attempt=eval_retries,

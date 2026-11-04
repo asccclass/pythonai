@@ -120,10 +120,23 @@ def recovered_read_failure(step, steps, root=None):
         navigation_only = step['name'] != 'browser_session' or set(args) <= {'url'} or (
             set(args) <= {'url', 'actions'} and not args.get('actions'))
         side_effect_free = failed.get('side_effects', {}).get('status') in {None, 'none'} or (
-            step['name'] == 'browser_session' and navigation_only)
+            step['name'] == 'browser_session' and navigation_only) or (
+            # Older built-in GET/navigation results used the generic unknown
+            # default. These tools cannot execute browser actions or writes.
+            failed.get('side_effects', {}).get('status') == 'unknown' and
+            step['name'] in {'fetch_url', 'browse_webpage'})
+        from task_evaluator import TaskEvaluator
+        if TaskEvaluator._permission_denied(str(failed.get('error') or '')):
+            return False
         if (step['name'] not in web_reads or step['state'] != 'failed' or not side_effect_free or
                 not navigation_only or not isinstance(args.get('url'), str)):
             return False
+        # A failed optional cross-check does not erase an already verified
+        # public source. The judge still checks that it supports the answer.
+        from task_evaluator import public_web_source_evidence
+        if any(other is not step and public_web_source_evidence([other])
+               for other in steps if other.get('name') in web_reads):
+            return True
         for other in steps:
             if other is step or other['name'] != step['name'] or other['state'] != 'completed':
                 continue

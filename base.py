@@ -231,7 +231,8 @@ def fetch_url(url: str, max_time: int = 20, follow_redirects: bool = True, raw: 
     if target != url:
         command[1:1] = ['--header', 'Accept: application/vnd.github.raw+json']
     result = run_process(command, **subprocess_text_options())
-    if result.returncode == 0 and not raw:
+    result.side_effects = {'status': 'none'}
+    if result.returncode == 0 and (not raw or contains):
         result.stdout = readable_content(result.stdout or '', url, contains=contains)
         source = f'Source: {url}\n' + (f'README: {target}\n' if target != url else '')
         result.stdout = source + load_text('instructions.json', 'untrusted_web') + result.stdout

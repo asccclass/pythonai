@@ -33,6 +33,12 @@ class TurnProgress:
 
     @staticmethod
     def key(name, args):
+        if name == 'fetch_url':
+            args = dict(args)
+            for option, default in [('raw', False), ('contains', ''),
+                                    ('max_time', 20), ('follow_redirects', True)]:
+                if args.get(option) == default:
+                    args.pop(option, None)
         return hashlib.sha256(json.dumps([name, args], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     @staticmethod
@@ -90,6 +96,10 @@ class TurnProgress:
         return None
 
     def observe(self, name, args, result):
+        if result.evidence.get('kind') == 'reuse_prior_read':
+            self.state['read_reuses'] = self.state.get('read_reuses', 0) + 1
+        else:
+            self.state['read_reuses'] = 0
         navigation_timeout = (name == 'browser_session' and not args.get('actions') and isinstance(args.get('url'), str) and not result.success
                               and 'page.goto:' in result.error.casefold() and 'timeout' in result.error.casefold())
         if navigation_timeout:

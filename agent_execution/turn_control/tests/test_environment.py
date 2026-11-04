@@ -46,6 +46,17 @@ def test_host_detection_is_cached_and_reports_only_command_names(monkeypatch):
     assert 'never-report-this' not in json.dumps(first)
 
 
+def test_current_date_refreshes_even_when_host_detection_is_cached():
+    from datetime import datetime, timezone
+    first = datetime(2026, 11, 3, tzinfo=timezone.utc)
+    second = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    with patch.object(env, 'datetime') as clock:
+        clock.now.return_value = first
+        assert facts(env.environment_context())['current_date'] == '2026-11-03'
+        clock.now.return_value = second
+        assert facts(env.environment_context())['current_date'] == '2026-11-04'
+
+
 def test_container_separates_host_tools_from_linux_target(monkeypatch):
     from sandbox import SandboxExecution
     monkeypatch.setenv('AGENT_EXECUTION_MODE', 'container')

@@ -1,6 +1,7 @@
 {
   "common": [
     "These facts describe the backend executing tools, not the OS of the chat/desktop client.",
+    "Use current_date for today queries; never substitute a date from model training or a stale search snippet. Prefer a dated primary source, and use focused JSON fields for exact numbers when available.",
     "Choose every tool, command, executable name and path syntax for its actual target environment.",
     "Prefer portable read_file/list_files/write_file/create_directory/delete_file tools for files and directories; fetch_url for URLs; run_test_suite for tests.",
     "run_command accepts an argv array and never implicitly starts a shell. Shell builtins are not standalone executables.",

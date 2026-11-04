@@ -127,7 +127,7 @@ def test_rate_limited_search_in_restored_turn_does_not_make_network_call():
 def test_same_fetch_loop_is_bounded_and_final_has_no_tools():
     import server
     args = {'url': 'https://github.com/HarnessRouter/harnessrouter'}
-    raw, create = client([response([call('fetch_url', args, str(i))]) for i in range(4)] + [response(content='已有 README 證據，說明原理。')])
+    raw, create = client([response([call('fetch_url', args, str(i))]) for i in range(3)] + [response(content='已有 README 證據，說明原理。')])
     run = Mock(return_value='README evidence')
     with patch('server.get_client', return_value=raw), patch('server.run_tool_with_context', run):
         reply = server.run_agent([{'role': 'user', 'content': 'read repo'}])
