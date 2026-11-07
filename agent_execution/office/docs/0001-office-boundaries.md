@@ -27,7 +27,7 @@ PythonAI 已有 owner-scoped TaskStore、角色／workspace 政策、審批、�
 | Codex／Claude | 僅 provider 名稱與共同契約 | R0.3 spike／R5，尚未實測。 |
 | session／durable resume | 能力分級與 admission 已定義 | 無引擎在此階段宣告支援。 |
 | 工具前審批 | 能力門檻已定義 | office 政策與 durable wait 在 R3。 |
-| 員工資料與佇列 | 領域歸屬已定義 | R1.2 起；此階段不建立 schema。 |
+| 員工資料與佇列 | 領域歸屬已定義 | 後續 R1.2／R1.3 已實作目錄 schema 與 CRUD，詳見 ADR 0002；佇列仍待 R1.4。 |
 | 手機／多機 | 邊界預留於應用層 | R10／R11，未啟用。 |
 
 ## 後果與後續
@@ -35,3 +35,5 @@ PythonAI 已有 owner-scoped TaskStore、角色／workspace 政策、審批、�
 本次抽出的契約可獨立測試，import 不需要 SDK、模型憑證或 DB。旗標目前不接入服務，避免宣告「已啟用」卻缺乏持久化與審批保護。R1.2 開始才實作 schema、CRUD 及授權應用層；R2 應用本契約，R3 加入精確批准／恢復綁定，R4 才公開入口。
 
 範例見 [runtime.json](../examples/runtime.json)。Protocol 並非執行期 sandbox 或強制安全邊界；實作必須通過契約、故障注入及版本固定的外部引擎測試。
+
+後續資料實作決策見 [ADR 0002](0002-office-directory.md)；本 ADR 的 runtime 能力與授權邊界維持有效。

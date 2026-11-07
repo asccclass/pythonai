@@ -182,10 +182,12 @@ def finalize(store,key,runtime=None,event_store=None):
         finish_session(Store(store.path),plan['session'])
     from agent_execution.temporal_backend.dag_erasure import scrub as scrub_dags
     scrub_dags(store,plan['session'])
+    from agent_execution.office.store import erase_owner as erase_office_owner
     with closing(store.connect()) as conn,conn:
         conn.execute('BEGIN IMMEDIATE')
         names=tables(conn)
         for owner in owners:
+            erase_office_owner(conn,owner)
             conn.execute("UPDATE tasks SET goal='',criteria='{}',checkpoint='{}',reply='',episode=NULL WHERE owner=?",(owner,))
             conn.execute("UPDATE task_steps SET input='{}',result=NULL WHERE owner=?",(owner,))
             if 'temporal_profile_inputs' in names:conn.execute('DELETE FROM temporal_profile_inputs WHERE owner=?',(owner,))

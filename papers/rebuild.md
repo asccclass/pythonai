@@ -2,7 +2,7 @@
 
 分析日期：2026-11-07。PythonAI 初版檢視基準：`2ab7905`，開始分析時工作目錄乾淨。後續實作依本文件逐階段更新；未勾選項目尚未完成。
 
-目前已完成 R0.1／R0.2／R1.1：建立 [office 套件](../agent_execution/office/README.md)、[ADR 0001](../agent_execution/office/docs/0001-office-boundaries.md)、型別／能力／設定契約、範例及獨立測試收集。完整預設回歸為 **1666 passed、89 skipped、118 subtests passed**，office 新測試 98 項全部通過；略過原因及驗證證據見 [基準紀錄](../agent_execution/office/docs/baseline-2026-11-07.md)。員工資料表、派工、審批恢復及服務入口仍待後續階段，尚未啟用 office 執行功能。
+R0.1／R0.2／R1.1 已完成，驗證證據見 [初階基準紀錄](../agent_execution/office/docs/baseline-2026-11-07.md)。R1.2／R1.3 本階段已完成 owner-scoped 員工／團隊／成員 CRUD、schema 0→1→2 migration、備份與刪除會話整合；完整回歸 **1737 passed、89 skipped、118 subtests passed**，office 共 169 項全部通過，詳見 [本階段紀錄](../agent_execution/office/docs/directory-validation.md)。派工／operation／outbox、審批恢復與服務入口仍待後續階段。
 
 ## 1. 目標與範圍
 
@@ -164,9 +164,9 @@ Office 模式建議：明確的內建讀取工具依權限放行；檔案修改�
 ### R1：office 領域及資料遷移（P0，依賴 R0.1–R0.2）
 
 - [x] R1.1 建立 `office/` 套件、README、contracts、設定範例及測試收集設定；功能預設關閉。旗標目前不接入服務 startup，也不建立 DB／啟動 worker。
-- [ ] R1.2 建立 owner-scoped 員工／團隊／成員 CRUD，驗證名稱、workspace mapping、provider、模型及最小工具能力；敏感資料不入回應。
-- [ ] R1.3 實作版本化增量 migration、索引、設定 revision、停用／刪除限制、備份及 schema 相容檢查。
-- [ ] R1.4 實作 assignment／operation／outbox 表與冪等 request ID，建立跨 DB 對帳與容量上限。
+- [x] R1.2 建立 owner-scoped 員工／團隊／成員 CRUD，驗證名稱、workspace mapping、provider、模型及最小工具能力；敏感資料不入回應。已完成應用層 OfficeDirectory，HTTP／WS 仍依 R4 接入。
+- [x] R1.3 實作版本化增量 migration、索引、設定 revision、停用／刪除限制、備份及 schema 相容檢查。已完成離線備份的 schema 0→1→2、revision CAS、soft delete／主管關係 guard 與會話資料抹除；執行中的 assignment／runtime guard 須於 R1.4／R2 引入時擴充。
+- [ ] R1.4 實作 assignment／operation／outbox 表與冪等 request ID，建立跨 DB 對帳與容量上限；新增資料表時同步更新 schema version、相容檢查及 session erasure 順序。
 
 驗收：全新及既有 DB 升級均通過；不同 owner 的列表、ID 直取、修改與事件互不可見；失敗 migration 不留下半套狀態；關閉功能可啟動舊流程。
 
