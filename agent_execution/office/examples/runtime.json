@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "scope": "contract example only; no installed runtime or live capability claim",
+  "capabilities": {
+    "resume": "none",
+    "tool_approval": false,
+    "all_tools_gated": false,
+    "usage": false,
+    "mcp": false,
+    "attachments": false
+  },
+  "event": {
+    "event_id": "example-event-1",
+    "type": "text.delta",
+    "session_id": "example-session-1",
+    "generation": 1,
+    "turn_id": "example-turn-1",
+    "payload": {"text": "範例串流"}
+  }
+}
