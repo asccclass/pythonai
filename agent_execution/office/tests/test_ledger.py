@@ -176,9 +176,10 @@ def test_v2_upgrade_preserves_directory_and_membership_revisions(office_env):
         conn.execute("INSERT INTO office_teams(owner,id,name,name_key,enabled,revision,updated) VALUES('owner','team','T','t',1,9,1)")
         conn.execute("INSERT INTO office_members VALUES('owner','team','staff','lead')")
     result=store.migrate(office_env['root']/'v3-backup',offline=True)
-    assert result['from_version']==2 and result['to_version']==3
+    from agent_execution.office.store import SCHEMA_VERSION
+    assert result['from_version']==2 and result['to_version']==SCHEMA_VERSION
     with closing(store.connect()) as conn:
-        assert schema_version(conn)==3
+        assert schema_version(conn)==SCHEMA_VERSION
         assert conn.execute('SELECT revision FROM office_staff').fetchone()[0]==6
         assert conn.execute('SELECT revision FROM office_teams').fetchone()[0]==9
         assert conn.execute('SELECT role FROM office_members').fetchone()[0]=='lead'

@@ -169,7 +169,12 @@ def run_agent(
     event_callback: Callable[[str, dict], None] | None = None,
     resume_state: dict | None = None,
     step_controller=None,
+    client_factory=None,
+    model: str | None = None,
 ):
+    # Per-runtime injection; callers never need to change process-wide settings.
+    client_factory = get_client if client_factory is None else client_factory
+    selected_model = OLLAMA_MODEL if model is None else model
     from agent_execution.tasks import save_checkpoint
     from agent_execution.results import normalize_result
     from agent_execution.turn_control.steps import model_step, tool_step, evaluation_step
@@ -182,7 +187,7 @@ def run_agent(
     if hook_manager is None:hook_manager=default_hook_manager()
     from agent_execution.companion.attachment_translation import eligible, run as translate_attachment
     if eligible(messages,step_controller):
-        return translate_attachment(messages,client=get_client(),model=OLLAMA_MODEL,resume_state=resume_state,
+        return translate_attachment(messages,client=client_factory(),model=selected_model,resume_state=resume_state,
             event_callback=event_callback,check_cancelled=check_cancelled,task_evaluator=task_evaluator,
             hook_manager=hook_manager,memory=memory,episode_id=episode_id)
     resume_state = resume_state or {}
@@ -265,7 +270,7 @@ def run_agent(
                 schemas=[schema for schema in tool_schemas(TOOLS_SCHEMAS)
                          if check_tool_permission(schema.get('function',{}).get('name'))
                          and (allowed is None or schema.get('function',{}).get('name') in allowed)]
-                request={'model':OLLAMA_MODEL,'tools':schemas}
+                request={'model':selected_model,'tools':schemas}
                 if hook_manager is not None:
                     hook_context = HookContext(
                         lifecycle=HookLifecycle.PRE_MODEL_CALL,
@@ -300,7 +305,7 @@ def run_agent(
                     if step_controller is not None:
                         checkpoint('model_pending', model_request=request, model_attempt=attempts+1)
                     assistant_message = model_step(
-                        get_client(), request, messages, iteration=iteration, attempt=attempts+1,
+                        client_factory(), request, messages, iteration=iteration, attempt=attempts+1,
                         event_callback=step_callback, check_cancelled=check_cancelled,
                         operation_id=f'model:{iteration}:attempt:{attempts+1}')
                     break

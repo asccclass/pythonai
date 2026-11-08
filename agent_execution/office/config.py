@@ -7,7 +7,7 @@ import os
 
 @dataclass(frozen=True)
 class OfficeSettings:
-    """Admission limits for the future dispatcher, not a request to start it."""
+    """Admission limits for explicit dispatch, not a request to start a worker."""
 
     enabled: bool = False
     owner_concurrency: int = 1

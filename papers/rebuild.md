@@ -6,6 +6,8 @@ R0.1／R0.2／R1.1 已完成，驗證證據見 [初階基準紀錄](../agent_exe
 
 R1.4 已完成 schema v3、持久 assignment／operation／outbox、request ID 冪等、EventStore／ApprovalStore 收據對帳、容量與取消／清理 fencing。完整回歸 **1790 passed、89 skipped、118 subtests passed**，office 共 222 項全部通過，詳見 [R1.4 紀錄](../agent_execution/office/docs/intents-validation.md)。本階段只保留 task ID 與派工意圖，R2 才建立有預算與 runtime 綁定的 core task，R3／R4 才接入工具續行與客戶端。
 
+R2.1–R2.4 已完成 schema v4、原生 adapter、可信 admission、FIFO／lease、共享根預算與取消。完整回歸 **1853 passed、89 skipped、118 subtests passed**，Office 共 **280 項**全部通過（含 58 項新增派工測試）。原生工具暫限讀取；完整審批／恢復與公開入口接續 R3／R4。設計及限制見 [ADR 0004](../agent_execution/office/docs/0004-native-dispatch.md)，驗證見 [R2 紀錄](../agent_execution/office/docs/runtime-validation.md)。
+
 ## 1. 目標與範圍
 
 此處的「主程式（main）」指附件 AI Office 的後端職責：管理員工與 AI 工作階段、接收工作、派工、審批、保存狀態、彙整報告，以及服務桌面或遠端客戶端。不是替 PythonAI 新增一個 `main.py`，也不是 Git 的 main 分支。
@@ -174,12 +176,14 @@ Office 模式建議：明確的內建讀取工具依權限放行；檔案修改�
 
 ### R2：原生 runtime 與持久派工（P0，依賴 R1）
 
-- [ ] R2.1 建立 `AgentSessionRuntime` 與 PythonAI adapter；將每員工模型／工具配置注入 factory，不改全域環境切換模型。
-- [ ] R2.2 實作明確指派及可解釋自動路由、FIFO、同員工單一 lease、owner／全域限流、timeout 與背壓。
-- [ ] R2.3 沿用 TaskStore、工作目錄／worktree、根預算及取消；保存 task／staff／runtime generation 關聯。
-- [ ] R2.4 加入暫停、停用員工、佇列取消與重新指派；取消後拒絕晚到事件及產物。
+- [x] R2.1 建立 `AgentSessionRuntime` 與 PythonAI adapter；將每員工模型／工具配置注入 factory，不改全域環境切換模型。完成原生 loop／client 注入、frozen staff／提交者 tool ceiling 驗證；R2 不宣告寫入審批或 durable resume。
+- [x] R2.2 實作明確指派及可解釋自動路由、FIFO、同員工單一 lease、owner／全域限流、timeout 與背壓。完成 SQLite 原子 admission／唯一索引、最少未結束工作路由及期限 fencing；過期／未知執行保留容量，不自動重跑。
+- [x] R2.3 沿用 TaskStore、工作目錄／worktree、根預算及取消；保存 task／staff／runtime generation 關聯。完成可信 ContextVar authority、scoped TaskStore DB、原生 model／evaluator 根預算共用、execution／session／generation 持久綁定與清理。
+- [x] R2.4 加入暫停、停用員工、佇列取消與重新指派；取消後拒絕晚到事件及產物。完成 core cancel 傳播、pause／disable、queued 個人工作重新指派及 terminal event fencing；有團隊／operation 綁定須取消後重建，避免變更舊快照。
 
 驗收：同一請求重送只建一任務；兩個 worker 競爭同員工只一個執行；同員工任務依序，異員工可受限並行；重啟後佇列可對帳，歷史及記憶不串人。
+
+驗收已通過原生 loop／model step、實際 worktree、並行 worker、claim 後程序 crash、取消中晚到輸出、容量及 session erasure 測試。每 assignment 使用獨立 history／checkpoint，未開啟跨任務 MemoryStore；SDK interrupt 為 cooperative，無法確認停止的執行保留 uncertain 與清理阻擋。未遷移正在使用的 DB 或自動啟動正式 worker。
 
 ### R3：完整工具審批與恢復（P0，依賴 R2；R5 前必要）
 
@@ -293,7 +297,7 @@ git diff --check
 
 首個可實作工作包是 **R0.1／R0.2＋R1.1**：固定基準、定義契約、建立 package 與測試收集。下一包才加入員工表與 CRUD。此順序能先固定最難回頭的 owner／schema／引擎責任邊界，避免先做 UI 或外部程序後補審批。
 
-上述初始工作包與 R1.2–R1.4 現已完成。接續 R2.1–R2.4：沿用意圖／收據資料，建立可信 office task admission、runtime adapter、FIFO／lease／共享預算與取消；保留 generic TaskStore 對 office reserved ID 的保護。
+上述初始工作包、R1.2–R1.4 與 R2.1–R2.4 現已完成；generic TaskStore 對 office reserved ID 的保護保留，只有可信 dispatcher lease 可啟動原生工作。接續 R3：完整工具前審批、精確授權綁定與 durable wait／恢復；R4 再接公開 API／客戶端。
 
 「具備附件主程式主要能力」需 R1–R7 及 R8 通過，且 R0 外部引擎能力已實測；「含遠端與多機的完整對齊」還需 R9–R11 及對應客戶端。桌面地圖另屬前端工作，不以後端完成推定其已完成。
 

@@ -14,6 +14,7 @@ import base
 from agent_runtime import AgentRuntime, determine_episode_status, resume_agent_turn, run_agent_turn
 from agent_execution.policy import execution_scope, current_context
 from agent_execution.tasks import TaskStore, task_owner, durable_invoke, save_checkpoint
+from agent_execution.process import run_process
 from agent_execution.results import normalize_result, ToolResult
 from agent_execution.acceptance import verify_contract
 from skills import Skill, SkillExecutor, SkillMatch
@@ -38,6 +39,33 @@ class ResultTests(unittest.TestCase):
         scope.__enter__();self.addCleanup(lambda:scope.__exit__(None,None,None))
         self.store=TaskStore()
         self.owner=task_owner(current_context())
+        # These are real compiler/evidence integration tests, not timeout tests.
+        # Cold Windows Go builds can exceed the tool's deliberately short limit.
+        # Preserve that production limit and check it independently below.
+        process_patch=patch('tools.run_test_suite.run_process',side_effect=self.integration_process)
+        process_patch.start();self.addCleanup(process_patch.stop)
+
+    @staticmethod
+    def integration_process(command,**options):
+        if command[:2] == ['go','test']:
+            options['timeout']=120
+        return run_process(command,**options)
+
+    def test_go_tool_keeps_bounded_default_timeout(self):
+        (self.root/'go.mod').write_text('module fixture\n')
+        event=json.dumps({'Action':'pass','Test':'TestFixture'})
+        process=NS(returncode=0,stdout=event,stderr='')
+        with patch('tools.run_test_suite.run_process',return_value=process) as invoke:
+            result=run_test_suite('.',framework='go')
+        self.assertTrue(result.success,repr(result))
+        self.assertEqual(invoke.call_args.kwargs['timeout'],30)
+
+    def test_compiler_integration_wait_is_bounded_and_go_specific(self):
+        with patch(__name__+'.run_process') as invoke:
+            self.integration_process(['go','test','-json','./...'],timeout=30)
+            self.assertEqual(invoke.call_args.kwargs['timeout'],120)
+            self.integration_process(['python','-m','pytest'],timeout=30)
+            self.assertEqual(invoke.call_args.kwargs['timeout'],30)
 
     def runtime(self,runner=server.run_agent,evaluator=None):
         return AgentRuntime(messages=[],guard=NS(assess=lambda text:NS(available=True,needs_confirmation=False,risk=0,intent='chat')),
@@ -56,10 +84,10 @@ class ResultTests(unittest.TestCase):
         self.assertIn('Successfully scaffolded',output)
         self.assertFalse((self.root/'hello'/'requirements.txt').exists())
         result=run_test_suite('hello')
-        self.assertTrue(result.success,str(result))
+        self.assertTrue(result.success,repr(result))
         self.assertEqual(result.evidence['framework'],'go')
         self.assertEqual(result.evidence['tests']['passed'],1)
-        process=subprocess.run(['go','run','.'],cwd=self.root/'hello',capture_output=True,text=True,timeout=30)
+        process=subprocess.run(['go','run','.'],cwd=self.root/'hello',capture_output=True,text=True,timeout=120)
         self.assertEqual(process.returncode,0,process.stderr)
         self.assertEqual(process.stdout.strip(),'Hello, World!')
         messages=[{'role':'assistant','tool_calls':[{'function':{'name':'write_file',

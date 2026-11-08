@@ -1,8 +1,8 @@
-# Office 架構、目錄與持久意圖（R0／R1）
+# Office 架構、目錄與原生派工（R0–R2）
 
 本套件提供 owner、引擎能力、事件、設定契約，以及 owner-scoped 員工／團隊／成員 CRUD、版本遷移與備份。完整規劃見 [rebuild.md](../../papers/rebuild.md)，設計決策見 [ADR 0001](docs/0001-office-boundaries.md) 與 [ADR 0002](docs/0002-office-directory.md)。
 
-R1.4 新增 assignment／operation／outbox 與 request ID 冪等、EventStore／ApprovalStore 收據對帳、容量限制及三 DB 清理，契約見 [ADR 0003](docs/0003-office-intents.md)，實測見 [R1.4 驗證](docs/intents-validation.md)。這是持久化意圖層；實際派工 runner 仍屬 R2。
+R1.4 新增 assignment／operation／outbox 與 request ID 冪等、EventStore／ApprovalStore 收據對帳、容量限制及三 DB 清理，契約見 [ADR 0003](docs/0003-office-intents.md)，實測見 [R1.4 驗證](docs/intents-validation.md)。R2 的原生 adapter／可信 admission／FIFO、lease、預算及取消見 [ADR 0004](docs/0004-native-dispatch.md)。
 
 `OfficeStore` 使用應用程式既有 TaskStore，明確呼叫 `migrate()` 才安裝 office 資料表；本次未遷移正在使用的資料庫。套件沒有註冊模型工具、HTTP／WS route 或啟動派工 worker。`AGENT_OFFICE_ENABLED` 預設為 `0`，目前仍未接入服務 startup；設定為 `1` 不會自行啟動執行器。provider 設定可記錄 pythonai／codex／claude，實際 adapter 能力須另行驗證。
 
@@ -80,11 +80,11 @@ staff／team list 支援 `limit=1..100` 與 `after_id`，以穩定 ID 排序。�
 git diff --check
 ```
 
-測試已納入根目錄 `pytest.ini`。下一階段為 R2 runtime／派工；R1.4 的 queued／uncertain assignment 與待取消 outbox 已加入 directory／cleanup guard。任何引擎公開執行前仍須加入實際 runtime lease／generation／budget 綁定及 R3 工具審批，不以 ready 觀察狀態代替執行授權。
+測試已納入根目錄 `pytest.ini`。R2 已加入 runtime lease／generation／budget 綁定；R3 接續完整工具審批，R4 才公開入口，不以 ready 觀察狀態代替執行授權。
 
 ## 持久意圖與對帳 API
 
-Office v2 資料庫須先依上述停機備份流程執行 `store.migrate(..., offline=True)` 至 v3。程式庫在既有可信 role／execution scope 中呼叫：
+Office v2／v3 資料庫須先依上述停機備份流程執行 `store.migrate(..., offline=True)` 至 v4。程式庫在既有可信 role／execution scope 中呼叫：
 
 ```python
 from agent_execution.office.ledger import OfficeLedger
@@ -106,3 +106,27 @@ sender.reconcile(limit=20)
 `get_assignment`／`get_operation`、`list_assignments`／`list_outbox` 回傳 allowlist metadata，不回傳完整 payload／參數／DB 路徑。相同 request ID 的相同內容回傳原 ID，不同內容拒絕；作用域為完整 owner，operation 再加 assignment。停止意圖不等於已清除 target：cancel_pending／uncertain 會阻擋相關設定變更與會話刪除，須先對帳或人工處理未知效果。
 
 R1.4 只保留 task ID 與 goal／criteria snapshot，不建立可由舊入口執行的 core TaskStore task。Events 使用完整 owner key 的專用 feed，approvals 使用 `(identity, owner.key)`；尚未接上舊 dashboard／device 的 namespace 或審批 UI。收到 approved 不代表工具已執行，reconciler 也不消耗 grant。
+
+## R2 原生派工 API
+
+以下由可信應用程式在已認證的 admin／execution scope 中呼叫，使用已遷移至 v4 的 directory。必須明確設定 `AGENT_OFFICE_ENABLED=1`；不需也不應透過修改環境變數切換員工模型。
+
+```python
+from agent_execution.office.config import OfficeSettings
+from agent_execution.office.dispatcher import OfficeDispatcher
+
+ledger = OfficeLedger(directory, settings=OfficeSettings.load())
+dispatcher = OfficeDispatcher(ledger, lease_seconds=30, timeout_seconds=600)
+work = ledger.submit("job-1", staff.id, "讀取 input.txt 並摘要", staff_revision=staff.revision)
+await dispatcher.run_once()  # 一次原生工作；多 worker 共用 DB／限制。
+dispatcher.reconcile()      # 重啟或輪詢時，將過期執行標為 uncertain。
+
+# 自動路由回傳 assignment 與可解釋原因；重送同 request 保持原指派。
+routed = dispatcher.submit_auto("job-2", "整理可讀資料")
+dispatcher.set_staff_state(staff.id, paused=True)  # 保留 queued、取消 active。
+dispatcher.cancel(routed["assignment"]["id"])
+```
+
+`set_staff_state(..., paused=True, disable=True)` 會停用員工；重新指派使用 `reassign(assignment_id, new_staff_id, expected_staff_id=old_staff_id, staff_revision=new_revision)`，僅限未啟動且沒有 operation 的個人工作。已有團隊／operation 綁定的工作須取消後重新建立。終態 outbox 仍透過 OfficeReconciler 對帳。
+
+adapter 使用每任務獨立 history／checkpoint，不啟用跨任務 MemoryStore 或背景記憶；預算共用原生 TaskBudget，所有 model／evaluator 呼叫都受相同根限制。interrupt 為 cooperative：無法確認 SDK thread 停止時，保留 uncertain lease 容量與清理阻擋。R2 不自動 replay 未知執行，也不宣告 session／durable resume。完整能力、恢復限制及資料清理順序見 [ADR 0004](docs/0004-native-dispatch.md)，驗證見 [R2 紀錄](docs/runtime-validation.md)。

@@ -1,6 +1,7 @@
 """Atomic admission of assignments, tool intents and cross-database outboxes.
 
-Task IDs are reserved here; no model/tool runner or TaskStore execution is started.
+Task IDs are reserved here; only the separately invoked R2 dispatcher admits
+native TaskStore execution. Submitting an intent never starts a model/tool.
 """
 
 import json
@@ -108,7 +109,10 @@ class OfficeLedger:
             task_id = 'office:' + key
             if conn.execute('SELECT 1 FROM tasks WHERE owner=? AND id=?', (owner.key,task_id)).fetchone():
                 raise OfficeConflict('Reserved task ID is already in use')
-            snapshot = self._json({'request':json.loads(request),'staff':self.directory._staff(staff).to_dict()})
+            from agent_execution.policy import current_context
+            ceiling = current_context().allowed_tools
+            snapshot = self._json({'request':json.loads(request),'staff':self.directory._staff(staff).to_dict(),
+                                   'tool_ceiling':None if ceiling is None else sorted(ceiling)})
             message = self._json({'v':1,'id':event_id,'type':'office.assignment.queued','ref':request_id,
                                   'payload':{'assignment_id':key,'task_id':task_id,'staff_id':staff_id}})
             self._capacity(conn,owner,assignments=1,outbox=1,bytes_added=len(snapshot.encode())+len(message.encode()))
@@ -136,8 +140,10 @@ class OfficeLedger:
                 return self._operation(old)
             if assignment['state'] != 'queued':
                 raise OfficeConflict('Assignment is not accepting operations')
-            snapshot = json.loads(assignment['payload'])['staff']
-            if tool_name not in snapshot['allowed_tools']:
+            payload = json.loads(assignment['payload'])
+            snapshot = payload['staff']
+            ceiling = payload.get('tool_ceiling',[])
+            if tool_name not in snapshot['allowed_tools'] or (ceiling is not None and tool_name not in ceiling):
                 raise PermissionError('Tool is outside the frozen staff capability ceiling')
             self.directory._tools(StaffConfig(snapshot['name'],allowed_tools=frozenset({tool_name})))
             operation_id, outbox_id = uuid.uuid4().hex, uuid.uuid4().hex
@@ -177,6 +183,11 @@ class OfficeLedger:
             assignment = self._row(conn,'office_assignments',owner,key)
             if assignment['state'] == 'cancelled':
                 return self._assignment(assignment)
+            if assignment['state'] == 'active' and conn.execute('SELECT 1 FROM office_executions WHERE owner=? AND assignment_id=?', (owner.key,key)).fetchone():
+                from .cancellation import cancel_tasks
+                cancel_tasks(conn,owner.key,assignment['task_id'])
+                conn.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,reply='Task cancelled' WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')", (owner.key,assignment['task_id']))
+                return self._assignment(self._row(conn,'office_assignments',owner,key))
             if assignment['state'] != 'queued':
                 raise OfficeConflict('Unknown or active work requires resolution before cancellation')
             conn.execute("UPDATE office_assignments SET state='cancelled' WHERE owner=? AND id=?", (owner.key,key))

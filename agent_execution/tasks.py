@@ -29,8 +29,9 @@ def task_owner(context):
 
 class TaskStore:
     def __init__(self, path=None):
+        from .policy import current_context
         root = Path(os.environ.get('LOCALAPPDATA') or Path.home()/'.local'/'share')/'PythonAI'
-        self.path = Path(path or os.environ.get('AGENT_TASK_DB') or root/'tasks.db')
+        self.path = Path(path or current_context().task_database or os.environ.get('AGENT_TASK_DB') or root/'tasks.db')
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self.connect()) as conn, conn:
             conn.executescript('''
@@ -217,9 +218,11 @@ class TaskStore:
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             changed = conn.execute("UPDATE tasks SET state='cancelled',reply='Task cancelled',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')", (time.time(),owner,key)).rowcount == 1
+            from .office.cancellation import cancel_tasks
+            office_changed = cancel_tasks(conn,owner,key)
             from .temporal_backend.cancellation import request
             request(conn, owner, key)
-            return changed
+            return changed or bool(office_changed)
 
     def cancel_session(self, owner):
         with closing(self.connect()) as conn, conn:
@@ -227,6 +230,8 @@ class TaskStore:
             conn.execute('INSERT INTO conversation_resets VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET cleared_at=excluded.cleared_at',
                          (owner,time.time()))
             conn.execute("UPDATE tasks SET state='cancelled',reply='Session cleared',lease_owner=NULL,lease_until=NULL,updated=? WHERE owner=? AND state NOT IN ('completed','failed','cancelled')", (time.time(),owner))
+            from .office.cancellation import cancel_tasks
+            cancel_tasks(conn,owner)
             from .temporal_backend.cancellation import request
             request(conn, owner)
 

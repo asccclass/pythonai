@@ -10,7 +10,7 @@ from unittest.mock import patch
 from openai.types.chat import ChatCompletionMessage
 from agent_execution.coordinator import Coordinator,scope_owner
 from agent_execution.coordinator_worker import main
-from agent_execution.policy import current_context
+from agent_execution.policy import current_context, execution_scope
 from agent_execution.budgets import budget_client
 from task_evaluator import TaskEvaluator
 from agent_execution import tasks
@@ -30,8 +30,8 @@ def fixture_runner(messages,**kwargs):
         values=[ChatCompletionMessage(role='assistant',content=content)]
     elif persona=='planner':values=[ChatCompletionMessage(role='assistant',content='Plan steps')]
     elif 'long' in goal:
-        code="import os,time; from pathlib import Path; Path('worker.pid').write_text(str(os.getpid())); time.sleep(30)"
-        call={'id':'effect','type':'function','function':{'name':'run_command','arguments':json.dumps({'command':['python','-c',code]})}}
+        code="import os,sys,time; from pathlib import Path; Path('worker.python').write_text(sys.executable); Path('worker.pid').write_text(str(os.getpid())); time.sleep(30)"
+        call={'id':'effect','type':'function','function':{'name':'run_command','arguments':json.dumps({'command':[sys.executable,'-c',code]})}}
         values=[ChatCompletionMessage(role='assistant',tool_calls=[call]),ChatCompletionMessage(role='assistant',content='done')]
     else:
         target='second.txt' if 'second' in goal else 'result.txt'
@@ -54,7 +54,13 @@ def fixture_runner(messages,**kwargs):
         trigger='tool_started' if 'crash-before' in goal else 'tool_done'
         if 'crash' in goal and phase==trigger and not marker.exists():
             marker.write_text('once');os._exit(23)
-    with patch('server.get_client',return_value=budget_client(client)),patch.object(tasks,'save_checkpoint',save),patch.dict(base.TOOLS,{'write_file':tracked_write}):
+    def fixture_command(command,**options):
+        options.pop('trusted_asset_roots',None)
+        return base.run_command(command,trusted_asset_roots=[sys.executable],**options)
+    # The trusted fixture factory grants one executable asset, not a model-
+    # selected path. Existing role, tool, workspace and cancellation gates stay
+    # on the normal execution path.
+    with execution_scope(trusted_assets=(Path(sys.executable).resolve(),)),patch('server.get_client',return_value=budget_client(client)),patch.object(tasks,'save_checkpoint',save),patch.dict(base.TOOLS,{'write_file':tracked_write,'run_command':fixture_command}):
         return server.run_agent(messages,**kwargs)
 
 

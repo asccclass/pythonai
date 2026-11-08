@@ -42,6 +42,7 @@ class ExecutionContext:
     lifecycle_owner: str | None = None
     communication_db: Path | None = None
     event_delivery: dict | None = None
+    task_database: Path | None = None
 
 
 _context: ContextVar[ExecutionContext] = ContextVar("execution_context", default=ExecutionContext())

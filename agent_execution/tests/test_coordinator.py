@@ -38,7 +38,10 @@ class CoordinatorTests(unittest.TestCase):
         self.service=CoordinatorService(self.store,[sys.executable,'-m','agent_execution.tests.coordinator_fixture'])
         self.addCleanup(self.service.close)
 
-    def until(self,key,states,timeout=40):
+    def until(self,key,states,timeout=90):
+        # A coder plus reviewer needs two real Python/Git process startups.
+        # Keep this integration wait below the 120s worker deadline while
+        # allowing cold Windows starts; task timeout assertions remain explicit.
         end=time.monotonic()+timeout
         while time.monotonic()<end:
             node=self.store.get(self.owner,key)
@@ -231,7 +234,7 @@ class CoordinatorTests(unittest.TestCase):
 
     def test_cancellation_kills_real_worker_command_and_does_not_restart(self):
         key=self.store.submit('coder','Run long');self.service.start()
-        end=time.monotonic()+30;pid_file=None
+        end=time.monotonic()+90;pid_file=None
         while time.monotonic()<end:
             node=self.store.get(self.owner,key)
             child=self.store.child_task(node)
@@ -241,6 +244,7 @@ class CoordinatorTests(unittest.TestCase):
                 if path.exists():pid_file=path;break
             time.sleep(.05)
         self.assertIsNotNone(pid_file,self.store.get(self.owner,key))
+        self.assertEqual(Path(pid_file.with_name('worker.python').read_text()).resolve(),Path(sys.executable).resolve())
         pid=int(pid_file.read_text());self.store.cancel(self.owner,key)
         self.assertEqual(self.until(key,{'cancelled','failed','needs_resolution'})['state'],'cancelled')
         if os.name=='nt':

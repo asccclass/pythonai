@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +19,7 @@ from permissions import set_current_role
 class CompanionOutputTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2])
-        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self.cleanup_temp)
         self.home = Path(self.temp.name)
         self.root = self.home/'workspace'
         self.root.mkdir()
@@ -32,6 +33,37 @@ class CompanionOutputTests(unittest.TestCase):
         scope.__enter__(); self.addCleanup(lambda:scope.__exit__(None,None,None))
         role = set_current_role('admin')
         role.__enter__(); self.addCleanup(lambda:role.__exit__(None,None,None))
+
+    def cleanup_temp(self):
+        # Windows can briefly retain a closed SQLite file (including filesystem
+        # scanners). Retry only sharing violations / tempfile's secondary 267;
+        # permanent locks and unrelated errors must still fail the test.
+        for attempt in range(40):
+            try:
+                self.temp.cleanup()
+                return
+            except OSError as error:
+                if getattr(error,'winerror',None) not in {32,267} or attempt == 39:
+                    raise
+                time.sleep(.05)
+
+    def test_temp_cleanup_retries_transient_windows_sharing_violation(self):
+        error = PermissionError('sharing violation'); error.winerror = 32
+        with patch.object(self.temp,'cleanup',side_effect=[error,None]) as cleanup, patch('time.sleep'):
+            self.cleanup_temp()
+            self.assertEqual(cleanup.call_count,2)
+
+    def test_temp_cleanup_does_not_hide_a_permanent_file_lock(self):
+        error = PermissionError('sharing violation'); error.winerror = 32
+        with patch.object(self.temp,'cleanup',side_effect=error) as cleanup, patch('time.sleep'):
+            with self.assertRaises(PermissionError): self.cleanup_temp()
+            self.assertEqual(cleanup.call_count,40)
+
+    def test_temp_cleanup_does_not_retry_unrelated_errors(self):
+        error = PermissionError('access denied'); error.winerror = 5
+        with patch.object(self.temp,'cleanup',side_effect=error) as cleanup:
+            with self.assertRaises(PermissionError): self.cleanup_temp()
+            self.assertEqual(cleanup.call_count,1)
 
     def test_translated_file_is_verified_and_downloaded_in_chunks(self):
         content = '繁體中文翻譯\n' * (CHUNK_BYTES//10)
