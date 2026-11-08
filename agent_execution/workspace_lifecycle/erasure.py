@@ -30,6 +30,8 @@ def external_blockers(owners,task_db=None):
         from agent_execution.temporal_backend.dag import busy
         with closing(sqlite3.connect(task_db)) as conn:
             if busy(conn,owners):result.append('temporal-dag:local-process')
+            from agent_execution.office.store import office_busy
+            result.extend(office_busy(conn,owners))
     from agent_execution.scheduling.store import scheduler_db_path
     path=scheduler_db_path()
     if path.exists():
@@ -145,6 +147,8 @@ def finalize(store,key,runtime=None,event_store=None):
     from .blockers import CleanupBlocked
     blockers = external_blockers(owners,store.path)
     if blockers:raise CleanupBlocked(blockers)
+    from agent_execution.office.reconcile import erase_external as erase_office_external
+    erase_office_external(store.path,owners)
     from communication_store import CommunicationStore
     for owner,path in transports(owners,store.path):CommunicationStore(path).erase_session(owner)
     erase_schedules(owners)

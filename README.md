@@ -4,7 +4,7 @@ Workspace 暫存程式依 session 登記，保留至使用者刪除對話，不�
 
 PythonAI 是以 OpenAI-compatible Chat Completions 為模型介面的 Python Agent，提供本機 CLI、Telegram long polling，以及整合 webhook、管理網頁、REST API、WebSocket 的 FastAPI 服務。核心包含工具呼叫、Skills、長期記憶、背景維護、排程、任務驗收及可擴充 Hooks。
 
-AI Office 主程式能力的擴充見 [office 架構與目錄管理](agent_execution/office/README.md)；目前提供 owner／runtime 契約、員工／團隊／成員 CRUD，以及明確備份的版本遷移，尚未啟動員工派工服務。分階段待辦及驗收條件見 [rebuild 規劃](papers/rebuild.md)。
+AI Office 主程式能力的擴充見 [office 架構與持久意圖](agent_execution/office/README.md)；目前提供目錄 CRUD、request ID 冪等的 assignment／operation／outbox、跨 DB 收據對帳與明確備份的版本遷移，尚未啟動實際派工 runner。分階段待辦及驗收條件見 [rebuild 規劃](papers/rebuild.md)。
 
 MyAI／WebSocket 任務若出現 `Role 'viewer' cannot execute ...`，代表連線身份沒有該工具權限。請核對實際服務使用的 `ROLES_CONFIG` 與 token 身份；無身份 token 對應 `websocket:user`，助手自動啟動的 token 對應 `websocket:desktop`。角色檔內容於新指令重新讀取，修改角色檔路徑或更新後端程式後需重新啟動服務。`viewer` 不允許 Skills；需要 Skills 的身份可配置 `operator`，管理工具依既有政策要求 `admin`。模型工具清單依角色及任務 allowlist 過濾，執行端仍檢查權限。
 

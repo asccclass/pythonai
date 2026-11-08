@@ -109,6 +109,8 @@ class TaskStore:
             assert_owner_active(conn,owner)
             from .temporal_backend.router import assert_claim_backend
             assert_claim_backend(conn, owner, key)
+            from .office.store import guard_reserved_task
+            guard_reserved_task(conn, owner, key)
             row = conn.execute('SELECT * FROM tasks WHERE owner=? AND id=?', (owner,key)).fetchone()
             if row is None:
                 from .delivery import positive_limit, CapacityError

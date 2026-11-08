@@ -2,7 +2,9 @@
 
 分析日期：2026-11-07。PythonAI 初版檢視基準：`2ab7905`，開始分析時工作目錄乾淨。後續實作依本文件逐階段更新；未勾選項目尚未完成。
 
-R0.1／R0.2／R1.1 已完成，驗證證據見 [初階基準紀錄](../agent_execution/office/docs/baseline-2026-11-07.md)。R1.2／R1.3 本階段已完成 owner-scoped 員工／團隊／成員 CRUD、schema 0→1→2 migration、備份與刪除會話整合；完整回歸 **1737 passed、89 skipped、118 subtests passed**，office 共 169 項全部通過，詳見 [本階段紀錄](../agent_execution/office/docs/directory-validation.md)。派工／operation／outbox、審批恢復與服務入口仍待後續階段。
+R0.1／R0.2／R1.1 已完成，驗證證據見 [初階基準紀錄](../agent_execution/office/docs/baseline-2026-11-07.md)。R1.2／R1.3 已完成 owner-scoped 員工／團隊／成員 CRUD、schema 0→1→2 migration、備份與刪除會話整合，當階段回歸為 **1737 passed、89 skipped、118 subtests passed**；詳見 [R1.2／R1.3 紀錄](../agent_execution/office/docs/directory-validation.md)。
+
+R1.4 已完成 schema v3、持久 assignment／operation／outbox、request ID 冪等、EventStore／ApprovalStore 收據對帳、容量與取消／清理 fencing。完整回歸 **1790 passed、89 skipped、118 subtests passed**，office 共 222 項全部通過，詳見 [R1.4 紀錄](../agent_execution/office/docs/intents-validation.md)。本階段只保留 task ID 與派工意圖，R2 才建立有預算與 runtime 綁定的 core task，R3／R4 才接入工具續行與客戶端。
 
 ## 1. 目標與範圍
 
@@ -166,7 +168,7 @@ Office 模式建議：明確的內建讀取工具依權限放行；檔案修改�
 - [x] R1.1 建立 `office/` 套件、README、contracts、設定範例及測試收集設定；功能預設關閉。旗標目前不接入服務 startup，也不建立 DB／啟動 worker。
 - [x] R1.2 建立 owner-scoped 員工／團隊／成員 CRUD，驗證名稱、workspace mapping、provider、模型及最小工具能力；敏感資料不入回應。已完成應用層 OfficeDirectory，HTTP／WS 仍依 R4 接入。
 - [x] R1.3 實作版本化增量 migration、索引、設定 revision、停用／刪除限制、備份及 schema 相容檢查。已完成離線備份的 schema 0→1→2、revision CAS、soft delete／主管關係 guard 與會話資料抹除；執行中的 assignment／runtime guard 須於 R1.4／R2 引入時擴充。
-- [ ] R1.4 實作 assignment／operation／outbox 表與冪等 request ID，建立跨 DB 對帳與容量上限；新增資料表時同步更新 schema version、相容檢查及 session erasure 順序。
+- [x] R1.4 實作 assignment／operation／outbox 表與冪等 request ID，建立跨 DB 對帳與容量上限；新增資料表時同步更新 schema version、相容檢查及 session erasure 順序。已完成 v3、固定 target receipt／origin 綁定、sender fencing、取消補償與三 DB 清理；unknown 不自動重送，實際 runner 留至 R2。
 
 驗收：全新及既有 DB 升級均通過；不同 owner 的列表、ID 直取、修改與事件互不可見；失敗 migration 不留下半套狀態；關閉功能可啟動舊流程。
 
@@ -290,6 +292,8 @@ git diff --check
 建議順序為 R0 → R1 → R2 → R3 → R4，先交付可操作的原生核心；外部 spike 可獨立驗證，但 R5 在審批閉環完成後才開放。接著 R5、R6、R7，並對每次發布套用 R8 門檻。R9–R11 獨立安排，不阻塞核心。
 
 首個可實作工作包是 **R0.1／R0.2＋R1.1**：固定基準、定義契約、建立 package 與測試收集。下一包才加入員工表與 CRUD。此順序能先固定最難回頭的 owner／schema／引擎責任邊界，避免先做 UI 或外部程序後補審批。
+
+上述初始工作包與 R1.2–R1.4 現已完成。接續 R2.1–R2.4：沿用意圖／收據資料，建立可信 office task admission、runtime adapter、FIFO／lease／共享預算與取消；保留 generic TaskStore 對 office reserved ID 的保護。
 
 「具備附件主程式主要能力」需 R1–R7 及 R8 通過，且 R0 外部引擎能力已實測；「含遠端與多機的完整對齊」還需 R9–R11 及對應客戶端。桌面地圖另屬前端工作，不以後端完成推定其已完成。
 

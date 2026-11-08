@@ -12,7 +12,7 @@ from agent_execution.sessions import project_workspace
 from agent_execution.workspace_lifecycle.store import LifecycleStore
 from .contracts import OwnerScope, Provider, _identifier
 from .models import Membership, StaffConfig, StaffRecord, TeamConfig, TeamRecord, TeamRole, name_key
-from .store import OfficeSchemaError, OfficeStore
+from .store import OfficeSchemaError, OfficeStore, guard_directory_change
 
 
 MAX_STAFF_PER_OWNER = 200
@@ -148,6 +148,7 @@ class OfficeDirectory:
         with self._connection(write=True) as (conn, owner):
             self._tools(config)
             self._row(conn, "office_staff", owner, staff_id, expected_revision)
+            guard_directory_change(conn, owner, staff_id=staff_id)
             if not config.enabled and conn.execute("""SELECT 1 FROM office_members m JOIN office_teams t
                 ON t.owner=m.owner AND t.id=m.team_id WHERE m.owner=? AND m.staff_id=?
                 AND m.role='lead' AND t.enabled=1 AND t.deleted=0 LIMIT 1""", (owner.key, staff_id)).fetchone():
@@ -163,6 +164,7 @@ class OfficeDirectory:
         _revision(expected_revision)
         with self._connection(write=True) as (conn, owner):
             row = self._row(conn, "office_staff", owner, staff_id, expected_revision)
+            guard_directory_change(conn, owner, staff_id=staff_id)
             if row["enabled"] or conn.execute("SELECT 1 FROM office_members WHERE owner=? AND staff_id=? LIMIT 1", (owner.key, staff_id)).fetchone():
                 raise OfficeConflict("Disable staff and remove all memberships before deletion")
             conn.execute("UPDATE office_staff SET deleted=1,revision=revision+1,updated=? WHERE owner=? AND id=?", (time.time(), owner.key, staff_id))
@@ -196,6 +198,7 @@ class OfficeDirectory:
         _revision(expected_revision)
         with self._connection(write=True) as (conn, owner):
             self._row(conn, "office_teams", owner, team_id, expected_revision)
+            guard_directory_change(conn, owner, team_id=team_id)
             if config.enabled and not conn.execute("""SELECT 1 FROM office_members m JOIN office_staff s
                 ON s.owner=m.owner AND s.id=m.staff_id WHERE m.owner=? AND m.team_id=?
                 AND m.role='lead' AND s.enabled=1 AND s.deleted=0""", (owner.key, team_id)).fetchone():
@@ -208,6 +211,7 @@ class OfficeDirectory:
         _revision(expected_revision)
         with self._connection(write=True) as (conn, owner):
             row = self._row(conn, "office_teams", owner, team_id, expected_revision)
+            guard_directory_change(conn, owner, team_id=team_id)
             if row["enabled"] or conn.execute("SELECT 1 FROM office_members WHERE owner=? AND team_id=? LIMIT 1", (owner.key, team_id)).fetchone():
                 raise OfficeConflict("Disable the team and remove all members before deletion")
             conn.execute("UPDATE office_teams SET deleted=1,revision=revision+1,updated=? WHERE owner=? AND id=?", (time.time(), owner.key, team_id))
@@ -218,6 +222,7 @@ class OfficeDirectory:
             raise ValueError("role must be a TeamRole")
         with self._connection(write=True) as (conn, owner):
             team = self._row(conn, "office_teams", owner, team_id, expected_revision)
+            guard_directory_change(conn, owner, team_id=team_id)
             staff = self._row(conn, "office_staff", owner, staff_id)
             current = conn.execute("SELECT role FROM office_members WHERE owner=? AND team_id=? AND staff_id=?", (owner.key, team_id, staff_id)).fetchone()
             if current is None and conn.execute("SELECT COUNT(*) FROM office_members WHERE owner=? AND team_id=?", (owner.key, team_id)).fetchone()[0] >= MAX_MEMBERS_PER_TEAM:
@@ -249,6 +254,7 @@ class OfficeDirectory:
         _revision(expected_revision)
         with self._connection(write=True) as (conn, owner):
             team = self._row(conn, "office_teams", owner, team_id, expected_revision)
+            guard_directory_change(conn, owner, team_id=team_id)
             _identifier(staff_id, "staff_id")
             member = conn.execute("SELECT role FROM office_members WHERE owner=? AND team_id=? AND staff_id=?", (owner.key, team_id, staff_id)).fetchone()
             if member is None:

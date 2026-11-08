@@ -1,6 +1,8 @@
-# Office 架構與員工／團隊管理（R0／R1.1–R1.3）
+# Office 架構、目錄與持久意圖（R0／R1）
 
 本套件提供 owner、引擎能力、事件、設定契約，以及 owner-scoped 員工／團隊／成員 CRUD、版本遷移與備份。完整規劃見 [rebuild.md](../../papers/rebuild.md)，設計決策見 [ADR 0001](docs/0001-office-boundaries.md) 與 [ADR 0002](docs/0002-office-directory.md)。
+
+R1.4 新增 assignment／operation／outbox 與 request ID 冪等、EventStore／ApprovalStore 收據對帳、容量限制及三 DB 清理，契約見 [ADR 0003](docs/0003-office-intents.md)，實測見 [R1.4 驗證](docs/intents-validation.md)。這是持久化意圖層；實際派工 runner 仍屬 R2。
 
 `OfficeStore` 使用應用程式既有 TaskStore，明確呼叫 `migrate()` 才安裝 office 資料表；本次未遷移正在使用的資料庫。套件沒有註冊模型工具、HTTP／WS route 或啟動派工 worker。`AGENT_OFFICE_ENABLED` 預設為 `0`，目前仍未接入服務 startup；設定為 `1` 不會自行啟動執行器。provider 設定可記錄 pythonai／codex／claude，實際 adapter 能力須另行驗證。
 
@@ -11,8 +13,10 @@
 | `contracts.py` | `OwnerScope` 與 TaskStore owner key 相容；`RuntimeCapabilities` 預設不宣告能力；immutable `RuntimeStartRequest`／`TurnReceipt`。 |
 | `config.py` | 明確載入的 immutable `OfficeSettings`，驗證 concurrency／queue／approval TTL，不修改環境。 |
 | `models.py` | 員工／團隊輸入驗證與 public DTO；只記錄 logical workspace project，不接受路徑或憑證欄位。 |
-| `store.py` | TaskStore DB 內 `office_*` schema 0→1→2、離線備份與原子 migration、schema 相容檢查。 |
+| `store.py` | TaskStore DB 內 `office_*` schema 0→1→2→3、離線備份與原子 migration、schema 相容檢查。 |
 | `directory.py` | owner-scoped CRUD、revision CAS、成員／主管管理、停用及刪除規則。 |
+| `ledger.py`／`persistence.py` | 不可變 request snapshot、任務 ID 保留、operation／outbox 與 row／byte 上限。 |
+| `reconcile.py`／`targets.py` | sender lease／token fencing、固定收據對帳、pending 審批／事件與取消補償、目標 owner hash fence。 |
 | `runtimes/base.py` | `AgentSessionRuntime`／`ResumableRuntime`／`ToolApprovalRuntime` Protocol 及帶 generation／turn 的 immutable JSON 事件。 |
 | `examples/` | 預設關閉的設定與契約樣本；能力樣本不代表任何引擎已驗收。 |
 
@@ -39,7 +43,7 @@ store = OfficeStore(TaskStore())
 store.migrate(Path(backup_directory), offline=True)
 directory = OfficeDirectory(store)
 # 以下在既有 transport 建立的 execution_scope 與 role scope 中呼叫。
-staff = directory.create_staff(StaffConfig("研究員", enabled=True))
+staff = directory.create_staff(StaffConfig("研究員", enabled=True, allowed_tools=frozenset({"read_file"})))
 team = directory.create_team(TeamConfig("研究團隊"))
 team = directory.set_member(team.id, staff.id, TeamRole.LEAD, expected_revision=team.revision)
 team = directory.update_team(team.id, TeamConfig(team.config.name, enabled=True), expected_revision=team.revision)
@@ -48,6 +52,8 @@ team = directory.update_team(team.id, TeamConfig(team.config.name, enabled=True)
 備份沿用 [operations backup](../operations/backup.py) 的 manifest／SHA-256／SQLite snapshot。restore 只寫入新目錄；回滾時先停止所有 writer，驗證備份並將原服務的 DB 設定改指向還原副本，不覆蓋或刪除目前 DB。未知版本、遺失索引、未完成 schema 都拒絕讀寫與升級；同版 migration 為 no-op。
 
 遷移後重新啟動本次版本的後端，以載入 office metadata 的 erasure hook。若還原資料庫含既有 backend／host queue／路徑綁定，須依原模組規則核對後再啟動；本階段驗證 SQLite 還原，不涵蓋 Temporal 等外部服務的災難復原。
+
+R1.4 target 固定 source origin；還原至不同 TaskStore 路徑時，須依 ADR 0003 停機核對三方收據與未決效果。本階段沒有自動 rebind 或單 DB 回退後的自動重送。
 
 | 資源 | 方法 |
 | --- | --- |
@@ -74,4 +80,29 @@ staff／team list 支援 `limit=1..100` 與 `after_id`，以穩定 ID 排序。�
 git diff --check
 ```
 
-測試已納入根目錄 `pytest.ini`。下一階段為 R1.4：assignment／operation／outbox 與 request ID 冪等性；接著 R2 加入 runtime／派工。任何引擎公開執行前，都須加入 active assignment／runtime 的變更與刪除 guard、R3 工具審批及 generation fencing。
+測試已納入根目錄 `pytest.ini`。下一階段為 R2 runtime／派工；R1.4 的 queued／uncertain assignment 與待取消 outbox 已加入 directory／cleanup guard。任何引擎公開執行前仍須加入實際 runtime lease／generation／budget 綁定及 R3 工具審批，不以 ready 觀察狀態代替執行授權。
+
+## 持久意圖與對帳 API
+
+Office v2 資料庫須先依上述停機備份流程執行 `store.migrate(..., offline=True)` 至 v3。程式庫在既有可信 role／execution scope 中呼叫：
+
+```python
+from agent_execution.office.ledger import OfficeLedger
+from agent_execution.office.reconcile import OfficeReconciler
+from agent_execution.delivery import EventStore
+from agent_execution.approvals import ApprovalStore
+
+ledger = OfficeLedger(directory)
+work = ledger.submit("request-1", staff.id, "整理資料", staff_revision=staff.revision)
+# staff 先前須明確允許已註冊的 read_file；參數仍是待審意圖。
+operation = ledger.prepare_operation(work["id"], "tool-1", "read_file", {"path": "input.txt"})
+sender = OfficeReconciler(ledger, events=EventStore(), approvals=ApprovalStore())
+sender.reconcile(limit=20)
+# 停止此意圖並對帳 target 取消收據。
+ledger.cancel_assignment(work["id"])
+sender.reconcile(limit=20)
+```
+
+`get_assignment`／`get_operation`、`list_assignments`／`list_outbox` 回傳 allowlist metadata，不回傳完整 payload／參數／DB 路徑。相同 request ID 的相同內容回傳原 ID，不同內容拒絕；作用域為完整 owner，operation 再加 assignment。停止意圖不等於已清除 target：cancel_pending／uncertain 會阻擋相關設定變更與會話刪除，須先對帳或人工處理未知效果。
+
+R1.4 只保留 task ID 與 goal／criteria snapshot，不建立可由舊入口執行的 core TaskStore task。Events 使用完整 owner key 的專用 feed，approvals 使用 `(identity, owner.key)`；尚未接上舊 dashboard／device 的 namespace 或審批 UI。收到 approved 不代表工具已執行，reconciler 也不消耗 grant。

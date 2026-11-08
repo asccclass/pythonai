@@ -11,7 +11,7 @@ from agent_execution.tasks import TaskStore, assert_owner_active
 from .contracts import OwnerScope
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class OfficeSchemaError(RuntimeError):
@@ -45,10 +45,46 @@ _OBJECTS = {
         FOREIGN KEY(owner,staff_id) REFERENCES office_staff(owner,id) ON DELETE RESTRICT)""",
     "office_one_lead": "CREATE UNIQUE INDEX office_one_lead ON office_members(owner,team_id) WHERE role='lead'",
     "office_staff_memberships": "CREATE INDEX office_staff_memberships ON office_members(owner,staff_id)",
+    "office_assignments": """CREATE TABLE office_assignments (
+        owner TEXT NOT NULL,id TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,
+        task_id TEXT NOT NULL,staff_id TEXT NOT NULL,team_id TEXT,staff_revision INTEGER NOT NULL,
+        team_revision INTEGER,queue_seq INTEGER NOT NULL,payload TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('queued','active','completed','cancelled','uncertain')),
+        created REAL NOT NULL,PRIMARY KEY(owner,id),UNIQUE(owner,request_id),
+        UNIQUE(owner,task_id),UNIQUE(owner,queue_seq),
+        FOREIGN KEY(owner,staff_id) REFERENCES office_staff(owner,id) ON DELETE RESTRICT,
+        FOREIGN KEY(owner,team_id) REFERENCES office_teams(owner,id) ON DELETE RESTRICT)""",
+    "office_assignment_queue": "CREATE INDEX office_assignment_queue ON office_assignments(owner,state,queue_seq)",
+    "office_assignment_staff": "CREATE INDEX office_assignment_staff ON office_assignments(owner,staff_id,state)",
+    "office_assignment_team": "CREATE INDEX office_assignment_team ON office_assignments(owner,team_id,state)",
+    "office_operations": """CREATE TABLE office_operations (
+        owner TEXT NOT NULL,id TEXT NOT NULL,assignment_id TEXT NOT NULL,request_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL
+        CHECK(state IN ('prepared','waiting_approval','ready','denied','expired','cancelled','uncertain')),
+        approval_state TEXT NOT NULL DEFAULT 'not_delivered',created REAL NOT NULL,
+        PRIMARY KEY(owner,id),UNIQUE(owner,assignment_id,request_id),
+        FOREIGN KEY(owner,assignment_id) REFERENCES office_assignments(owner,id) ON DELETE RESTRICT)""",
+    "office_outbox": """CREATE TABLE office_outbox (
+        owner TEXT NOT NULL,id TEXT NOT NULL,assignment_id TEXT NOT NULL,operation_id TEXT,
+        kind TEXT NOT NULL CHECK(kind IN ('event','approval')),fingerprint TEXT NOT NULL,
+        payload TEXT NOT NULL,state TEXT NOT NULL
+        CHECK(state IN ('pending','sending','delivered','uncertain','cancel_pending','cancelled')),
+        attempts INTEGER NOT NULL DEFAULT 0,token TEXT,lease_until REAL,
+        error TEXT NOT NULL DEFAULT '',created REAL NOT NULL,
+        PRIMARY KEY(owner,id),UNIQUE(owner,kind,operation_id),
+        FOREIGN KEY(owner,assignment_id) REFERENCES office_assignments(owner,id) ON DELETE RESTRICT,
+        FOREIGN KEY(owner,operation_id) REFERENCES office_operations(owner,id) ON DELETE RESTRICT)""",
+    "office_outbox_pending": "CREATE INDEX office_outbox_pending ON office_outbox(owner,state,created,id)",
+    "office_outbox_assignment": "CREATE INDEX office_outbox_assignment ON office_outbox(owner,assignment_id)",
+    "office_operations_assignment": "CREATE INDEX office_operations_assignment ON office_operations(owner,assignment_id)",
+    "office_targets": """CREATE TABLE office_targets (
+        kind TEXT PRIMARY KEY CHECK(kind IN ('event','approval')),path TEXT NOT NULL,instance TEXT NOT NULL)""",
 }
 _MIGRATIONS = {
     1: ("office_schema", "office_staff", "office_teams", "office_staff_names", "office_team_names"),
     2: ("office_members", "office_one_lead", "office_staff_memberships"),
+    3: ("office_assignments", "office_assignment_queue", "office_assignment_staff", "office_assignment_team",
+        "office_operations", "office_outbox", "office_outbox_pending", "office_outbox_assignment", "office_operations_assignment", "office_targets"),
 }
 
 
@@ -86,10 +122,48 @@ def erase_owner(conn, owner: str) -> None:
     version = schema_version(conn)
     if not version:
         return
+    if version >= 3:
+        if office_busy(conn, [owner]):
+            raise OfficeSchemaError("Resolve office assignments and deliveries before erasure")
+        conn.execute("DELETE FROM office_outbox WHERE owner=?", (owner,))
+        conn.execute("DELETE FROM office_operations WHERE owner=?", (owner,))
+        conn.execute("DELETE FROM office_assignments WHERE owner=?", (owner,))
     if version >= 2:
         conn.execute("DELETE FROM office_members WHERE owner=?", (owner,))
     conn.execute("DELETE FROM office_teams WHERE owner=?", (owner,))
     conn.execute("DELETE FROM office_staff WHERE owner=?", (owner,))
+
+
+def office_busy(conn, owners):
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='office_assignments'").fetchone():
+        return []
+    if schema_version(conn) != SCHEMA_VERSION:
+        raise OfficeSchemaError("Office migration required before inspecting work")
+    result = []
+    for owner in owners:
+        if conn.execute("SELECT 1 FROM office_assignments WHERE owner=? AND state NOT IN ('cancelled','completed') LIMIT 1", (owner,)).fetchone():
+            result.append('office:assignment')
+        if conn.execute("SELECT 1 FROM office_outbox WHERE owner=? AND state NOT IN ('delivered','cancelled') LIMIT 1", (owner,)).fetchone():
+            result.append('office:delivery')
+    return result
+
+
+def guard_directory_change(conn, owner, *, staff_id=None, team_id=None):
+    field, key = ('staff_id', staff_id) if staff_id is not None else ('team_id', team_id)
+    if conn.execute(f"""SELECT 1 FROM office_assignments a WHERE a.owner=? AND a.{field}=? AND (
+        a.state NOT IN ('cancelled','completed') OR EXISTS (
+          SELECT 1 FROM office_outbox b WHERE b.owner=a.owner AND b.assignment_id=a.id
+          AND b.state NOT IN ('delivered','cancelled')) OR EXISTS (
+          SELECT 1 FROM office_operations o WHERE o.owner=a.owner AND o.assignment_id=a.id AND o.state='uncertain')) LIMIT 1""", (owner.key, key)).fetchone():
+        from .directory import OfficeConflict
+        raise OfficeConflict("Cancel or resolve assignments before changing their directory binding")
+
+
+def guard_reserved_task(conn, owner, task_id):
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='office_assignments'").fetchone():
+        if conn.execute("SELECT 1 FROM office_assignments WHERE owner=? AND task_id=?", (owner, task_id)).fetchone():
+            from agent_execution.tasks import RecoveryRequired
+            raise RecoveryRequired("Office task IDs are reserved for the office dispatcher; R2 execution is not enabled")
 
 
 class OfficeStore:
