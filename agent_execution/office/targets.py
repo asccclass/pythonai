@@ -21,6 +21,8 @@ _DDL = (
         key TEXT PRIMARY KEY,owner TEXT NOT NULL,fingerprint TEXT NOT NULL,record_id TEXT NOT NULL,
         state TEXT NOT NULL CHECK(state IN ('active','cancelled')))""",
     "CREATE INDEX IF NOT EXISTS office_bridge_owner ON office_bridge_receipts(owner)",
+    """CREATE TABLE IF NOT EXISTS office_bridge_managed(
+        approval_id TEXT PRIMARY KEY,binding TEXT NOT NULL,decision TEXT,reason TEXT NOT NULL DEFAULT '',consume_token TEXT)""",
 )
 
 
@@ -159,8 +161,46 @@ class BridgeTarget:
                 conn.execute('INSERT INTO approvals VALUES(?,?,?,?,?,?,?,?)',
                              (record_id,owner.identity,owner.key,payload['action'],args,digest(args),payload['expires'],state))
                 self.store.audit(conn,record_id,owner.identity,owner.key,'requested')
+                if payload.get('managed') is True:
+                    conn.execute('INSERT INTO office_bridge_managed(approval_id,binding) VALUES(?,?)',
+                                 (record_id,digest(approval_json(payload['arguments']))))
             conn.execute("INSERT INTO office_bridge_receipts VALUES(?,?,?,?,'active')",
                          (self._key(owner,row),owner.key,row['fingerprint'],record_id))
+
+    def decide_managed(self, owner, row, approve, reason):
+        payload = json.loads(row['payload'])
+        desired = 'approved' if approve else 'denied'
+        with self.transaction() as conn:
+            self._owner(conn,owner)
+            if self._receipt(conn,owner,row) is None:
+                raise OfficeConflict('Approval has not been durably published')
+            grant = self._approval(conn,owner,payload)
+            managed = conn.execute('SELECT * FROM office_bridge_managed WHERE approval_id=?',(payload['approval_id'],)).fetchone()
+            if managed is None or managed['binding'] != digest(approval_json(payload['arguments'])):
+                raise OfficeConflict('Managed approval binding mismatch')
+            if managed['decision'] == desired and managed['reason'] == reason:
+                return desired
+            if grant['state']!='pending' or grant['expires']<=time.time() or managed['decision'] is not None:
+                raise OfficeConflict('Approval is expired, cancelled, or already decided')
+            conn.execute('UPDATE approvals SET state=? WHERE id=?',(desired,payload['approval_id']))
+            conn.execute('UPDATE office_bridge_managed SET decision=?,reason=? WHERE approval_id=?',(desired,reason,payload['approval_id']))
+            self.store.audit(conn,payload['approval_id'],owner.identity,owner.key,desired)
+            return desired
+
+    def consume_managed(self,owner,row,token):
+        payload = json.loads(row['payload'])
+        with self.transaction() as conn:
+            self._owner(conn,owner)
+            receipt = self._receipt(conn,owner,row)
+            grant = self._approval(conn,owner,payload)
+            managed = conn.execute('SELECT * FROM office_bridge_managed WHERE approval_id=?',(payload['approval_id'],)).fetchone()
+            if (receipt is None or receipt['state']!='active' or managed is None
+                    or managed['binding']!=digest(approval_json(payload['arguments']))
+                    or managed['consume_token'] is not None or grant['state']!='approved' or grant['expires']<=time.time()):
+                raise OfficeConflict('Approval is not a fresh, exact one-use authorization')
+            conn.execute("UPDATE approvals SET state='consumed' WHERE id=?",(payload['approval_id'],))
+            conn.execute('UPDATE office_bridge_managed SET consume_token=? WHERE approval_id=?',(token,payload['approval_id']))
+            self.store.audit(conn,payload['approval_id'],owner.identity,owner.key,'consumed')
 
     def cancel(self, owner, row):
         payload = json.loads(row['payload'])
@@ -195,6 +235,7 @@ class BridgeTarget:
             else:
                 ids = [item['id'] for item in conn.execute("SELECT id FROM approvals WHERE identity=? AND session=? AND action LIKE 'office:%'", (owner.identity,owner.key))]
                 for key in ids:
+                    conn.execute('DELETE FROM office_bridge_managed WHERE approval_id=?',(key,))
                     conn.execute('DELETE FROM approval_events WHERE approval_id=?', (key,))
                     conn.execute('DELETE FROM approvals WHERE id=?', (key,))
             conn.execute('DELETE FROM office_bridge_receipts WHERE owner=?', (owner.key,))

@@ -18,7 +18,7 @@ def session_key(context=None):
     root_owner=context.coordinator_owner or context.lifecycle_owner
     if root_owner:
         root=Path(os.environ.get('LOCALAPPDATA') or Path.home()/'.local'/'share')/'PythonAI'
-        path=Path(os.environ.get('AGENT_TASK_DB') or root/'tasks.db')
+        path=Path(context.task_database or os.environ.get('AGENT_TASK_DB') or root/'tasks.db')
         with closing(sqlite3.connect(path)) as conn:
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='wl_sessions'").fetchone():
                 context_parts(context)

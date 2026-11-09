@@ -25,7 +25,7 @@ from .runtimes.pythonai import PythonAIRuntime, READ_TOOLS
 
 
 class OfficeDispatcher:
-    def __init__(self, ledger, *, runtime_factory=PythonAIRuntime, lease_seconds=30, timeout_seconds=600):
+    def __init__(self, ledger, *, runtime_factory=PythonAIRuntime, lease_seconds=30, timeout_seconds=600, approval_service=None):
         for name,value in (('lease_seconds',lease_seconds),('timeout_seconds',timeout_seconds)):
             if type(value) not in (int,float) or not math.isfinite(value) or not 0 < value <= 86400:
                 raise ValueError(f'{name} must be finite in (0,86400]')
@@ -35,6 +35,9 @@ class OfficeDispatcher:
         self.runtime_factory = runtime_factory
         self.lease_seconds = lease_seconds
         self.timeout_seconds = timeout_seconds
+        if approval_service is not None and approval_service.store.path != self.store.path:
+            raise ValueError('Office approval service belongs to another TaskStore')
+        self.approval_service = approval_service
 
     def submit_auto(self, request_id, goal, *, criteria=None):
         """Explainable routing: least unfinished assignments, stable staff-ID tie.
@@ -76,6 +79,14 @@ class OfficeDispatcher:
         rows = conn.execute("SELECT * FROM office_executions WHERE owner=? AND state IN ('running','draining') AND (lease_until<=? OR deadline<=?)",
                             (owner.key,time.time(),time.time())).fetchall()
         for row in rows:
+            from .gate import parked
+            if parked(conn,owner.key,row['assignment_id'],row['task_id']):
+                continue
+            from .recovery import recover_boundary
+            if recover_boundary(conn,owner.key,row):
+                continue
+            conn.execute("UPDATE office_calls SET state='uncertain',reason='actor_lost_after_start' WHERE owner=? AND assignment_id=? AND state IN ('consuming','started')",(owner.key,row['assignment_id']))
+            conn.execute("UPDATE office_continuations SET state='uncertain' WHERE owner=? AND assignment_id=?",(owner.key,row['assignment_id']))
             conn.execute("UPDATE office_executions SET state='uncertain',updated=? WHERE owner=? AND assignment_id=?", (time.time(),owner.key,row['assignment_id']))
             conn.execute("UPDATE office_assignments SET state='uncertain' WHERE owner=? AND id=? AND state!='cancelled'", (owner.key,row['assignment_id']))
             conn.execute("UPDATE tasks SET state='uncertain',lease_owner=NULL,lease_until=NULL WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')", (owner.key,row['task_id']))
@@ -89,8 +100,14 @@ class OfficeDispatcher:
     def claim(self):
         if not self.ledger.settings.enabled:
             raise PermissionError('Office execution is disabled')
+        if self.approval_service is not None:
+            self.approval_service.reconcile()
         with self.directory._connection(write=True) as (conn,owner):
             self._expire(conn,owner)
+            if self.approval_service is not None:
+                resumed = self.approval_service.claim_ready(conn,owner,self)
+                if resumed is not None:
+                    return resumed
             states = "('running','draining','uncertain')"
             if conn.execute(f'SELECT COUNT(*) FROM office_executions WHERE state IN {states}').fetchone()[0] >= self.ledger.settings.global_concurrency:
                 return None
@@ -168,24 +185,34 @@ class OfficeDispatcher:
             if row['event_seq'] >= 10000:
                 raise OfficeConflict('Runtime event capacity reached')
             conn.execute('UPDATE office_executions SET event_seq=event_seq+1 WHERE owner=? AND assignment_id=?', (owner.key,ticket.assignment_id))
+            if event.type == RuntimeEventType.APPROVAL_WAITING:
+                wait = conn.execute("SELECT 1 FROM office_continuations WHERE owner=? AND assignment_id=? AND state='waiting' AND session_id=? AND turn_id=?",(owner.key,ticket.assignment_id,event.session_id,turn_id)).fetchone()
+                core = conn.execute('SELECT state FROM tasks WHERE owner=? AND id=?',(owner.key,ticket.task_id)).fetchone()
+                if not wait or core['state']!='office_wait':
+                    raise OfficeConflict('Unverified durable approval boundary')
+                return 'waiting'
             if event.type not in {RuntimeEventType.TURN_COMPLETED,RuntimeEventType.TURN_FAILED}:
                 return False
             core = conn.execute('SELECT state,verification,reply FROM tasks WHERE owner=? AND id=?', (owner.key,ticket.task_id)).fetchone()
-            if core['state'] not in {'completed','failed'}:
+            unknown = self.approval_service is not None and event.type==RuntimeEventType.TURN_FAILED and core['state']=='uncertain'
+            if core['state'] not in {'completed','failed'} and not unknown:
                 raise OfficeConflict('Provider completion lacks a terminal core task')
             message = self.ledger._json({'v':1,'id':event.event_id,'type':'office.assignment.finished',
                 'payload':{'assignment_id':ticket.assignment_id,'task_id':ticket.task_id,'staff_id':ticket.staff_id,
-                    'generation':ticket.generation,'outcome':core['state'],'verification':core['verification'],'text':core['reply'] or ''}})
+                    'generation':ticket.generation,'outcome':core['state'],'verification':core['verification'],'text':'' if unknown else core['reply'] or ''}})
             self.ledger._capacity(conn,owner,outbox=1,bytes_added=len(message.encode()))
             self.ledger._outbox(conn,owner,event.event_id,ticket.assignment_id,None,'event',message)
             conn.execute("UPDATE office_executions SET state=?,updated=? WHERE owner=? AND assignment_id=?", (core['state'],time.time(),owner.key,ticket.assignment_id))
-            conn.execute("UPDATE office_assignments SET state='completed' WHERE owner=? AND id=?", (owner.key,ticket.assignment_id))
+            conn.execute('UPDATE office_assignments SET state=? WHERE owner=? AND id=?', ('uncertain' if unknown else 'completed',owner.key,ticket.assignment_id))
+            conn.execute('UPDATE office_continuations SET state=? WHERE owner=? AND assignment_id=?',('uncertain' if unknown else 'completed',owner.key,ticket.assignment_id))
             return True
 
     def _cancel(self, conn, owner, key):
         row = self.ledger._row(conn,'office_assignments',owner,key)
         if row['state'] == 'completed':
             raise OfficeConflict('Completed assignment cannot be cancelled')
+        from .cancellation import cancel_calls
+        cancel_calls(conn,owner.key,key)
         conn.execute("UPDATE office_assignments SET state='cancelled' WHERE owner=? AND id=?", (owner.key,key))
         conn.execute("UPDATE office_executions SET state='draining',updated=? WHERE owner=? AND assignment_id=? AND state='running'", (time.time(),owner.key,key))
         conn.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,reply='Task cancelled' WHERE owner=? AND id=? AND state NOT IN ('completed','failed','cancelled')", (owner.key,row['task_id']))
@@ -251,17 +278,26 @@ class OfficeDispatcher:
                 with self.directory._connection() as (conn,owner):
                     row = self.ledger._row(conn,'office_assignments',owner,ticket.assignment_id)
                     payload = json.loads(row['payload'])
+                    frozen_turn = conn.execute('SELECT tools FROM office_turns WHERE owner=? AND assignment_id=?',(owner.key,ticket.assignment_id)).fetchone()
                 staff = payload['staff']
-                tools = frozenset(staff['allowed_tools']) & READ_TOOLS
+                tools = frozenset(staff['allowed_tools'])
+                if self.approval_service is None:
+                    tools &= READ_TOOLS
                 submitted_ceiling = payload.get('tool_ceiling',[])
                 if submitted_ceiling is not None:
                     tools &= frozenset(submitted_ceiling)
                 ceiling = current_context().allowed_tools
                 if ceiling is not None:
                     tools &= ceiling
+                if frozen_turn is not None:
+                    tools &= frozenset(json.loads(frozen_turn['tools']))
                 request = RuntimeStartRequest(OwnerScope.from_current(),ticket.staff_id,ticket.task_id,ticket.generation,
                     project_workspace(OwnerScope.from_current().project),Provider.PYTHONAI,staff['model'],tools)
                 runtime = self.runtime_factory()
+                if self.approval_service is not None:
+                    if not isinstance(runtime,PythonAIRuntime):
+                        raise PermissionError('R3 writes require the managed native adapter')
+                    runtime.attach_approvals(self.approval_service,ticket)
                 session = await asyncio.wait_for(runtime.start(request),min(self.lease_seconds,self.timeout_seconds))
                 self._bind_session(ticket,session)
                 turn = await asyncio.wait_for(runtime.send(payload['request']['goal'],request_id=row['request_id']),min(self.lease_seconds,self.timeout_seconds))

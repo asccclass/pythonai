@@ -51,6 +51,9 @@ class OfficeLedger:
             raise OfficeCapacityError('Office owner record capacity reached')
         used = sum(conn.execute(f'SELECT COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM {table}').fetchone()[0]
                    for table in ('office_assignments', 'office_operations', 'office_outbox'))
+        used += conn.execute("SELECT COALESCE(SUM(length(CAST(binding AS BLOB))+length(CAST(COALESCE(result,'') AS BLOB))),0) FROM office_calls").fetchone()[0]
+        used += conn.execute('SELECT COALESCE(SUM(length(CAST(tools AS BLOB))+length(workspace)+length(checkpoint_digest)),0) FROM office_continuations').fetchone()[0]
+        used += conn.execute('SELECT COALESCE(SUM(length(CAST(tools AS BLOB))+length(workspace)+length(turn_id)),0) FROM office_turns').fetchone()[0]
         if used + bytes_added > self.limits.storage_bytes:
             raise OfficeCapacityError('Office payload storage capacity reached')
 

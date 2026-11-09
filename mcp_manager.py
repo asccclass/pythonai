@@ -375,4 +375,11 @@ def get_mcp_tools():
 def execute_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
     """Helper to route execution."""
     from agent_execution import execute_tool
+    from agent_execution.office.gate import active_actor
+    from agent_execution.office.persistence import canonical, digest
+    actor = active_actor()
+    if actor is not None and actor.frames:
+        frame = actor.frames[-1]
+        if frame.approved and frame.name == tool_name and frame.args == digest(canonical(arguments)):
+            return get_mcp_manager().call_tool(tool_name,arguments)
     return execute_tool(tool_name, arguments, lambda **values: get_mcp_manager().call_tool(tool_name, values))

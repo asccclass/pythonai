@@ -108,7 +108,10 @@ class OfficeDirectory:
             raise ValueError("Expected a StaffConfig")
         from base import TOOLS
         ceiling = current_context().allowed_tools
-        if any(tool not in TOOLS or not check_tool_permission(tool) or
+        import mcp_manager
+        manager = mcp_manager._mcp_manager
+        discovered = set(manager.routes) if manager is not None else set()
+        if any((tool not in TOOLS and tool not in discovered) or not check_tool_permission(tool) or
                (ceiling is not None and tool not in ceiling) for tool in config.allowed_tools):
             raise PermissionError("Staff tools exceed the registered, authorized tool set")
 

@@ -350,10 +350,27 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
         else:
             reply = str(result)
         state = 'cancelled' if lost.is_set() or (original_cancel and original_cancel()) else 'failed' if (is_skill and not result.get('success')) or reply.startswith('Error:') or '已轉交人工審核' in reply or '遠端 LLM 服務發生錯誤' in reply else 'completed'
+        from .office.gate import active_actor
+        office_actor = active_actor()
+        if office_actor and office_actor.service.is_uncertain(office_actor.ticket):
+            state = 'uncertain'
         if store.get(owner,key)['state'] != 'cancelled':
             store.finish(owner,key,token,state,reply)
         return result if skill or not is_skill else reply
-    except Exception as error:
+    except BaseException as error:
+        from .office.gate import OfficeWait, OfficeUncertain, active_actor
+        if isinstance(error,OfficeWait):
+            actor = active_actor()
+            if actor is None:
+                raise RecoveryRequired('Missing Office continuation authority') from None
+            actor.service.park(actor,error.call_id,token)
+            raise
+        if isinstance(error,OfficeUncertain):
+            if store.get(owner,key)['state'] != 'cancelled':
+                store.finish(owner,key,token,'uncertain','Office operation needs human reconciliation')
+            raise
+        if not isinstance(error,Exception):
+            raise
         from .turn_control.continuation import TaskYield
         from exceptions import TaskSuspendedException
         if isinstance(error,TaskYield):

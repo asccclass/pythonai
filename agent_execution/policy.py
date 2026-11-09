@@ -127,7 +127,15 @@ def _audit_tool_execution(name: str) -> None:
 
 
 @traced('tool')
-def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any], *, _skip_hooks=False) -> Any:
+def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., Any], *, _skip_hooks=False, _office_checked=False) -> Any:
+    from .office.gate import active_actor, intercept
+    office = active_actor()
+    if office is not None and not _office_checked:
+        from .office.persistence import canonical as office_json
+        frozen = json.loads(office_json({k:v for k,v in arguments.items() if k not in {'memory','episode_id'}},office.service.ledger.limits.payload_bytes))
+        frozen.update({k:v for k,v in arguments.items() if k in {'memory','episode_id'}})
+        return intercept(name,frozen,function,
+            lambda:execute_tool(name,frozen,function,_skip_hooks=True,_office_checked=True))
     from .approvals import ApprovalStore, ApprovalRequired, canonical
     from .budgets import active_budget, BudgetExhausted
     budget=active_budget()
@@ -170,7 +178,7 @@ def execute_tool(name: str, arguments: dict[str, Any], function: Callable[..., A
             expression=schedule if isinstance(schedule,str) and len(schedule.split())==5 else natural_cron(schedule)
             validate_job(values.get('name',''),expression,values.get('job_type','watch'),values.get('payload') or {},
                          values.get('timezone','Asia/Taipei'),values.get('timeout',60),values.get('max_runs',1000))
-        if name == 'git_rollback' or external_delivery or (name == 'manage_schedule' and values.get('action') == 'add') or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"}):
+        if office is None and (name == 'git_rollback' or external_delivery or (name == 'manage_schedule' and values.get('action') == 'add') or (name == "manage_memory" and values.get("action") in {"archive", "contradict", "supersede"})):
             if name=='manage_memory':values = {"reason": "", "superseded_by": None, **values}
             context = _context.get()
             action = f"{context.project}:{name}" + (f':{context.task_id}' if name=='git_rollback' or external_delivery else '')
@@ -265,9 +273,26 @@ def policy_tool(name: str):
             delegated=_delegated_wrapper.get() is wrapped
             cleared=_delegated_wrapper.set(None)
             try:
-                def invoke(**_values):return function(*args,**kwargs)
+                def invoke(**_values):
+                    from .office.gate import active_actor
+                    if active_actor() is not None:
+                        remaining = dict(_values)
+                        effective = {}
+                        var_keyword = None
+                        for key,param in signature.parameters.items():
+                            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                                var_keyword = key
+                            elif key in remaining:
+                                effective[key] = remaining.pop(key)
+                        if var_keyword is not None:
+                            effective[var_keyword] = remaining
+                        elif remaining:
+                            raise TypeError('Unexpected frozen Office tool arguments')
+                        call = inspect.BoundArguments(signature,effective)
+                        return function(*call.args,**call.kwargs)
+                    return function(*args,**kwargs)
                 invoke.__signature__=signature
-                return execute_tool(name, arguments, invoke,_skip_hooks=delegated)
+                return execute_tool(name, arguments, invoke,_skip_hooks=delegated,_office_checked=delegated)
             finally:
                 _delegated_wrapper.reset(cleared)
 

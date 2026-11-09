@@ -11,7 +11,7 @@ from agent_execution.tasks import TaskStore, assert_owner_active
 from .contracts import OwnerScope
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class OfficeSchemaError(RuntimeError):
@@ -102,7 +102,36 @@ _MIGRATIONS = {
     3: ("office_assignments", "office_assignment_queue", "office_assignment_staff", "office_assignment_team",
         "office_operations", "office_outbox", "office_outbox_pending", "office_outbox_assignment", "office_operations_assignment", "office_targets"),
     4: ('office_executions','office_execution_staff','office_execution_capacity','office_staff_controls'),
+    5: ('office_calls','office_call_states','office_turns','office_continuations'),
 }
+
+_OBJECTS.update({
+    'office_calls': '''CREATE TABLE office_calls (
+        owner TEXT NOT NULL,id TEXT NOT NULL,assignment_id TEXT NOT NULL,parent_id TEXT,
+        operation_id TEXT,call_key TEXT NOT NULL,name TEXT NOT NULL,binding TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN
+        ('waiting','consuming','started','composite','completed','denied','expired','cancelled','uncertain')),
+        consume_token TEXT,result TEXT,reason TEXT NOT NULL DEFAULT '',created REAL NOT NULL,
+        PRIMARY KEY(owner,id),UNIQUE(owner,assignment_id,call_key),UNIQUE(owner,operation_id),
+        FOREIGN KEY(owner,assignment_id) REFERENCES office_assignments(owner,id) ON DELETE RESTRICT,
+        FOREIGN KEY(owner,parent_id) REFERENCES office_calls(owner,id) ON DELETE RESTRICT,
+        FOREIGN KEY(owner,operation_id) REFERENCES office_operations(owner,id) ON DELETE RESTRICT)''',
+    'office_call_states': 'CREATE INDEX office_call_states ON office_calls(owner,assignment_id,state)',
+    'office_turns': '''CREATE TABLE office_turns (
+        owner TEXT NOT NULL,assignment_id TEXT NOT NULL,session_id TEXT NOT NULL,turn_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,workspace TEXT NOT NULL,tools TEXT NOT NULL,role TEXT NOT NULL,model TEXT NOT NULL,
+        PRIMARY KEY(owner,assignment_id),
+        FOREIGN KEY(owner,assignment_id) REFERENCES office_assignments(owner,id) ON DELETE RESTRICT)''',
+    'office_continuations': '''CREATE TABLE office_continuations (
+        owner TEXT NOT NULL,assignment_id TEXT NOT NULL,call_id TEXT,
+        state TEXT NOT NULL CHECK(state IN ('waiting','ready','running','cancelled','uncertain','completed')),
+        checkpoint_digest TEXT NOT NULL,session_id TEXT NOT NULL,turn_id TEXT NOT NULL,
+        workspace TEXT NOT NULL,tools TEXT NOT NULL,role TEXT NOT NULL,
+        resume_phase TEXT NOT NULL DEFAULT 'model_received',updated REAL NOT NULL,
+        PRIMARY KEY(owner,assignment_id),
+        FOREIGN KEY(owner,assignment_id) REFERENCES office_assignments(owner,id) ON DELETE RESTRICT,
+        FOREIGN KEY(owner,call_id) REFERENCES office_calls(owner,id) ON DELETE RESTRICT)''',
+})
 
 
 def _normalized(sql):
@@ -143,6 +172,15 @@ def erase_owner(conn, owner: str) -> None:
         if office_busy(conn, [owner]):
             raise OfficeSchemaError("Resolve office assignments and deliveries before erasure")
         if version >= 4:
+            if version >= 5:
+                conn.execute('DELETE FROM office_continuations WHERE owner=?', (owner,))
+                conn.execute('DELETE FROM office_turns WHERE owner=?', (owner,))
+                # Nested call records reference their parents; erase leaves first.
+                while conn.execute('SELECT 1 FROM office_calls WHERE owner=?', (owner,)).fetchone():
+                    changed = conn.execute('''DELETE FROM office_calls WHERE owner=? AND id NOT IN
+                        (SELECT parent_id FROM office_calls WHERE owner=? AND parent_id IS NOT NULL)''', (owner,owner)).rowcount
+                    if not changed:
+                        raise OfficeSchemaError('Office call parent cycle')
             conn.execute('DELETE FROM office_executions WHERE owner=?', (owner,))
             conn.execute('DELETE FROM office_staff_controls WHERE owner=?', (owner,))
         conn.execute("DELETE FROM office_outbox WHERE owner=?", (owner,))

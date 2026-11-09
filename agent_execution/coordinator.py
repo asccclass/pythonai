@@ -120,6 +120,8 @@ class Coordinator:
             (row['id'],row['owner'],event,json.dumps(data or {},ensure_ascii=False),time.time()))
 
     def submit(self,persona,goal,dependencies=None,previous=None):
+        from .office.gate import forbid_detached
+        forbid_detached('subagents')
         from base import workspace_root
         from permissions import current_role
         context=current_context();budget=active_budget();active=_active.get()

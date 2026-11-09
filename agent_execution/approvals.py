@@ -72,6 +72,8 @@ class ApprovalStore:
         state = 'approved' if approve else 'denied'
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            from .office.gate import require_target_authority
+            require_target_authority(self,conn,approval_id,'decide')
             from .temporal_backend.approval_outbox import get_binding, validate_target
             target = get_binding(conn, approval_id)
             if target is not None and not same_decision(conn, approval_id, identity, session, state):
@@ -92,6 +94,8 @@ class ApprovalStore:
         from .temporal_backend.approval_outbox import validate_consumption, record_decision
         with closing(self.connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
+            from .office.gate import require_target_authority
+            require_target_authority(self,conn,approval_id,'consume')
             validate_consumption(conn, approval_id, binding)
             updated = conn.execute("UPDATE approvals SET state='consumed' WHERE id=? AND identity=? AND session=? AND action=? AND digest=? AND state='approved' AND expires>?",
                                    (approval_id, identity, session, action, digest, time.time()))

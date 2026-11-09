@@ -52,6 +52,10 @@ class OfficeReconciler:
         if row['operation_id'] is None:
             return
         if state == 'consumed':
+            call = conn.execute('SELECT state,consume_token FROM office_calls WHERE owner=? AND operation_id=?',(owner.key,row['operation_id'])).fetchone()
+            if call and call['consume_token'] and call['state'] in {'consuming','started','composite','completed','cancelled'}:
+                conn.execute("UPDATE office_operations SET approval_state='consumed' WHERE owner=? AND id=?",(owner.key,row['operation_id']))
+                return
             conn.execute("UPDATE office_operations SET state='uncertain',approval_state=? WHERE owner=? AND id=?", (state,owner.key,row['operation_id']))
             conn.execute("UPDATE office_assignments SET state='uncertain' WHERE owner=? AND id=?", (owner.key,row['assignment_id']))
         else:
@@ -101,7 +105,8 @@ class OfficeReconciler:
                 if fresh['token'] != token:
                     return {'id':key,'state':'fenced'}
                 if state == 'consumed' and action == 'cancel':
-                    result = 'uncertain'
+                    call = conn.execute('SELECT state,consume_token FROM office_calls WHERE owner=? AND operation_id=?',(owner.key,row['operation_id'])).fetchone()
+                    result = 'cancelled' if call and call['consume_token'] and call['state'] in {'completed','cancelled'} else 'uncertain'
                 else:
                     result = 'cancelled' if action == 'cancel' else 'uncertain' if state=='uncertain' else 'delivered'
                 conn.execute('UPDATE office_outbox SET state=?,token=NULL,lease_until=NULL,error=? WHERE owner=? AND id=?',

@@ -471,7 +471,8 @@ def test_v3_upgrade_preserves_intents_and_v4_is_empty(office_env):
         before = tuple(conn.execute('SELECT * FROM office_assignments').fetchone())
     store.migrate(office_env['root']/'v4-backup',offline=True)
     with closing(store.connect()) as conn:
-        assert schema_version(conn) == 4
+        from agent_execution.office.store import SCHEMA_VERSION
+        assert schema_version(conn) == SCHEMA_VERSION
         assert tuple(conn.execute('SELECT * FROM office_assignments').fetchone()) == before
         assert not conn.execute('SELECT * FROM office_executions').fetchall()
 
