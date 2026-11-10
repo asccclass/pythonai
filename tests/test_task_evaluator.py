@@ -692,6 +692,60 @@ class TaskEvaluatorTests(unittest.TestCase):
         episode = store.get_episode(result.episode_id)
         self.assertEqual(episode["status"], "needs_review")
 
+    def test_resolve_test_target_finds_nested_file(self):
+        nested_dir = self.workspace / "workspace" / "GoogleCalendarReader"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        test_file = nested_dir / "test_env.py"
+        test_file.write_text("def test_ok(): assert True\n", encoding="utf-8")
+
+        evaluator = TaskEvaluator(self.workspace)
+        # 1. 裸檔名自動解析至子目錄
+        resolved = evaluator.resolve_test_target("test_env.py")
+        self.assertEqual(resolved, "workspace/GoogleCalendarReader/test_env.py")
+
+        # 2. 不存在的檔案保持原樣
+        unresolved = evaluator.resolve_test_target("test_calendar.py")
+        self.assertEqual(unresolved, "test_calendar.py")
+
+        # 3. 根目錄已存在的檔案優先返回根目錄路徑
+        root_test = self.workspace / "test_root.py"
+        root_test.write_text("def test_root(): assert True\n", encoding="utf-8")
+        self.assertEqual(evaluator.resolve_test_target("test_root.py"), "test_root.py")
+
+    def test_find_target_test_files_resolves_nested_targets(self):
+        nested_dir = self.workspace / "workspace" / "GoogleCalendarReader"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        (nested_dir / "test_env.py").write_text("def test_ok(): assert True\n", encoding="utf-8")
+
+        evaluator = TaskEvaluator(self.workspace)
+        targets = evaluator.find_target_test_files("請測試 test_env.py 與 test_calendar.py", [])
+        self.assertIn("workspace/GoogleCalendarReader/test_env.py", targets)
+        self.assertIn("test_calendar.py", targets)
+
+    def test_evaluator_evaluates_auto_resolved_nested_test(self):
+        nested_dir = self.workspace / "workspace" / "GoogleCalendarReader"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        (nested_dir / "test_env.py").write_text("def test_ok(): assert True\n", encoding="utf-8")
+
+        called_targets = []
+        def fake_run_test_suite(target):
+            called_targets.append(target)
+            return ToolResult(True, "1 passed", 0, evidence={"tests": {"passed": 1}})
+
+        evaluator = TaskEvaluator(
+            workspace_root=self.workspace,
+            run_test_suite_fn=fake_run_test_suite,
+            git_status_fn=lambda: "On branch main",
+        )
+        res = evaluator.evaluate(
+            user_goal="執行 test_env.py",
+            messages=[{"role": "user", "content": "執行 test_env.py"}],
+            final_reply="測試已完成",
+        )
+        self.assertTrue(res.success)
+        self.assertIn("workspace/GoogleCalendarReader/test_env.py", called_targets)
+        self.assertTrue(res.criteria_met.get("test_passed:workspace/GoogleCalendarReader/test_env.py"))
+
 
 if __name__ == "__main__":
     unittest.main()

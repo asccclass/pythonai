@@ -13,6 +13,27 @@ from agent_execution.results import ToolResult
 @policy_tool('run_test_suite')
 def run_test_suite(test_target: str, framework: str = 'auto'):
     target=resolve_path(test_target)
+    if not target.exists():
+        root = resolve_path('.')
+        filename = Path(test_target).name
+        ignored = {'.git', 'venv', '__pycache__', '.pytest_cache', '.system_generated', '.pythonai-workspace-trash'}
+        try:
+            candidates: list[tuple[Path, str]] = []
+            for p in root.rglob(filename):
+                if any(part in ignored for part in p.parts):
+                    continue
+                if p.is_file():
+                    candidates.append((p, str(p.relative_to(root)).replace('\\', '/')))
+            if candidates:
+                clean_target = test_target.replace('\\', '/')
+                selected = candidates[0]
+                for p, rel in candidates:
+                    if rel.endswith(clean_target):
+                        selected = (p, rel)
+                        break
+                target, test_target = selected
+        except Exception:
+            pass
     if not target.exists():return ToolResult(False,error=f"Test target '{test_target}' does not exist")
     framework=framework.lower()
     if framework=='auto':framework='go' if target.suffix=='.go' or (target.is_dir() and (target/'go.mod').is_file()) else 'pytest'

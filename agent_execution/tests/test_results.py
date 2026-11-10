@@ -152,6 +152,15 @@ class ResultTests(unittest.TestCase):
         self.assertFalse(script.success)
         self.assertEqual(script.exit_code,0)
 
+    def test_run_test_suite_resolves_nested_target(self):
+        nested = self.root / 'workspace' / 'subpkg'
+        nested.mkdir(parents=True, exist_ok=True)
+        target = nested / 'test_nested.py'
+        target.write_text('def test_nested():\n    assert True\n', encoding='utf-8')
+        result = run_test_suite('test_nested.py')
+        self.assertTrue(result.success, str(result))
+        self.assertEqual(result.evidence['tests']['passed'], 1)
+
     def test_acceptance_frozen_before_tool_changes_manifest(self):
         self.contract([{'kind':'file_contains','path':'out.txt','text':'expected'}])
         def execute(saved):

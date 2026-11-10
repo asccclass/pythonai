@@ -186,6 +186,31 @@ class TaskEvaluator:
     def _permission_denied(text: str) -> bool:
         return bool(re.search(r"^\s*(?:Error:\s*)?(?:PermissionError|PolicyDenied|Permission denied|Role\s+['\"]?\w+['\"]?\s+cannot execute)", text, re.IGNORECASE))
 
+    def resolve_test_target(self, target_str: str) -> str:
+        """Resolve a test target path; if bare or missing at root, locate matching file in workspace."""
+        clean_target = target_str.replace("\\", "/")
+        target_path = self.workspace_root / clean_target
+        if target_path.exists():
+            return clean_target
+
+        filename = Path(clean_target).name
+        ignored = {".git", "venv", "__pycache__", ".pytest_cache", ".system_generated", ".pythonai-workspace-trash"}
+        try:
+            candidates: list[str] = []
+            for p in self.workspace_root.rglob(filename):
+                if any(part in ignored for part in p.parts):
+                    continue
+                if p.is_file():
+                    candidates.append(str(p.relative_to(self.workspace_root)).replace("\\", "/"))
+            if candidates:
+                for cand in candidates:
+                    if cand.endswith(clean_target):
+                        return cand
+                return candidates[0]
+        except Exception:
+            pass
+        return clean_target
+
     def find_target_test_files(self, user_goal: str, messages: list[dict[str, Any]]) -> list[str]:
         """Locate test targets mentioned in user goal, messages, or existing in workspace."""
         targets: list[str] = []
@@ -215,7 +240,12 @@ class TaskEvaluator:
                     if clean_target not in targets:
                         targets.append(clean_target)
 
-        return targets
+        resolved_targets: list[str] = []
+        for target in targets:
+            resolved = self.resolve_test_target(target)
+            if resolved not in resolved_targets:
+                resolved_targets.append(resolved)
+        return resolved_targets
 
     def verify_file_syntax_and_state(self, file_paths: list[str]) -> tuple[bool, list[str]]:
         """Verify that target files exist, are non-empty, and valid syntax (for Python files)."""
@@ -261,17 +291,22 @@ class TaskEvaluator:
 
         # 1. 程式開發任務斷言：強制執行測試套件
         if is_code_task:
-            test_targets = [test_target] if test_target else self.find_target_test_files(user_goal, messages)
+            raw_targets = [test_target] if test_target else self.find_target_test_files(user_goal, messages)
             from agent_execution.tasks import _active
             active=_active.get()
             contract=active[0].get(active[1],active[2])['criteria'] if active else {}
             for check in contract.get('checks',[]):
-                if check.get('kind')=='tests' and check['target'] not in test_targets:test_targets.append(check['target'])
+                if check.get('kind')=='tests' and check['target'] not in raw_targets:raw_targets.append(check['target'])
             if active:
                 for step in active[0].steps(active[1],active[2]):
                     if step['name']=='run_test_suite':
                         target=json.loads(step['input']).get('test_target')
-                        if target and target not in test_targets:test_targets.append(target)
+                        if target and target not in raw_targets:raw_targets.append(target)
+            test_targets: list[str] = []
+            for target in raw_targets:
+                resolved = self.resolve_test_target(target)
+                if resolved not in test_targets:
+                    test_targets.append(resolved)
             if test_targets:
                 for target in test_targets:
                     from agent_execution.results import normalize_result
@@ -572,11 +607,12 @@ class TaskEvaluator:
     # Tool Invocation Helpers
     # ---------------------------------------------------------
     def _call_run_test_suite(self, target: str) -> str:
+        resolved_target = self.resolve_test_target(target)
         if self._run_test_suite:
-            return self._run_test_suite(target)
+            return self._run_test_suite(resolved_target)
         try:
             from tools.run_test_suite import run_test_suite
-            return run_test_suite(target)
+            return run_test_suite(resolved_target)
         except Exception as e:
             return f"Error executing run_test_suite: {e}"
 
