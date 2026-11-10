@@ -189,6 +189,9 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
         append_reply(runtime,reply)
         log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
         status='failed' if not result.get('success') else 'verified_completed' if result.get('verification',{}).get('verified') else 'completed'
+        if status == 'failed':
+            from agent_execution.session_cleanup import cleanup_session_artifacts
+            cleanup_session_artifacts(reason="Skill execution failed")
         finish_turn_memory_review(runtime, episode_id, skip_laya_for_turn,status=status)
         return AgentTurnResult(reply, episode_id, guard_notice=guard_notice, skipped_laya=skip_laya_for_turn)
 
@@ -264,6 +267,8 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
             suspended_tool_call_id=error.tool_call_id,
         )
     except Exception as error:
+        from agent_execution.session_cleanup import cleanup_session_artifacts
+        cleanup_session_artifacts(reason=str(error))
         log_episode_event(
             runtime.memory,
             episode_id,
@@ -275,6 +280,9 @@ def run_agent_turn(user_input: str, runtime: AgentRuntime, attachments: list[Any
         raise
 
     episode_status = determine_episode_status(reply, runtime.memory, episode_id)
+    if episode_status in ('failed', 'rejected'):
+        from agent_execution.session_cleanup import cleanup_session_artifacts
+        cleanup_session_artifacts(reason=f"Episode status: {episode_status}")
     from agent_execution.temporal_backend.runtime_state import append_reply
     append_reply(runtime,reply)
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
@@ -615,6 +623,8 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
             suspended_tool_call_id=error.tool_call_id,
         )
     except Exception as error:
+        from agent_execution.session_cleanup import cleanup_session_artifacts
+        cleanup_session_artifacts(reason=str(error))
         log_episode_event(
             runtime.memory,
             episode_id,
@@ -630,5 +640,8 @@ def resume_agent_turn(messages: list[dict[str, Any]], runtime: AgentRuntime, epi
     append_reply(runtime,reply)
     log_episode_event(runtime.memory, episode_id, "message", role="assistant", content=reply)
     status = determine_episode_status(reply, runtime.memory, episode_id)
+    if status in ('failed', 'rejected'):
+        from agent_execution.session_cleanup import cleanup_session_artifacts
+        cleanup_session_artifacts(reason=f"Turn status: {status}")
     finish_turn_memory_review(runtime, episode_id, False, status=status)
     return AgentTurnResult(reply, episode_id)

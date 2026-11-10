@@ -350,6 +350,9 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
         else:
             reply = str(result)
         state = 'cancelled' if lost.is_set() or (original_cancel and original_cancel()) else 'failed' if (is_skill and not result.get('success')) or reply.startswith('Error:') or '已轉交人工審核' in reply or '遠端 LLM 服務發生錯誤' in reply else 'completed'
+        if state in ('failed', 'cancelled'):
+            from .session_cleanup import cleanup_session_artifacts
+            cleanup_session_artifacts(reason=f"Task {state}: {reply[:200]}")
         from .office.gate import active_actor
         office_actor = active_actor()
         if office_actor and office_actor.service.is_uncertain(office_actor.ticket):
@@ -385,6 +388,8 @@ def durable_invoke(function, messages, episode, resume=False, skill=False, skill
             save_checkpoint('waiting_user',error.messages,**metadata)
             store.finish(owner,key,token,'suspended',error.question)
         else:
+            from .session_cleanup import cleanup_session_artifacts
+            cleanup_session_artifacts(reason=str(error))
             # A tool started checkpoint survives an exception as uncertain; never blindly replay.
             row = store.get(owner,key)
             if row['state'] != 'cancelled':
