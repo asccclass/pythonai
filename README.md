@@ -762,3 +762,7 @@ OAuth discovery 的授權網址若已有 state／client_id／redirect_uri／PKCE
 ### Telegram polling 短暫交接恢復（2026-10-11）
 
 遇到另一個 getUpdates 請求尚未結束時，不再第一次 409 就停止；保留本機鎖，預設兩次／每次 35 秒等待，成功後顯示 resumed。衝突預算不因成功輪詢重置；webhook／unknown／用完預算仍停止。正式 Bot 原生 loop 兩次 10 秒輪詢成功、0 updates，未帶 offset、未處理或發送訊息。完整回歸 **655 passed、7 skipped、68 subtests passed（674.18 秒）**；證據見 `agent_execution/operations/verification_telegram_handoff_2026-10-11.json`。另一個長期活動的 consumer 仍需由部署者停止。
+
+
+## 參考資料
+* [codex github](https://github.com/openai/codex)
