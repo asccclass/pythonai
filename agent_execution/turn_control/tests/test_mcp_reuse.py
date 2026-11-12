@@ -128,3 +128,4 @@ class TestMcpReadonlyReuse:
         msg = progress.before('mcp_otherserver_list_items', {'q': 'foo'})
         assert msg is not None
         assert 'already succeeded' in msg.lower()
+
