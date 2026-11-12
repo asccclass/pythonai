@@ -513,7 +513,7 @@ def _run_agent_impl(
                         from agent_execution.results import ToolResult
                         previous_id = progress.reusable_record(tool_name, tool_args).get('source_id')
                         previous = tool_results.get(previous_id, {})
-                        if tool_name in TurnProgress.REUSABLE_READS and previous.get('success') is True:
+                        if (tool_name in TurnProgress.REUSABLE_READS or TurnProgress.is_mcp_readonly(tool_name)) and previous.get('success') is True:
                             source_id = previous_id
                             result = ToolResult(True, 'Reused earlier read; no new network/filesystem read was performed.\n' + str(previous.get('output', '')),
                                                 evidence={'kind':'reuse_prior_read','source_tool_call':source_id})

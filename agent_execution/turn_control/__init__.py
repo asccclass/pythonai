@@ -42,6 +42,14 @@ class TurnProgress:
         return hashlib.sha256(json.dumps([name, args], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     @staticmethod
+    def is_mcp_readonly(name: str) -> bool:
+        """MCP tools whose names suggest a read-only query (list/get/read/search/fetch/query)."""
+        if not name.startswith('mcp_'):
+            return False
+        return any(f'_{op}_' in name or name.endswith(f'_{op}')
+                   for op in ('list', 'get', 'read', 'search', 'fetch', 'query'))
+
+    @staticmethod
     def family(name, args):
         command = args.get('command') or []
         if name == 'run_command' and isinstance(command, list) and command and str(command[0]).lower() in {'mkdir', 'md', 'dir', 'ls', 'type'}:
@@ -74,6 +82,10 @@ class TurnProgress:
                                self.state['failures'].get(self.BROWSER_ENVIRONMENT_FAMILY, 0) >= 2)
         if name in self.REUSABLE_READS and record.get('success'):
             return 'This read already succeeded. Reuse its evidence to answer; do not fetch it again.'
+        if self.is_mcp_readonly(name) and record.get('success'):
+            return ('This MCP read already succeeded with the same parameters. '
+                    'Reuse its result; do not query again with identical arguments. '
+                    'If the result was empty, explain the data was not found rather than repeating the query.')
         if name == 'search_web' and self.state.get('search_result_key'):
             return ('A web search already returned usable results. Reuse those results; do not search again '
                     'with reworded keywords. Open one returned URL if more detail is required.')

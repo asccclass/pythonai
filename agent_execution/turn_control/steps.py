@@ -53,8 +53,9 @@ def tool_step(tool_call, *, invoke: Callable, memory=None, episode_id=None,
     from agent_execution.temporal_backend.operations import run_operation
     name = tool_call.function.name
     from agent_execution.office.gate import call_scope
+    call_id = getattr(tool_call, 'id', '')
     with execution_scope(check_cancelled=check_cancelled,
-                         tool_hook_managed=name), call_scope(tool_call.id):
+                         tool_hook_managed=name), call_scope(call_id):
         return run_operation('tool', operation_id,
             lambda: {'name': name, 'arguments': _tool_arguments(tool_call.function.arguments)},
             lambda: invoke(tool_call, memory=memory, episode_id=episode_id),
