@@ -145,6 +145,9 @@ def write_file(path: str | Path, content: str) -> dict:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     output = register(target, newly_created)
+    if newly_created:
+        from agent_execution.session_cleanup import track_created_file
+        track_created_file(target)
     return {'success': True, 'path': str(target), 'action': 'written',
             **({'artifacts': [output], 'evidence': {'kind': 'workspace_output', **output}} if output else {})}
 
@@ -159,6 +162,8 @@ def edit_file(path: str | Path, old_str: str, new_str: str) -> dict[str, str]:
             with program_build(LifecycleStore(),key) if key else nullcontext():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(new_str, encoding="utf-8")
+            from agent_execution.session_cleanup import track_created_file
+            track_created_file(target)
             return {"path": str(target), "action": "created_file"}
         else:
             return {"path": str(target), "action": "file not found"}
@@ -167,6 +172,8 @@ def edit_file(path: str | Path, old_str: str, new_str: str) -> dict[str, str]:
     if original.find(old_str) == -1:
         return {"success": False, "error": "old_str not found; read_file and use the exact current text", "path": str(target), "action": "old_str not found", "side_effects":{"status":"none"},"evidence":{"kind":"edit_no_match"}}
     
+    from agent_execution.session_cleanup import track_modified_file
+    track_modified_file(target, original)
     edited = original.replace(old_str, new_str, 1)
     target.write_text(edited, encoding="utf-8")
     return {"path": str(target), "action": "edited"}
@@ -270,13 +277,17 @@ def run_command(
     trusted_asset_roots: list[str | Path] | None = None,
     artifacts_directory: str | Path | None = None,
     program_directory: str | None = None,
+    stop_on_error: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     if program_directory is not None:
         if cwd not in (None,'.'):raise ValueError('Use program_directory as the command cwd')
         from agent_execution.workspace_lifecycle import program_directory as managed_program
         with managed_program(program_directory) as outcome:
-            result=run_command(command,None,env_file,trusted_asset_roots,artifacts_directory)
+            result=run_command(command,None,env_file,trusted_asset_roots,artifacts_directory,stop_on_error=stop_on_error)
             outcome['success']=result.returncode==0
+            if not outcome['success'] and stop_on_error:
+                from agent_execution.session_cleanup import cleanup_session_artifacts
+                cleanup_session_artifacts(reason=f"Program in {program_directory} failed with exit code {result.returncode}")
             return result
     try:
         resolved_cwd = resolve_command_cwd(cwd, trusted_asset_roots)
@@ -335,7 +346,11 @@ def run_command(
             sandbox.cleanup()
     if artifacts_directory is not None:
         return subprocess.CompletedProcess(args=resolved_command, returncode=1, stdout="", stderr="artifacts_directory requires container mode")
-    return run_process(resolved_command, cwd=resolved_cwd, **run_options)
+    res = run_process(resolved_command, cwd=resolved_cwd, **run_options)
+    if stop_on_error and res.returncode != 0:
+        from agent_execution.session_cleanup import cleanup_session_artifacts
+        cleanup_session_artifacts(reason=f"Command '{command}' failed with exit code {res.returncode}")
+    return res
 
 
 def resolve_command_cwd(

@@ -36,3 +36,7 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Secrets & local workspace artifacts
+client_secret*.json
+workspace/client_secret*.json

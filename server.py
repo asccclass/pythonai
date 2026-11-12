@@ -155,7 +155,7 @@ def log_episode_event(
 import random
 
 
-def run_agent(
+def _run_agent_impl(
     messages,
     memory: MemoryStore | None = None,
     episode_id: int | None = None,
@@ -681,6 +681,68 @@ def run_agent(
     last_error = redact(str(failed[-1].get('error') or failed[-1].get('output') or ''))[:400] if failed else 'No failing tool result was recorded; inspect remaining work and response hooks.'
     return (f"Error: Agent execution limit ({max_iterations}) reached. Successful tool steps: {len(tool_results)-len(failed)}; failed: {len(failed)}. "
             f"Last tool error: {last_error}. Progress is saved; correct this cause or split the remaining work before resuming.")
+
+
+from functools import wraps
+
+
+@wraps(_run_agent_impl)
+def run_agent(
+    messages,
+    memory: MemoryStore | None = None,
+    episode_id: int | None = None,
+    max_retries: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
+    max_iterations: int | None = None,
+    check_cancelled: Callable[[], bool] | None = None,
+    task_evaluator: TaskEvaluator | None = None,
+    max_eval_retries: int = 2,
+    hook_manager: HookManager | None = None,
+    event_callback: Callable[[str, dict], None] | None = None,
+    resume_state: dict | None = None,
+    step_controller=None,
+    client_factory=None,
+    model: str | None = None,
+):
+    from agent_execution.session_cleanup import session_cleanup_scope
+
+    def _is_stopping_error(reply_text: str) -> bool:
+        if not isinstance(reply_text, str):
+            return False
+        return (
+            reply_text.startswith("Error:")
+            or "⛔ 任務驗收未通過" in reply_text
+            or "Task was cancelled" in reply_text
+            or "已轉交人工審核" in reply_text
+            or "遠端 LLM 服務發生錯誤" in reply_text
+            or "連線失敗或逾時" in reply_text
+            or "HTTP 404" in reply_text
+            or "HTTP 401" in reply_text
+            or "HTTP 403" in reply_text
+            or "服務請求失敗" in reply_text
+        )
+
+    with session_cleanup_scope() as cleanup_tracker:
+        result = _run_agent_impl(
+            messages,
+            memory=memory,
+            episode_id=episode_id,
+            max_retries=max_retries,
+            sleep=sleep,
+            max_iterations=max_iterations,
+            check_cancelled=check_cancelled,
+            task_evaluator=task_evaluator,
+            max_eval_retries=max_eval_retries,
+            hook_manager=hook_manager,
+            event_callback=event_callback,
+            resume_state=resume_state,
+            step_controller=step_controller,
+            client_factory=client_factory,
+            model=model,
+        )
+        if cleanup_tracker is not None and _is_stopping_error(result):
+            cleanup_tracker.cleanup(reason=result[:200])
+        return result
 
 
 def find_matching_procedure_for_tool_call(
